@@ -55,6 +55,8 @@ docker_manifests:
       - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}-amd64"
       - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}-arm64"
   - name_template: "ghcr.io/xdlc-labs/xdlc-agent:latest"
+    # Avoid promoting prereleases to :latest
+    skip_push: "{{ .IsPreRelease }}"
     image_templates:
       - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}-amd64"
       - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}-arm64"
