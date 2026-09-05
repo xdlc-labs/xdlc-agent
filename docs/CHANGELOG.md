@@ -14,6 +14,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - FixPrompt honors `AGENTS.md`, `.xdlc/skills/*.md`, `repos[].agent_instructions` (#21)
 - CI flake ladder: rerun-failed-jobs once per `run_url` before Fix (`ci_rerun_before_fix`, default on) (#3)
 - Optional `agent.fix_reverify` — Fix Status=ok only after gate re-check (#2)
+- Structural escalate before Runner: `escalate=structural` on rewrite / cross-service smells; manual Fix bypasses (#22)
 
 ### Changed
 

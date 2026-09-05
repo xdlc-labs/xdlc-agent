@@ -74,6 +74,16 @@ func (o *Orchestrator) suppressReason(s *Signal, action Action) string {
 		return ""
 	}
 
+	// C4: structural smell → backlog, never burn a Runner call.
+	if action == ActionFix {
+		if hit := structuralMatch(*s); hit != "" {
+			ensureEvidence(s)
+			s.Evidence["escalate"] = "structural"
+			s.Evidence["structural_match"] = hit
+			return "structural"
+		}
+	}
+
 	if o.Fleet.CircuitBreachRatio > 0 && o.Fleet.RepoCount > 0 &&
 		(action == ActionFix || action == ActionRevert || action == ActionPromote) {
 		breaching := o.breachCount()

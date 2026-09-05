@@ -34,8 +34,10 @@ Every dispatch, pass or fail, is appended to `BACKLOG.md`
 
 Declared `repos[].depends_on` plus optional `fleet:` knobs (all off by
 default). After `Decide`, suppressions become `noop` with evidence
-`escalate=root_cause|circuit|flap|deps_unhealthy|deps_pin` — still
+`escalate=root_cause|circuit|flap|deps_unhealthy|deps_pin|structural` — still
 written to backlog/audit; metric `xdlc_agent_fleet_suppressions_total`.
+`structural` is evidence-heuristic (C4), not fleet topology; operator
+manual Fix bypasses it.
 Optional `fleet.notify_webhook_url` POSTs Slack-compatible JSON.
 Cross-repo SemVer/tag promote pins: `repos[].promote_requires`.
 
