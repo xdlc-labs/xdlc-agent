@@ -21,9 +21,9 @@ jobs:
           } >> "$GITHUB_ENV"
       - run: go build $GO_PKGS
       - run: go vet $GO_PKGS
-      - run: test -z "$(gofmt -l cmd internal services)"
+      - run: test -z "$(gofmt -l cmd internal)"
       - run: go test $GO_PKGS -race
-      - run: go run ./cmd/xdlc-agent validate --config config.example.yaml --gitops-dir gitops
+      - run: go run ./cmd/xdlc-agent validate --config config.example.yaml
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest $GO_PKGS
 
@@ -36,7 +36,7 @@ jobs:
           go-version: "1.25.x"
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13.2 # keep in step with the version installed locally (see CONTRIBUTING.md)
+          version: v2.13.2
 
   ui:
     runs-on: ubuntu-latest
@@ -58,8 +58,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Pin to commit SHA — action tags were rewritten in the Mar 2026
-      # Trivy supply-chain incident; floating tags are not safe.
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
@@ -75,18 +73,3 @@ jobs:
       - uses: azure/setup-helm@v4
       - run: helm lint deploy/helm/xdlc-agent
       - run: helm template test deploy/helm/xdlc-agent > /dev/null
-      - run: helm lint helm/service-template --set image.repository=ghcr.io/x/y --set image.tag=v1
-      - run: |
-          helm template test helm/service-template \
-            -f gitops/values/dev.yaml -f gitops/values/dev/example-service.yaml > /dev/null
-          helm template test helm/service-template \
-            -f gitops/values/prod.yaml -f gitops/values/prod/example-service.yaml > /dev/null
-
-  terraform:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
-      - run: chmod +x scripts/terraform-validate.sh && ./scripts/terraform-validate.sh

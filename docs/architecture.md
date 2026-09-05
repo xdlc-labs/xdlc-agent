@@ -10,7 +10,7 @@ runs the loop.
 `xdlc-agent daemon` runs one process: an HTTP server for GitHub
 `workflow_run`, ArgoCD notification, and Alertmanager webhooks, plus
 dashboard JSON under `/api/*` (reads for the console; operator
-Fix/Promote/Revert writes — see [console.md](console.md)),
+Fix/Promote/Revert writes),
 plus tickers that poll the dev-smoke and prod-health gates (fallback when
 webhooks are quiet), all feeding a single `chan orchestrator.Signal`.
 One goroutine (`orchestrator.Run`) reads that channel, calls `Decide`
@@ -97,11 +97,11 @@ never silently rewrite production history.
 
 Promote first copies `image.tag` from `values/dev/<service>.yaml` into
 `values/prod/<service>.yaml` when those files exist in the clone, then
-fast-forwards — see [gitops.md](gitops.md).
+fast-forwards.
 
 ## Gates are pluggable
 
-See `internal/gate.Gate` and [gates.md](gates.md).
+See `internal/gate.Gate` and the built-ins under `internal/gate/`.
 
 ## Local repo clones
 
@@ -142,4 +142,4 @@ image: the Dockerfile's `ui` stage runs `bun run build` and copies
 `ui/dist` into `internal/console/dist`, which `internal/console/embed.go`
 serves via `go:embed` off the same port as `/api/*`. The release workflow
 builds it the same way. A `go build` without that copy leaves `dist/`
-empty and the daemon simply stays API-only. See [console.md](console.md).
+empty and the daemon simply stays API-only.

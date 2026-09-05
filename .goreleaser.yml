@@ -66,4 +66,4 @@ docker_manifests:
 release:
   github:
     owner: xdlc-labs
-    name: xdlc
+    name: xdlc-agent

@@ -546,7 +546,7 @@ func validateCmd() *cobra.Command {
 	var roleNamespace string
 	cmd := &cobra.Command{
 		Use:   "validate",
-		Short: "Cross-check config.yaml against gitops/ (argocd_app references, required fields), exit non-zero on any issue",
+		Short: "Validate config.yaml (required fields); optionally cross-check gitops/ argocd_app names",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(cfgPath)
 			if err != nil {
@@ -573,7 +573,7 @@ func validateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&gitopsDir, "gitops-dir", "gitops", "path to the gitops/ directory to cross-check argocd_app references against")
+	cmd.Flags().StringVar(&gitopsDir, "gitops-dir", "", "optional gitops/ dir to cross-check argocd_app names (empty skips)")
 	cmd.Flags().StringVar(&roleNamespace, "role-namespace", "", "the Helm chart's role.namespace value, to catch it drifting from gates.dev-smoke.namespace (skipped if unset)")
 	return cmd
 }

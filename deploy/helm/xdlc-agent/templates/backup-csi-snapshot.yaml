@@ -3,7 +3,7 @@
 # (backup.csiSnapshot.volumeSnapshotClassName). Creates a VolumeSnapshot
 # of the agent's PVC on a schedule via `kubectl`; does not scale the
 # Deployment to 0 first, so a snapshot can catch bbolt mid-write — same
-# accepted torn-write risk documented in docs/disaster-recovery.md.
+# accepted torn-write risk documented in backup values in this chart.
 # Scale-to-0-before-snapshot is a manual/advanced option, not automated
 # here, to avoid a failed job stranding the Deployment at 0 replicas.
 apiVersion: v1

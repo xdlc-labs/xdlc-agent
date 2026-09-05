@@ -17,7 +17,7 @@ image:
 # Must stay 1. The daemon is a single writer: it holds bbolt's exclusive
 # flock on the audit DB and the data PVC below is ReadWriteOnce. Any
 # value > 1 fails `helm install`/`template` with an explanation rather
-# than deploying a replica that cannot start. See docs/disaster-recovery.md.
+# than deploying a replica that cannot start. See chart comments / backup values.
 replicaCount: 1
 
 # Recreate is required whenever persistence.enabled is true (the
@@ -34,7 +34,7 @@ service:
   type: ClusterIP
   port: 8080
 
-# Contents become config.yaml, mounted read-only. See docs/gates.md and
+# Contents become config.yaml, mounted read-only. See config.example.yaml and
 # the starter config xdlc-agent init writes for the full schema.
 config: |
   repos: []
@@ -135,7 +135,7 @@ persistence:
   storageClassName: ""
 
 # PVC backup — pick at most one; both are opt-in and off by default.
-# See docs/disaster-recovery.md. Neither replaces a
+# See chart comments / backup values. Neither replaces a
 # pre-restore RPO/RTO check with your actual recovery procedure.
 backup:
   velero:

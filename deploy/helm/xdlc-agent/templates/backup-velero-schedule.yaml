@@ -1,6 +1,6 @@
 {{- if .Values.backup.velero.enabled }}
 # Requires Velero already installed and watching this cluster (or the
-# namespace named below). See docs/disaster-recovery.md.
+# namespace named below). See chart comments / backup values.
 apiVersion: velero.io/v1
 kind: Schedule
 metadata:

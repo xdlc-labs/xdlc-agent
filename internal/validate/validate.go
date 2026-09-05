@@ -1,9 +1,6 @@
-// Package validate cross-checks config.yaml against the gitops/
-// directory — the two are wired together only by naming convention
-// (repo name / ArgoCD Application name / argocd_app field, see
-// docs/gitops.md), so nothing else catches a typo until the dev-smoke
-// gate mysteriously never passes. `xdlc-agent validate` catches it at
-// config-load time instead.
+// Package validate checks config.yaml for required fields and, when a
+// gitops directory is provided, cross-checks argocd_app names against
+// Application manifests under gitops/apps/dev.
 package validate
 
 import (
@@ -218,6 +215,9 @@ func RoleNamespace(cfg *config.Config, roleNamespace string) []Issue {
 // gitopsDir/apps/dev — every repo's resolved argocd_app must match some
 // Application's metadata.name there.
 func GitOps(cfg *config.Config, gitopsDir string) ([]Issue, error) {
+	if strings.TrimSpace(gitopsDir) == "" {
+		return nil, nil // optional — full gitops tree lives outside this repo
+	}
 	appNames, err := applicationNames(filepath.Join(gitopsDir, "apps", "dev"))
 	if err != nil {
 		return nil, fmt.Errorf("validate: reading %s: %w", filepath.Join(gitopsDir, "apps", "dev"), err)
