@@ -4,6 +4,7 @@ Ops docs for **xdlc-agent** (CLI binary **`xdlc`**).
 
 ## Start
 
+- [Install](install.md) — `curl … | sh`, Docker, from source
 - [Getting started](getting-started.md) — demo or doctor + daemon
 - [API tokens](api-tokens.md) — create `XDLC_API_TOKEN` (shared secret)
 

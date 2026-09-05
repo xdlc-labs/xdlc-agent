@@ -13,6 +13,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `scripts/install.sh` — curl-install `xdlc` from GitHub Releases (checksum verified); [Install](install.md)
 - `xdlc demo` — zero-infra Fix→Promote→Revert with `--provider fake` (#5)
 - Console Settings: browser-local coding-agent provider + API key (localStorage); Manual Fix sends `X-XDLC-Agent-*` headers (never audit/disk)
 - Typed contracts: `openapi/openapi.yaml` + `schema/config.schema.json`; drift tests; `docs/api-reference.md` (#15)

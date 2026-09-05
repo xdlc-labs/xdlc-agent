@@ -7,114 +7,77 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](docs/CONTRIBUTING.md)
 
-**Self-hosted agentic delivery for platform teams.**  
-One open-source daemon watches your repos. When CI fails, DEV smoke fails, or prod SLOs breach, it **Fix**es, **Promote**s, or **Revert**s under policy  -  using *your* coding agent (`claude` / `codex` / `cursor`). MIT. No SaaS in the loop.
+You run one small daemon next to your repos. When CI breaks, a DEV smoke test fails, or prod looks unhealthy, it can open a **Fix**, **Promote** a good build, or **Revert** a bad one, using the coding agent you already use (`claude`, `codex`, or `cursor`). Open source (MIT). You host it; nothing phones home.
 
-![Architecture: xdlc-agent loop with CI, DEV, and PROD gates](docs/assets/architecture.jpg)
+The CLI is called **`xdlc`**. The container image, Helm chart, and this repo are **`xdlc-agent`**.
 
----
+## Why this exists
 
-## Docs
+Built for platform and SRE teams that already have CI and GitOps. Overnight, someone still pastes failing logs into a coding agent by hand. This daemon does that job under your gates, then can promote a good DEV build or revert a bad prod one, and leaves an audit trail.
 
-- **[Getting started](docs/getting-started.md)** — demo or doctor + daemon  
-- **[API tokens](docs/api-tokens.md)** — create `XDLC_API_TOKEN`  
-- **[Production loop](docs/production-loop.md)** — GitHub → Fix → Argo → Promote → Prom → Revert  
-- [Configuration](docs/configuration.md) · [Deployment](docs/deployment.md) · [API](docs/api-reference.md) · [Architecture](docs/architecture.md)
+**You keep control.** Self-hosted. MIT. Your agent CLI and keys (`claude` / `codex` / `cursor`). Policy runs before the agent. History goes to the console, the audit DB, and `BACKLOG.md`. Nothing phones home.
 
-In a running console: **Docs** in the left nav (`/docs`) — same theme as the ops UI.
+**Not a substitute for:**
 
----
+- **GitHub Actions** as your control plane ([why](docs/why-not-github-action.md)): you need a long-lived loop, fleet state, and an ops console
+- **Copilot Autofix**: security/dependency nits inside GitHub; we cover CI → DEV → prod Fix / Promote / Revert
+- **Flagger / Rollouts**: they move traffic; we own agent + git policy when gates fail ([vs alternatives](docs/vs-alternatives.md))
 
-## Why agentic platform engineering?
-
-Platform engineering already owns the paved road: CI, GitOps, environments, SLOs. What it usually *doesn't* own is the overnight grind when that road turns red  -  failed builds, flaky smokes, bad promotes, and “someone paste the logs into ChatGPT.”
-
-**Agentic platform engineering** means the platform itself can act on those signals, within the same gates and policy you already trust:
-
-| Without agents | With xdlc-agent |
-|----------------|-----------------|
-| Human notices red CI / alert | Daemon receives the same signal |
-| Paste logs into a chat window | Coding agent runs with evidence + repo access |
-| Manual PR, promote, or rollback | **Fix** / **Promote** / **Revert** under policy |
-| Tribal “who owns this at 2am?” | Audit trail + backlog when it can't finish |
-
-This is not “replace your pipeline with a chatbot.” It is **policy-gated automation on top of the delivery system you already run**  -  so routine, shaped failures drain without a human in the loop, and novel work stays with humans.
-
-| This is for | This is not for |
-|-------------|-----------------|
-| Routine failures (red build, failed smoke, SLO breach) | Novel feature design / architecture debates |
-| Teams that already trust CI + GitOps | Replacing pipelines with free-form agent chat |
-| Deciding *whether* an agent may touch a repo | Prompt-only “vibes” without gates |
-
----
+Beta: `xdlc demo`, Fix / Promote / Revert, and the console are the path to try first. See [Changelog](docs/CHANGELOG.md).
 
 ## How it works
 
+Gates fire in order: **CI → DEV → PROD**.
+
 | Signal | Action |
 |--------|--------|
-| **CI fail** | **Fix**  -  coding-agent subagent (run URL / logs as evidence) |
-| **DEV smoke fail** | **Fix**  -  probe logs → subagent |
-| **DEV smoke pass** | **Promote**  -  fast-forward only `develop` → `main` |
-| **PROD p95 / error-rate breach** | **Revert**  -  `git revert` on `main` |
+| **CI fail** | **Fix** (coding agent + evidence) |
+| **DEV smoke fail** | **Fix** |
+| **DEV smoke pass** | **Promote** (fast-forward `develop` → `main` only) |
+| **PROD SLO breach** | **Revert** on `main` |
 
-Green CI → DEV stays your GitOps path. The agent does not invent deploys; it reacts to gates you already trust.
+Green CI → DEV stays your GitOps path. The agent reacts to gates; it does not invent deploys.
 
-More detail: [docs/architecture.md](docs/architecture.md).  
-Positioning: [vs alternatives](docs/vs-alternatives.md) · [why not a GitHub Action](docs/why-not-github-action.md).
+![Architecture: xdlc-agent loop with CI, DEV, and PROD gates](docs/assets/architecture.jpg)
 
----
+## Install
 
-## Ops console
+```sh
+curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # if needed
+xdlc demo --provider fake
+```
 
-Embedded console at `/` (API under `/api/*`).
-
-![Console overview](docs/assets/screenshots/console-overview.jpg)
-
-![Repos](docs/assets/screenshots/console-repos.jpg)
-
-![Manual Fix / Promote / Revert](docs/assets/screenshots/console-actions.jpg)
-
----
+Pin a release: `XDLC_VERSION=v0.0.1-beta.1`. More options (Docker, from source): **[Install](docs/install.md)**.
 
 ## Quick start
 
-**1. Config**  -  copy [`config.example.yaml`](config.example.yaml), set your repos and agent provider:
-
-```yaml
-repos:
-  - name: my-service
-    github: your-org/my-service
-    gates: [ci]   # add dev-smoke, prod-health when ready
-
-agent:
-  provider: claude   # claude | codex | cursor
-```
-
-**2. Secrets** (env):
+Walkthrough: **[Getting started](docs/getting-started.md)** · **[API tokens](docs/api-tokens.md)**.
 
 ```sh
-export GITHUB_TOKEN=...              # or GitHub App (preferred)
-export GITHUB_WEBHOOK_SECRET=...
-export XDLC_API_TOKEN=...             # console / API
-export ANTHROPIC_API_KEY=...         # if provider: claude
-# export OPENAI_API_KEY=...          # if provider: codex
-# export CURSOR_API_KEY=...          # if provider: cursor
+xdlc init
+# edit config.yaml: repos + agent.provider
+export XDLC_API_TOKEN="$(openssl rand -hex 32)"   # or dev-token locally
+export GITHUB_TOKEN=...                           # or GitHub App (preferred)
+# export ANTHROPIC_API_KEY=...                    # if provider: claude
+xdlc doctor --config config.yaml --skip-network
+xdlc daemon --config config.yaml
 ```
 
-**3. Run**  -  Docker (console already embedded):
+Open http://127.0.0.1:8080/ → **Settings** → paste the same `XDLC_API_TOKEN`.
+
+**Docker** (console embedded; tag must exist on GHCR):
 
 ```sh
 docker run --rm -p 8080:8080 \
   -v "$PWD/config.yaml:/etc/xdlc-agent/config.yaml:ro" \
-  -e GITHUB_TOKEN -e GITHUB_WEBHOOK_SECRET -e XDLC_API_TOKEN \
+  -e XDLC_API_TOKEN -e GITHUB_TOKEN -e GITHUB_WEBHOOK_SECRET \
   -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CURSOR_API_KEY \
   ghcr.io/xdlc-labs/xdlc-agent:0.0.1-beta.2 \
   daemon --config /etc/xdlc-agent/config.yaml
 ```
 
-Open http://127.0.0.1:8080/ · point GitHub `workflow_run` webhooks at `/webhooks/github`.
-
-**Helm** (single replica  -  audit DB is single-writer):
+**Helm** (single replica; audit DB is single-writer):
 
 ```sh
 helm install xdlc-agent deploy/helm/xdlc-agent \
@@ -123,73 +86,38 @@ helm install xdlc-agent deploy/helm/xdlc-agent \
   --set-file config=config.yaml
 ```
 
-From source: `go build -o bin/xdlc ./cmd/xdlc-agent` then `./bin/xdlc daemon --config config.yaml`.
+Cluster detail: [Deployment](docs/deployment.md). Point GitHub `workflow_run` webhooks at `/webhooks/github`.
 
-Sanity-check the machine first:
+## Ops console
 
-```sh
-export XDLC_API_TOKEN=dev-token   # required for /api/*
-./bin/xdlc doctor --config config.yaml --skip-network
-```
+Embedded at `/` when the daemon runs (API under `/api/*`).
 
-Zero-infra loop (no Kind / Argo / Prom / GitHub):
+![Console overview](docs/assets/screenshots/console-overview.jpg)
 
-```sh
-./bin/xdlc demo --provider fake
-```
+![Repos](docs/assets/screenshots/console-repos.jpg)
 
----
-
-## What's new since beta.1
-
-- CLI binary is **`xdlc`** (repo / image / Helm stay `xdlc-agent`)
-- `xdlc doctor` and `xdlc demo` for local sanity + zero-infra Fix→Promote→Revert
-- Console Settings: browser-local coding-agent provider + API key (Manual Fix only)
-- Typed contracts: OpenAPI + config schema · [API reference](docs/api-reference.md)
-
-Full list: [docs/CHANGELOG.md](docs/CHANGELOG.md).
-
----
+![Manual Fix / Promote / Revert](docs/assets/screenshots/console-actions.jpg)
 
 ## What you bring
 
-The daemon is the loop. You still need:
+1. CI that fails clearly on the integration branch
+2. Deploy path green build → DEV (usually GitOps)
+3. Optional smoke + Prometheus for promote / revert
+4. Coding-agent CLI on `PATH` (`claude`, `codex`, or `cursor-agent`)
 
-1. CI that fails clearly on your integration branch  
-2. Deploy path green build → DEV (usually GitOps)  
-3. Optional smoke + Prometheus for promote / revert gates  
-4. A coding-agent CLI on `PATH` (`claude`, `codex`, or `cursor-agent`)
+## Documentation
 
----
+Full guides live under [`docs/`](docs/README.md). Same pages appear in the ops console under **Docs**.
 
-## Benchmarks
-
-Hot-path microbenchmarks (`make bench`). Numbers from a recent laptop run (AMD Ryzen 5 PRO 5650U, linux/amd64)  -  re-run locally for your machine.
-
-| Benchmark | ns/op | B/op | allocs/op |
-|-----------|------:|-----:|----------:|
-| `orchestrator.Decide` | ~31 | 0 | 0 |
-| `ratelimit.Allow` | ~79 | 0 | 0 |
-| `validate.Config` (3 repos) | ~431 | 16 | 1 |
-| `subagent.FixPrompt` | ~8.6k | ~10k | 13 |
-| `store.Append` | ~27k | ~23k | 70 |
-
-End-to-end Fix time is dominated by the coding agent (minutes), not Go decision latency. Policy (`Decide`) is allocation-free and cheap enough to sit on every webhook.
-
-```sh
-make bench   # go test -bench=. -benchmem
-make test
-```
-
----
+| Start | Production | Reference | More |
+|-------|------------|-----------|------|
+| [Install](docs/install.md) | [Production loop](docs/production-loop.md) | [Configuration](docs/configuration.md) | [vs alternatives](docs/vs-alternatives.md) |
+| [Getting started](docs/getting-started.md) | [GitHub](docs/github-webhooks.md) · [Fix](docs/fix-modes.md) · [GitOps](docs/gitops-argo.md) | [Deployment](docs/deployment.md) · [Operations](docs/operations.md) | [Why not a GitHub Action](docs/why-not-github-action.md) |
+| [API tokens](docs/api-tokens.md) | [Prod health](docs/prod-health.md) | [Architecture](docs/architecture.md) · [API](docs/api-reference.md) · [Security](docs/SECURITY.md) | [Changelog](docs/CHANGELOG.md) |
 
 ## Contribute
 
-- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
-- [docs/SECURITY.md](docs/SECURITY.md)
-- [docs/CODE_OF_CONDUCT.md](docs/CODE_OF_CONDUCT.md)
-- [docs/api-reference.md](docs/api-reference.md)
-- [docs/CHANGELOG.md](docs/CHANGELOG.md)
+[Contributing](docs/CONTRIBUTING.md) · [Security](docs/SECURITY.md) · [Code of conduct](docs/CODE_OF_CONDUCT.md)
 
 ## License
 

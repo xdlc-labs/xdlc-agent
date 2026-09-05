@@ -1,4 +1,5 @@
 /** Curated docs from ui/content/docs (synced from repo docs/ via `bun run sync-docs`). */
+import install from "../../content/docs/install.md?raw";
 import gettingStarted from "../../content/docs/getting-started.md?raw";
 import apiTokens from "../../content/docs/api-tokens.md?raw";
 import productionLoop from "../../content/docs/production-loop.md?raw";
@@ -18,6 +19,7 @@ import vsAlternatives from "../../content/docs/vs-alternatives.md?raw";
 import whyNotGha from "../../content/docs/why-not-github-action.md?raw";
 
 const bySlug: Record<string, string> = {
+  install,
   "getting-started": gettingStarted,
   "api-tokens": apiTokens,
   "production-loop": productionLoop,

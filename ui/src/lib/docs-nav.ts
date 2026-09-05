@@ -13,6 +13,7 @@ export const DOCS_NAV: DocsGroup[] = [
     id: "start",
     label: "Start",
     items: [
+      { slug: "install", title: "Install" },
       { slug: "getting-started", title: "Getting started" },
       { slug: "api-tokens", title: "API tokens" },
     ],
@@ -53,7 +54,7 @@ export const DOCS_NAV: DocsGroup[] = [
   },
 ];
 
-export const DEFAULT_DOCS_SLUG = "getting-started";
+export const DEFAULT_DOCS_SLUG = "install";
 
 export function docsTitle(slug: string): string {
   for (const g of DOCS_NAV) {

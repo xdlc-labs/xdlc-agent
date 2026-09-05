@@ -17,8 +17,8 @@ function DocPage() {
     return (
       <EmptyState>
         No doc for <span className="font-mono text-primary">{slug}</span>.{" "}
-        <Link to="/docs/$slug" params={{ slug: "getting-started" }} className="text-primary hover:underline">
-          Getting started
+        <Link to="/docs/$slug" params={{ slug: "install" }} className="text-primary hover:underline">
+          Install
         </Link>
       </EmptyState>
     );

@@ -24,6 +24,7 @@ describe("docImageSrc", () => {
 
 describe("docs-content", () => {
   it("loads curated production pages", () => {
+    expect(hasDoc("install")).toBe(true);
     expect(hasDoc("getting-started")).toBe(true);
     expect(hasDoc("production-loop")).toBe(true);
     expect(hasDoc("github-webhooks")).toBe(true);
@@ -31,7 +32,9 @@ describe("docs-content", () => {
 });
 
 describe("docsAdjacent", () => {
-  it("orders start → api tokens → production overview", () => {
+  it("orders install → getting started → api tokens → production", () => {
+    const { next: fromInstall } = docsAdjacent("install");
+    expect(fromInstall?.slug).toBe("getting-started");
     const { next } = docsAdjacent("getting-started");
     expect(next?.slug).toBe("api-tokens");
     const { prev, next: n2 } = docsAdjacent("api-tokens");

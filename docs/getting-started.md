@@ -7,10 +7,8 @@ By the end you have either a zero-infra **demo** loop or a local **daemon** + op
 ## Prerequisites
 
 - Linux / macOS (or WSL)
-- `git`
-- Either:
-  - **Path A:** Go 1.25+ to build `xdlc`, or
-  - **Path B:** Docker (or Podman) to run `ghcr.io/xdlc-labs/xdlc-agent`
+- `git` (demo / from-source paths)
+- **`xdlc` on PATH** — see **[Install](install.md)** (`curl … | sh`, Docker, or `go build`)
 - For a real Fix (optional): coding-agent CLI on `PATH` (`claude`, `codex`, or `cursor-agent`) + matching API key env
 
 ## Overview
@@ -22,15 +20,22 @@ One daemon watches configured repos. Gates emit signals; policy picks **Fix**, *
 | CLI + daemon | `xdlc` |
 | Container image / Helm chart / repo | `xdlc-agent` |
 
+## Install CLI
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # if needed
+xdlc version
+```
+
+Full options (pin version, Docker, from source): [Install](install.md).
+
 ## Path A — demo (zero infra)
 
 No Kind, Argo, Prometheus, or GitHub required. Seeds a temp git repo, runs Fix → Promote → Revert with a fake agent (or a real provider).
 
 ```sh
-git clone https://github.com/xdlc-labs/xdlc-agent.git
-cd xdlc-agent
-go build -o bin/xdlc ./cmd/xdlc-agent
-./bin/xdlc demo --provider fake
+xdlc demo --provider fake
 ```
 
 Expect lines like `signal=… action=Fix status=ok` and a final `demo: ok`.
@@ -39,7 +44,7 @@ Real coding agent (maps your key to the env the CLI expects):
 
 ```sh
 export CURSOR_API_KEY="$cursor_agent_key"   # or ANTHROPIC_API_KEY / OPENAI_API_KEY
-./bin/xdlc demo --provider cursor --scenario all
+xdlc demo --provider cursor --scenario all
 ```
 
 ## Path B — doctor + daemon
@@ -47,7 +52,8 @@ export CURSOR_API_KEY="$cursor_agent_key"   # or ANTHROPIC_API_KEY / OPENAI_API_
 **1. Config**
 
 ```sh
-cp config.example.yaml config.yaml
+xdlc init
+# or: cp config.example.yaml config.yaml
 # edit repos[].github, agent.provider, gates as needed
 ```
 
@@ -66,13 +72,13 @@ export GITHUB_TOKEN=...                  # or GitHub App (preferred) when talkin
 **3. Sanity**
 
 ```sh
-./bin/xdlc doctor --config config.yaml --skip-network
+xdlc doctor --config config.yaml --skip-network
 ```
 
 **4. Run**
 
 ```sh
-./bin/xdlc daemon --config config.yaml
+xdlc daemon --config config.yaml
 ```
 
 Or Docker (tag must exist on GHCR for your release):

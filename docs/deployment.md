@@ -10,6 +10,8 @@ Run the daemon where it can reach GitHub, your GitOps tools, Prometheus, and inb
 | Image | `ghcr.io/xdlc-labs/xdlc-agent:<tag>` |
 | Helm chart | `deploy/helm/xdlc-agent` |
 
+Install the CLI with **[Install](install.md)** (`curl … | sh`). Below is cluster / container deploy.
+
 ## Docker
 
 ```sh
