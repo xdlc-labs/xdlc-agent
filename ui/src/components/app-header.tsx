@@ -36,7 +36,7 @@ function useOpenFixPRCount() {
 export function daemonChipLabel(args: {
   isPending: boolean;
   isError: boolean;
-  daemonStatus?: string;
+  daemonStatus?: string | undefined;
   fetchStatus: number | null;
 }): string {
   if (args.fetchStatus === 401) {
