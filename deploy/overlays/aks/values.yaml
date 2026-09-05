@@ -1,0 +1,46 @@
+# Cloud defaults for AKS. Use with the chart:
+#   helm upgrade --install xdlc-agent deploy/helm/xdlc-agent \
+#     -f deploy/overlays/aks/values.yaml ...
+#
+# Starter overlay — pair with infra/azure-aks (Azure Disk CSI, on by default).
+
+replicaCount: 1
+
+config: |
+  repos: []
+  gates:
+    ci:
+      trigger: on_push
+    dev-smoke:
+      trigger: on_sync
+      namespace: dev
+      interval: 30s
+    prod-health:
+      trigger: continuous
+      metrics_url: ""
+      thresholds:
+        p95_ms: 500
+        error_rate: 0.01
+      interval: 30s
+  server:
+    addr: ":8080"
+    require_webhook_secret: true
+  agent:
+    mode: subprocess
+    provider: claude
+    timeout: 10m
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+persistence:
+  enabled: true
+  size: 10Gi
+  # AKS's default CSI StorageClass on current versions. Override if your
+  # cluster's default differs (`kubectl get storageclass`).
+  storageClassName: managed-csi

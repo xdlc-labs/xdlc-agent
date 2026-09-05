@@ -1,0 +1,106 @@
+{{- if .Values.backup.csiSnapshot.enabled }}
+# Requires a VolumeSnapshotClass already present in the cluster
+# (backup.csiSnapshot.volumeSnapshotClassName). Creates a VolumeSnapshot
+# of the agent's PVC on a schedule via `kubectl`; does not scale the
+# Deployment to 0 first, so a snapshot can catch bbolt mid-write — same
+# accepted torn-write risk documented in docs/disaster-recovery.md.
+# Scale-to-0-before-snapshot is a manual/advanced option, not automated
+# here, to avoid a failed job stranding the Deployment at 0 replicas.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "xdlc-agent.fullname" . }}-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xdlc-agent.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "xdlc-agent.fullname" . }}-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xdlc-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["create", "get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "xdlc-agent.fullname" . }}-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xdlc-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "xdlc-agent.fullname" . }}-backup
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "xdlc-agent.fullname" . }}-backup
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "xdlc-agent.fullname" . }}-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xdlc-agent.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.csiSnapshot.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "xdlc-agent.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "xdlc-agent.fullname" . }}-backup
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+            - name: tmp
+              emptyDir: {}
+          containers:
+            - name: snapshot
+              image: {{ .Values.backup.csiSnapshot.image | quote }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  ts=$(date -u +%Y%m%d%H%M%S)
+                  cat <<EOF | kubectl apply -f -
+                  apiVersion: snapshot.storage.k8s.io/v1
+                  kind: VolumeSnapshot
+                  metadata:
+                    name: {{ include "xdlc-agent.fullname" . }}-data-${ts}
+                    namespace: {{ .Release.Namespace }}
+                  spec:
+                    volumeSnapshotClassName: {{ .Values.backup.csiSnapshot.volumeSnapshotClassName }}
+                    source:
+                      persistentVolumeClaimName: {{ include "xdlc-agent.fullname" . }}-data
+                  EOF
+{{- end }}

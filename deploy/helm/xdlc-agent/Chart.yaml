@@ -1,0 +1,9 @@
+apiVersion: v2
+name: xdlc-agent
+description: xdlc orchestrator (xdlc-agent) — one loop, 3 gates
+type: application
+version: 2.0.0
+appVersion: "2.0.0"
+home: https://github.com/xdlc-labs/xdlc-agent
+sources:
+  - https://github.com/xdlc-labs/xdlc-agent

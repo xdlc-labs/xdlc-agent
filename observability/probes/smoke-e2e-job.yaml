@@ -1,0 +1,48 @@
+# Template for the Job the dev-smoke gate polls (config.yaml's
+# `probe_job:` field, checked by internal/k8sprobe.JobSucceeded).
+# ArgoCD applies this as a PostSync hook — it (re)runs on every sync to
+# `develop`, and its exit code is what "the gate" actually gates on.
+# Copy per service, swap the k6 script / image.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: smoke-e2e
+  namespace: dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:latest
+          command: ["k6", "run", "/scripts/smoke.js"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: smoke-e2e-script
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smoke-e2e-script
+  namespace: dev
+data:
+  smoke.js: |
+    import http from 'k6/http';
+    import { check, fail } from 'k6';
+
+    export const options = { vus: 1, iterations: 1 };
+
+    export default function () {
+      const res = http.get(__ENV.TARGET_URL || 'http://example-service.dev.svc.cluster.local/healthz');
+      const ok = check(res, { 'status is 200': (r) => r.status === 200 });
+      if (!ok) fail(`smoke check failed: ${res.status}`);
+    }

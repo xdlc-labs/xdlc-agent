@@ -1,0 +1,6 @@
+# Set by promote (internal/promote.FastForward carries the whole repo
+# forward, this file included) — never hand-edited, never diverges from
+# whatever DEV had at the moment its smoke/e2e gate passed.
+image:
+  repository: ghcr.io/your-org/example-service
+  tag: "sha-0000000"

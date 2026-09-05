@@ -1,0 +1,152 @@
+image:
+  repository: ghcr.io/xdlc-labs/xdlc-agent
+  # Empty → the chart's appVersion, i.e. the release this chart shipped
+  # with. Never defaulted to `latest`: a mutable tag makes the running
+  # code unknowable and re-pulls a different binary on every restart.
+  # Set it only to deploy a version other than the chart's own.
+  tag: ""
+  # Preferred over tag in production: an immutable digest
+  # (sha256:...). When set it wins over tag entirely — the rendered
+  # image becomes repository@digest. Verify it first:
+  #   cosign verify ghcr.io/xdlc-labs/xdlc-agent@sha256:... \
+  #     --certificate-identity-regexp 'github.com/xdlc-labs/xdlc-agent' \
+  #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Must stay 1. The daemon is a single writer: it holds bbolt's exclusive
+# flock on the audit DB and the data PVC below is ReadWriteOnce. Any
+# value > 1 fails `helm install`/`template` with an explanation rather
+# than deploying a replica that cannot start. See docs/disaster-recovery.md.
+replicaCount: 1
+
+# Recreate is required whenever persistence.enabled is true (the
+# default): a RollingUpdate would schedule the new pod while the old one
+# still holds the ReadWriteOnce volume and the bbolt lock, and the
+# rollout hangs indefinitely if the new pod lands on another node. The
+# cost is a short gap in webhook ingestion during upgrades — GitHub does
+# not retry deliveries, so drain during a quiet window. Switch to
+# RollingUpdate only with persistence.enabled: false.
+updateStrategy:
+  type: Recreate
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Contents become config.yaml, mounted read-only. See docs/gates.md and
+# the starter config xdlc-agent init writes for the full schema.
+config: |
+  repos: []
+  gates:
+    ci:
+      trigger: on_push
+    dev-smoke:
+      trigger: on_sync
+      namespace: dev
+      interval: 30s
+    prod-health:
+      trigger: continuous
+      metrics_url: ""
+      thresholds:
+        p95_ms: 500
+        error_rate: 0.01
+      interval: 30s
+  server:
+    addr: ":8080"
+    require_webhook_secret: true
+  agent:
+    mode: subprocess
+    provider: claude # claude | codex | cursor
+    timeout: 10m
+
+# Names of Secret keys expected to hold: GITHUB_TOKEN (PAT fallback)
+# and/or GITHUB_APP_ID + GITHUB_APP_INSTALLATION_ID + GITHUB_APP_PRIVATE_KEY,
+# GITHUB_WEBHOOK_SECRET (and optional ARGOCD_WEBHOOK_SECRET /
+# ALERTMANAGER_WEBHOOK_SECRET), plus whichever of ANTHROPIC_API_KEY /
+# OPENAI_API_KEY / CURSOR_API_KEY your agent.provider needs. Create the
+# Secret yourself (kubectl create secret generic xdlc-agent-secrets
+# --from-literal=...) and reference it here, never put tokens in
+# values.yaml.
+existingSecret: xdlc-agent-secrets
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Namespaced RBAC for reading Job status / pod logs in the smoke
+# probe namespace (dev-smoke.namespace). Role + RoleBinding land in
+# role.namespace, which may differ from the release namespace. Extend
+# role.rules only if the agent needs more in that namespace.
+role:
+  create: true
+  namespace: dev
+  rules:
+    - apiGroups: ["batch"]
+      resources: ["jobs"]
+      verbs: ["get", "list"]
+    - apiGroups: [""]
+      resources: ["pods", "pods/log"]
+      verbs: ["get", "list"]
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# UID 65532 matches distroless/static nonroot and deploy/Dockerfile USER.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL
+
+podDisruptionBudget:
+  create: true
+  maxUnavailable: 1
+
+# Default: deny all except API/webhook :8080 (from anywhere) and
+# egress DNS + HTTPS. Set ingressFrom to restrict webhook sources.
+networkPolicy:
+  create: true
+  ingressFrom: []
+  # Example same-namespace only:
+  # ingressFrom:
+  #   - namespaceSelector: {}
+  #     podSelector: {}
+
+persistence:
+  # BACKLOG.md, the bbolt audit store, and repo clones live here.
+  enabled: true
+  size: 2Gi
+  storageClassName: ""
+
+# PVC backup — pick at most one; both are opt-in and off by default.
+# See docs/disaster-recovery.md. Neither replaces a
+# pre-restore RPO/RTO check with your actual recovery procedure.
+backup:
+  velero:
+    enabled: false
+    schedule: "0 2 * * *"     # daily; tune to RPO
+    veleroNamespace: velero   # namespace Velero watches
+    ttl: 720h
+  csiSnapshot:
+    enabled: false
+    schedule: "0 2 * * *"
+    # registry.k8s.io — Bitnami free versioned tags deprecated (no patches).
+    image: registry.k8s.io/kubectl:v1.34.0
+    # Cluster-specific — must already exist (`kubectl get volumesnapshotclass`).
+    volumeSnapshotClassName: ""

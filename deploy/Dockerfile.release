@@ -1,0 +1,42 @@
+# Release image. GoReleaser copies the pre-built xdlc-agent binary into
+# the build context beside this file. Local/source builds use
+# deploy/Dockerfile instead (see scripts/bootstrap-local.sh).
+ARG KUBECTL_VERSION=1.34.0
+ARG ARGOCD_VERSION=3.5.2
+ARG CLAUDE_CODE_VERSION=2.1.260
+ARG CODEX_CLI_VERSION=0.153.2
+
+FROM node:22-alpine
+ARG KUBECTL_VERSION
+ARG ARGOCD_VERSION
+ARG CLAUDE_CODE_VERSION
+ARG CODEX_CLI_VERSION
+ARG TARGETARCH
+
+RUN apk add --no-cache git ca-certificates curl \
+ && curl -fsSL -o /usr/local/bin/kubectl \
+      "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
+ && chmod +x /usr/local/bin/kubectl \
+ && curl -fsSL -o /usr/local/bin/argocd \
+      "https://github.com/argoproj/argo-cd/releases/download/v${ARGOCD_VERSION}/argocd-linux-${TARGETARCH}" \
+ && chmod +x /usr/local/bin/argocd \
+ && npm install -g \
+      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+      "@openai/codex@${CODEX_CLI_VERSION}" \
+ && npm cache clean --force
+
+# Cursor CLI (cursor-agent) isn't npm-installable, see deploy/Dockerfile
+# for why it's left out of this image by default.
+
+COPY xdlc-agent /usr/local/bin/xdlc-agent
+
+# Match distroless/static nonroot (65532) used by example-service.
+RUN addgroup -g 65532 -S nonroot \
+ && adduser -u 65532 -S -G nonroot nonroot \
+ && mkdir -p /var/lib/xdlc-agent \
+ && chown -R nonroot:nonroot /var/lib/xdlc-agent
+
+USER nonroot:nonroot
+WORKDIR /var/lib/xdlc-agent
+ENTRYPOINT ["/usr/local/bin/xdlc-agent"]
+CMD ["daemon"]

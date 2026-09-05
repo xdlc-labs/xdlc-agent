@@ -1,0 +1,82 @@
+{{- include "xdlc-agent.validateReplicas" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "xdlc-agent.fullname" . }}
+  labels:
+    {{- include "xdlc-agent.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # Recreate, not the default RollingUpdate: the data volume is a
+  # ReadWriteOnce PVC and the daemon holds bbolt's exclusive flock on
+  # the audit DB. Under RollingUpdate the new pod waits on a volume
+  # still attached to the old pod's node — a rollout that never
+  # finishes. Recreate terminates the old pod first. Overridable via
+  # updateStrategy for a non-PVC (persistence.enabled: false) install.
+  strategy:
+    {{- toYaml (default (dict "type" "Recreate") .Values.updateStrategy) | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "xdlc-agent.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "xdlc-agent.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "xdlc-agent.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: xdlc-agent
+          image: "{{ include "xdlc-agent.image" . }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["daemon", "--config", "/etc/xdlc-agent/config.yaml"]
+          workingDir: /var/lib/xdlc-agent
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            # Writable home under the data volume when root FS is read-only.
+            - name: HOME
+              value: /var/lib/xdlc-agent
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+                optional: true
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/xdlc-agent
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/xdlc-agent
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "xdlc-agent.fullname" . }}-config
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "xdlc-agent.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}

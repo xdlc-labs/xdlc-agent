@@ -1,0 +1,92 @@
+# Reference config matching gitops/apps/dev/example-service.yaml —
+# kept in sync deliberately so `xdlc-agent validate --config
+# config.example.yaml` in CI catches drift between this file and the
+# gitops/ example. Copy to config.yaml (gitignored) and edit for your
+# org; don't edit this one without updating gitops/ to match.
+repos:
+  - name: example-service
+    github: your-org/example-service
+    gates: [ci, dev-smoke, prod-health]
+    argocd_app: dev-example-service # must match gitops/apps/dev/example-service.yaml's metadata.name
+    probe_job: smoke-e2e
+
+# github:  # optional — App preferred over GITHUB_TOKEN
+#   app_id: 123456
+#   installation_id: 12345678
+#   private_key_env: GITHUB_APP_PRIVATE_KEY
+
+server:
+  addr: ":8080"
+  # api_token_env: XDL_API_TOKEN # operator bearer for /api/* except /api/health; unset → 503 on protected routes
+  # api_viewer_token_env: XDL_API_VIEWER_TOKEN # optional read-only bearer (GETs only; writes → 403)
+  github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
+  argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
+  alertmanager_webhook_secret_env: ALERTMANAGER_WEBHOOK_SECRET
+  require_webhook_secret: false # local-dev only (loopback). Daemon refuses non-loopback listen with this false.
+  # webhook_rate_per_sec: 20  # shared token-bucket across /webhooks/*; 0 → default 20 (per-process; see docs/capacity.md)
+  # webhook_rate_burst: 40    # bucket capacity; 0 → default 40
+  # oidc:                      # optional SSO for the console, additive to api_token_env above
+  #   issuer_url: https://accounts.example.com    # empty (default) disables OIDC entirely
+  #   client_id: your-client-id
+  #   client_secret_env: OIDC_CLIENT_SECRET        # default if omitted
+  #   redirect_url: https://xdlc-agent.example.com/auth/callback
+  #   operator_groups: [platform-team]             # empty → SSO can never grant operator (bearer token still can)
+  #   viewer_groups: []                            # empty → any authenticated non-operator gets viewer
+  #   session_secret_env: OIDC_SESSION_SECRET      # default if omitted; required whenever issuer_url is set
+  #   session_ttl: 8h                              # session-cookie lifetime; 0/omitted → 8h. Cookies are stateless HMAC — shortening this is the only early-revocation lever short of rotating the session secret
+  #   cookie_secure: true                          # false only for local http:// testing, never in a real deploy
+
+gates:
+  ci:
+    trigger: on_push
+  dev-smoke:
+    trigger: on_sync
+    namespace: dev
+    interval: 30s
+  prod-health:
+    trigger: continuous
+    metrics_url: http://prometheus.your-domain.io # any PromQL API (prometheus_url is a legacy alias, use this key)
+    thresholds:
+      p95_ms: 500
+      error_rate: 0.01
+    interval: 30s
+    p95_query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{{repo}}"}[5m])) by (le)) * 1000
+    error_rate_query: sum(rate(http_requests_total{service="{{repo}}",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="{{repo}}"}[5m]))
+
+agent:
+  mode: subprocess
+  provider: claude # claude | codex | cursor; see docs/architecture.md for what each invokes
+  timeout: 10m
+  # max_concurrent_fixes: 2 # cap parallel Fix subagent runs; 0 → default 2 (per-process; see docs/capacity.md)
+  # fix_mode: direct # direct (default) commit+push branch; pr → scratch branch + open PR, return when PR exists
+  # extra_env_keys: [HTTPS_PROXY, NODE_EXTRA_CA_CERTS] # widen the subagent's env allowlist past PATH/HOME/USER/LOGNAME/LANG*/TZ + provider API keys; never add a credential key
+
+# Fleet policy — all zero/omitted = off (independent repos keep today's behavior).
+# fleet:
+#   flap_max_cycles: 3       # suppress Fix/Revert after N alternating fix↔revert transitions in flap_window
+#   flap_window: 2h
+#   circuit_breach_ratio: 0.3  # pause Fix/Revert/Promote when ≥30% of repos are prod-health breaching
+#   notify_webhook_url: https://hooks.slack.com/services/...  # optional Slack-compatible POST on suppress
+#
+# Declared runtime deps (short repo names). Suppresses Revert on this repo while an upstream is breaching,
+# and suppresses Promote while any depends_on repo is unhealthy:
+#   depends_on: [api, auth]
+# SemVer/tag pins (v2) — Promote blocked until dep prod image.tag >= min_tag:
+#   promote_requires:
+#     - repo: api
+#       min_tag: "v1.2.0"
+#
+# External / plugin-shaped gates (v2) — command protocol, see scripts/gates/:
+# gates:
+#   external:
+#     - name: example
+#       command: ["./scripts/gates/example-external-gate.sh"]
+#       trigger: continuous
+#       interval: 60s
+#
+# Provider routing (v2):
+# agent:
+#   provider: claude
+#   providers: [claude, codex, cursor]
+#   route: cheapest   # or static (default)
+#   route_min_success: 0.5

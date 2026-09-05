@@ -1,0 +1,50 @@
+version: "2"
+
+# golint is deprecated/archived by the Go team — this project uses
+# golangci-lint instead (bundles staticcheck, govet, revive as golint's
+# actual successor, gosec, and more), kept current via CI pinning the
+# same version golangci-lint-action installs. `make lint` / CONTRIBUTING.md
+# run this locally with the same config CI enforces.
+run:
+  relative-path-mode: gomod
+
+linters:
+  default: standard
+  enable:
+    - revive # golint's real successor — the Go team archived golint itself
+    - gosec # this project shells out to git/kubectl/argocd/claude and handles GitHub tokens; worth the extra scrutiny
+    - bodyclose # promclient does raw net/http calls
+    - noctx # ditto — flags http calls built without context
+    - unconvert
+    - unparam
+    - misspell
+    - copyloopvar # Go 1.22+ loop-variable semantics; catches code still written for the old footgun
+    - errorlint # flags == / type-switch on errors instead of errors.Is/As
+  settings:
+    revive:
+      rules:
+        - name: exported
+          # Every exported type/func in this repo already carries a doc
+          # comment (that's the project's own convention); this just
+          # enforces it stays true.
+          severity: warning
+        - name: package-comments
+  exclusions:
+    paths:
+      # ui/ JS tree; some npm packages ship Go sources that confuse ./...
+      - ui/
+      - node_modules
+      - third_party$
+      - builtin$
+      - examples$
+    rules:
+      # Test fixtures shell out to `git` with fixed, non-user-controlled
+      # arguments to build throwaway repos in t.TempDir() — not a
+      # command-injection surface gosec needs to flag.
+      - path: _test\.go
+        linters: [gosec]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

@@ -1,0 +1,35 @@
+{{- if .Values.networkPolicy.create }}
+# Ingress: allow TCP 8080 from anywhere (webhooks / API; tighten via
+# networkPolicy.ingressFrom when cluster ingress is known).
+# Egress: DNS + HTTPS only (GitHub, agent providers, kube API).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "xdlc-agent.fullname" . }}
+  labels:
+    {{- include "xdlc-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "xdlc-agent.labels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+      {{- with .Values.networkPolicy.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        - protocol: TCP
+          port: 443
+{{- end }}

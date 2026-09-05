@@ -1,0 +1,24 @@
+# App-of-apps root for prod Applications under gitops/apps/prod/*.
+# Multi-cluster: use gitops/clusters/applicationset-root.yaml instead
+# (see gitops/clusters/README.md). Kind keeps applying this file via
+# scripts/bootstrap-local.sh --with-gitops.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-prod
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/xdlc.git
+    targetRevision: main
+    path: gitops/apps/prod
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

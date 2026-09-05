@@ -1,0 +1,6 @@
+# Written by CI (image build step) on every push to develop. Not
+# hand-edited. This is the only field that changes per deploy — the
+# image digest that DEV gates and, on promote, PROD deploys unchanged.
+image:
+  repository: ghcr.io/your-org/example-service
+  tag: "sha-0000000"

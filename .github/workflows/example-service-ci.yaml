@@ -1,0 +1,68 @@
+name: example-service-ci
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "services/example-service/**"
+      # Do NOT include gitops/values/dev — the tag write-back commit would
+      # re-trigger this workflow in a loop.
+  pull_request:
+    paths:
+      - "services/example-service/**"
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  SERVICE: example-service
+  IMAGE: ghcr.io/your-org/example-service
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/example-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.x"
+      - run: go test ./...
+      - run: go build ./...
+
+  build-push-tag:
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: meta
+        working-directory: services/example-service
+        run: |
+          SHA="${GITHUB_SHA::7}"
+          docker build -t "${IMAGE}:sha-${SHA}" .
+          docker push "${IMAGE}:sha-${SHA}"
+          echo "tag=sha-${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Update gitops dev tag
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          sed -i "s/tag: .*/tag: \"${TAG}\"/" "gitops/values/dev/example-service.yaml"
+          git add "gitops/values/dev/example-service.yaml"
+          git diff --staged --quiet || git commit -m "ci(example-service): bump dev image to ${TAG} [skip ci]"
+          git push

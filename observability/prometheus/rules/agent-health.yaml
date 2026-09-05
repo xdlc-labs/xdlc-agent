@@ -1,0 +1,51 @@
+# Agent self-health alerts. xdlc-agent exposes Prometheus metrics at
+# GET /metrics on the same HTTP mux as webhooks/API (open, no auth —
+# standard scrape practice). Scrape via ServiceMonitor/PodMonitor or:
+#   curl -s http://xdlc-agent:8080/metrics
+# Series come from internal/otel (same instruments as OTLP export).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: agent-health
+  namespace: monitoring
+spec:
+  groups:
+    - name: agent-health
+      rules:
+        - alert: SDLCAgentDown
+          expr: up{job="xdlc-agent"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: xdlc-agent scrape target down
+        - alert: SDLCAgentDispatchErrors
+          expr: |
+            sum(rate(xdlc_agent_dispatch_duration_seconds_count{status="error"}[5m]))
+              /
+            sum(rate(xdlc_agent_dispatch_duration_seconds_count[5m])) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: >50% of dispatches ending in error
+        - alert: SDLCAgentGateCheckErrors
+          expr: |
+            sum(rate(xdlc_agent_gate_checks_total{status="error"}[5m]))
+              /
+            sum(rate(xdlc_agent_gate_checks_total[5m])) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: >50% of gate checks ending in error
+        - alert: SDLCAgentSubagentSlow
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(xdlc_agent_subagent_duration_seconds_bucket[15m])) by (le)
+            ) > 600
+          for: 20m
+          labels:
+            severity: warning
+          annotations:
+            summary: p95 subagent duration over 10 minutes

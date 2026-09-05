@@ -1,0 +1,23 @@
+{{- if .Values.backup.velero.enabled }}
+# Requires Velero already installed and watching this cluster (or the
+# namespace named below). See docs/disaster-recovery.md.
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: {{ include "xdlc-agent.fullname" . }}-pvc
+  namespace: {{ .Values.backup.velero.veleroNamespace }}
+  labels:
+    {{- include "xdlc-agent.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.velero.schedule | quote }}
+  template:
+    includedNamespaces:
+      - {{ .Release.Namespace }}
+    includedResources:
+      - persistentvolumeclaims
+      - persistentvolumes
+    labelSelector:
+      matchLabels:
+        {{- include "xdlc-agent.labels" . | nindent 8 }}
+    ttl: {{ .Values.backup.velero.ttl }}
+{{- end }}

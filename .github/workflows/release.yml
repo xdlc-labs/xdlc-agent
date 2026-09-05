@@ -1,0 +1,102 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Goreleaser image version without leading v (e.g. 1.0.0)"
+        required: true
+      release_tag:
+        description: "GitHub release tag (e.g. v1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write # keyless cosign (OIDC)
+
+jobs:
+  goreleaser:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.x"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      # Release builds run `go build` directly on this runner (goreleaser
+      # doesn't shell out to deploy/Dockerfile.release for compiling — it
+      # only copies the finished binary in, see that file's header comment).
+      # internal/console/dist is go:embed'd at compile time, so the console
+      # UI must be built and copied in here, before goreleaser-action runs,
+      # to match what deploy/Dockerfile already does for the dev image.
+      - name: Build ops console UI
+        working-directory: ui
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      - name: Copy console UI build into go:embed path
+        run: |
+          set -euo pipefail
+          if [ ! -d ui/dist ]; then
+            echo "::error::ui build did not produce ui/dist" >&2
+            exit 1
+          fi
+          mkdir -p internal/console/dist
+          cp -a ui/dist/. internal/console/dist/
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sign:
+    # Goreleaser publishes {{ .Version }} (no leading v). Tag push uses ref_name=vX.Y.Z.
+    needs: [goreleaser]
+    if: |
+      always() && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'push' && needs.goreleaser.result == 'success')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.8.2
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0.20.1
+      - name: SBOM + keyless cosign for release images
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          VER="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
+          TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          IMAGE="ghcr.io/xdlc-labs/xdlc-agent:${VER}"
+          syft "$IMAGE" -o spdx-json > "xdlc-${TAG}.sbom.spdx.json"
+          gh release upload "$TAG" "xdlc-${TAG}.sbom.spdx.json" --clobber
+          cosign sign --yes "$IMAGE"
+          cosign sign --yes "${IMAGE}-amd64"
+          cosign sign --yes "${IMAGE}-arm64"

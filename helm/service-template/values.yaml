@@ -1,0 +1,77 @@
+nameOverride: ""
+
+image:
+  repository: ""      # e.g. ghcr.io/your-org/example-service
+  tag: ""              # image digest/tag CI built and DEV gated — carried
+                        # through to prod unchanged by promote (see docs/architecture.md)
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  tls: false
+
+env: []
+  # - name: LOG_LEVEL
+  #   value: info
+envFrom: []
+  # - secretRef:
+  #     name: example-service-secrets
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+# UID 65532 matches distroless/static nonroot (example-service image).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL
+
+probes:
+  # Paths the chart wires into standard k8s readiness/liveness probes —
+  # separate from the smoke/e2e Job the dev-smoke gate runs post-sync.
+  readinessPath: /healthz
+  livenessPath: /healthz
+
+podDisruptionBudget:
+  create: true
+  maxUnavailable: 1
+
+# Default: app port from anywhere + egress DNS/HTTPS. Set ingressFrom
+# to restrict (e.g. ingress controller / mesh namespace).
+networkPolicy:
+  create: true
+  ingressFrom: []
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 75
+
+podAnnotations: {}
+  # prometheus.io/scrape: "true"
+  # prometheus.io/port: "8080"

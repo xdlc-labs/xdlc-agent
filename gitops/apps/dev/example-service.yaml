@@ -1,0 +1,34 @@
+# One Application per repo in config.yaml, same shape, dropped in this
+# directory — the dev-root Application (gitops/root-dev.yaml) discovers
+# them all via ApplicationSet-style directory generator. Copy this file
+# per new repo and swap the name/valueFiles.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dev-example-service
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/xdlc.git
+    targetRevision: develop
+    path: helm/service-template
+    helm:
+      valueFiles:
+        - ../../gitops/values/dev.yaml
+        # Per-service image tag, written by CI on every push to develop
+        # (image build step commits the digest here) — see
+        # docs/architecture.md's fast-forward-only promote note: this is
+        # the file that makes DEV and PROD deploy the exact same artifact.
+        - ../../gitops/values/dev/example-service.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

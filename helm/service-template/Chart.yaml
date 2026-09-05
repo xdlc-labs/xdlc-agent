@@ -1,0 +1,6 @@
+apiVersion: v2
+name: service-template
+description: Generic microservice chart — every repo in config.yaml deploys through this, parameterized per environment by values/{dev,prod}.yaml
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

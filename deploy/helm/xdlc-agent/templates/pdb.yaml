@@ -1,0 +1,13 @@
+{{- if .Values.podDisruptionBudget.create }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "xdlc-agent.fullname" . }}
+  labels:
+    {{- include "xdlc-agent.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "xdlc-agent.labels" . | nindent 6 }}
+{{- end }}
