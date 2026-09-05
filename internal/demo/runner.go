@@ -15,16 +15,16 @@ type fakeRunner struct{}
 func (f *fakeRunner) Run(ctx context.Context, dir, _ string, _ []string) (string, error) {
 	path := filepath.Join(dir, "add.go")
 	const fixed = "package demo\n\nfunc Add(a, b int) int { return a + b }\n"
-	if err := os.WriteFile(path, []byte(fixed), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(fixed), 0o644); err != nil { //nolint:gosec // G306: demo fixture tree
 		return "", err
 	}
-	if out, err := exec.CommandContext(ctx, "git", "-C", dir, "add", "add.go").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "git", "-C", dir, "add", "add.go").CombinedOutput(); err != nil { //nolint:gosec // G204: fixed git args
 		return string(out), fmt.Errorf("fake runner: git add: %w: %s", err, out)
 	}
-	if out, err := exec.CommandContext(ctx, "git", "-C", dir, "commit", "-m", "fix: Add returns a+b").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "git", "-C", dir, "commit", "-m", "fix: Add returns a+b").CombinedOutput(); err != nil { //nolint:gosec // G204: fixed git args
 		return string(out), fmt.Errorf("fake runner: git commit: %w: %s", err, out)
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "push", "origin", "develop").CombinedOutput()
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "push", "origin", "develop").CombinedOutput() //nolint:gosec // G204: fixed git args
 	if err != nil {
 		return string(out), fmt.Errorf("fake runner: git push: %w: %s", err, out)
 	}

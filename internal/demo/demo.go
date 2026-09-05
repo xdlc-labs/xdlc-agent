@@ -60,7 +60,7 @@ func Run(ctx context.Context, opts Options) error {
 		}
 		workdir = dir
 	}
-	fmt.Fprintf(out, "demo workdir: %s\n", workdir)
+	_, _ = fmt.Fprintf(out, "demo workdir: %s\n", workdir)
 
 	bareDir, workRepo, err := setupOrigin(workdir)
 	if err != nil {
@@ -145,7 +145,7 @@ func Run(ctx context.Context, opts Options) error {
 			status = store.StatusError
 			errMsg = dispatchErr.Error()
 		}
-		fmt.Fprintf(out, "signal=%s/%s action=%s status=%s\n", s.Source, s.Kind, action, status)
+		_, _ = fmt.Fprintf(out, "signal=%s/%s action=%s status=%s\n", s.Source, s.Kind, action, status)
 		select {
 		case results <- stepResult{action: action, err: dispatchErr}:
 		default:
@@ -202,7 +202,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	runCIRed := func() error {
-		fmt.Fprintln(out, "--- scenario: ci-red ---")
+		_, _ = fmt.Fprintln(out, "--- scenario: ci-red ---")
 		send(orchestrator.Signal{
 			Source:   orchestrator.SourceCI,
 			Kind:     orchestrator.KindFail,
@@ -212,7 +212,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	runSmokeRed := func() error {
-		fmt.Fprintln(out, "--- scenario: smoke-red ---")
+		_, _ = fmt.Fprintln(out, "--- scenario: smoke-red ---")
 		// map smoke-red → DevGate pass → Promote (issue #5)
 		res, err := smoke.Check(ctx, repoName)
 		if err != nil {
@@ -235,7 +235,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	runProdBreach := func() error {
-		fmt.Fprintln(out, "--- scenario: prod-breach ---")
+		_, _ = fmt.Fprintln(out, "--- scenario: prod-breach ---")
 		res, err := prod.Check(ctx, repoName)
 		if err != nil {
 			return fmt.Errorf("demo: prod-health check: %w", err)
@@ -280,7 +280,7 @@ func Run(ctx context.Context, opts Options) error {
 	if runErr != nil {
 		return runErr
 	}
-	fmt.Fprintln(out, "demo: ok")
+	_, _ = fmt.Fprintln(out, "demo: ok")
 	return nil
 }
 
@@ -342,7 +342,7 @@ func setupOrigin(root string) (bareDir, workDir string, err error) {
 	}
 	// ponytail: intentional bug so CI-red / Fix has something to do
 	broken := "package demo\n\nfunc Add(a, b int) int { return a - b }\n"
-	if err := os.WriteFile(filepath.Join(seedDir, "add.go"), []byte(broken), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(seedDir, "add.go"), []byte(broken), 0o644); err != nil { //nolint:gosec // G306: fixture in throwaway demo tree
 		return "", "", err
 	}
 	if err := git(seedDir, "add", "."); err != nil {
@@ -390,7 +390,7 @@ func TestAdd(t *testing.T) {
 `,
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil { //nolint:gosec // G306: fixture in throwaway demo tree
 			return err
 		}
 	}
@@ -398,7 +398,7 @@ func TestAdd(t *testing.T) {
 }
 
 func git(dir string, args ...string) error {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // G204: fixed git verb + local demo paths
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %v: %w: %s", args, err, strings.TrimSpace(string(out)))

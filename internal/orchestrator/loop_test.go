@@ -213,10 +213,7 @@ func TestFixCoalesceLatestWins(t *testing.T) {
 
 	close(disp.fixRelease)
 	deadline := time.After(2 * time.Second)
-	for {
-		if disp.fixes() >= 2 {
-			break
-		}
+	for disp.fixes() < 2 {
 		select {
 		case <-deadline:
 			t.Fatalf("timed out; fixes=%d", disp.fixes())

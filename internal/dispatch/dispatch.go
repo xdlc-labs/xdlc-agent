@@ -76,7 +76,7 @@ type Dispatcher struct {
 	fixRepoMu  sync.Mutex
 	fixRepoSem map[string]chan struct{}
 	// FixBudget soft-cancels Fix after duration (#9). 0 = unlimited.
-	FixBudget time.Duration
+	FixBudget   time.Duration
 	fixWaiting  atomic.Int64
 	fixInflight atomic.Int64
 }
