@@ -58,6 +58,7 @@ agent:
   # fix_mode: direct # or pr
   # fix_reverify: true          # require gate green after Fix (#2)
   # ci_rerun_before_fix: true  # flake ladder before agent (#3); default on
+  # fix_plan: true              # diagnose then patch (#23); default off
   # extra_env_keys: [HTTPS_PROXY]
 
 # fleet:

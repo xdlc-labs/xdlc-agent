@@ -294,6 +294,9 @@ type AgentConfig struct {
 	// rerun-failed-jobs once per run_url before invoking the Fix agent.
 	// Set false to skip the ladder.
 	CIRerunBeforeFix *bool `yaml:"ci_rerun_before_fix"`
+	// FixPlan enables optional diagnose-then-patch two-pass Fix (#23).
+	// Default false — one-shot remains.
+	FixPlan bool `yaml:"fix_plan"`
 }
 
 // Load reads and parses the YAML config at path. Unknown fields are

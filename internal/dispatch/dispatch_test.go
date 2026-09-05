@@ -562,3 +562,71 @@ func TestFixConcurrencyCap(t *testing.T) {
 		t.Fatalf("first Fix: %v", err)
 	}
 }
+
+// planThenFixRunner: first call returns plan text (no git); second commits like fakeRunner.
+type planThenFixRunner struct {
+	calls   int
+	prompts []string
+}
+
+func (f *planThenFixRunner) Run(ctx context.Context, dir, prompt string, _ []string) (string, error) {
+	f.calls++
+	f.prompts = append(f.prompts, prompt)
+	if f.calls == 1 {
+		return "1. change app.txt to fixed", nil
+	}
+	writeCommitT(ctx, dir, "app.txt", "fixed\n", "fix from subagent")
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "push", "origin", "develop").CombinedOutput()
+	return string(out), err
+}
+
+func TestFixPlanOffSingleRunnerCall(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &planThenFixRunner{}
+	d := New(mgr, runner, silentLogger())
+	// FixPlan left false
+	sig := orchestrator.Signal{
+		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
+		Evidence: map[string]any{},
+	}
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatal(err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("calls = %d, want 1", runner.calls)
+	}
+	if strings.Contains(runner.prompts[0], "Do NOT edit files") {
+		t.Fatal("one-shot must not use plan prompt")
+	}
+}
+
+func TestFixPlanOnTwoRunnerCalls(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &planThenFixRunner{}
+	d := New(mgr, runner, silentLogger())
+	d.FixPlan = true
+	sig := orchestrator.Signal{
+		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
+		Evidence: map[string]any{},
+	}
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatal(err)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("calls = %d, want 2", runner.calls)
+	}
+	if !strings.Contains(runner.prompts[0], "Do NOT edit files") {
+		t.Fatalf("pass1 should be plan-only:\n%s", runner.prompts[0])
+	}
+	if !strings.Contains(runner.prompts[1], "1. change app.txt to fixed") {
+		t.Fatalf("pass2 missing plan text:\n%s", runner.prompts[1])
+	}
+	if !strings.Contains(runner.prompts[1], "Implement the trusted plan") {
+		t.Fatalf("pass2 missing implement instruction:\n%s", runner.prompts[1])
+	}
+	if sig.Evidence["fix_plan"] != "used" {
+		t.Fatalf("fix_plan evidence = %v", sig.Evidence["fix_plan"])
+	}
+}

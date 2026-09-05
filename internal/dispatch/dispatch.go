@@ -47,6 +47,9 @@ type Dispatcher struct {
 	Metrics  *otel.Metrics // optional
 	// FixMode is "direct" (or empty) vs "pr" — passed to subagent.FixPrompt.
 	FixMode string
+	// FixPlan enables optional plan-then-patch two-pass Fix (issue #23).
+	// Default false — one-shot FixPrompt.
+	FixPlan bool
 	// Reverify, when set, is called after a successful Fix subagent run
 	// (issue #2). Non-nil error means the gate is still red — Fix fails.
 	Reverify func(ctx context.Context, s orchestrator.Signal) error
@@ -124,7 +127,6 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 		}
 		teamRules += "config agent_instructions:\n" + strings.TrimSpace(extra)
 	}
-	prompt := subagent.FixPrompt(s.Repo, reason, evidence, d.FixMode, prBranch, teamRules)
 
 	runner := d.Subagent
 	provider := d.DefaultProvider
@@ -145,11 +147,38 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 		s.Evidence["agent_provider"] = provider
 	}
 
+	authEnv := d.Repos.AuthEnv()
+	var prompt string
+	if d.FixPlan {
+		planPrompt := subagent.PlanPrompt(s.Repo, reason, evidence, teamRules)
+		subStart := time.Now()
+		planOut, perr := runner.Run(ctx, dir, planPrompt, authEnv)
+		subagent.MergeCost(s.Evidence, planOut)
+		if d.Metrics != nil {
+			status := "ok"
+			if perr != nil {
+				status = "error"
+			}
+			d.Metrics.SubagentRuns.Record(ctx, time.Since(subStart).Seconds(),
+				metric.WithAttributes(otel.AttrStatus(status)))
+		}
+		d.Log.Info("subagent plan finished", "repo", s.Repo, "output", truncate(planOut, 2000))
+		if perr != nil {
+			return fmt.Errorf("dispatch: fix: plan: %w", perr)
+		}
+		if s.Evidence != nil {
+			s.Evidence["fix_plan"] = "used"
+		}
+		prompt = subagent.FixFromPlanPrompt(s.Repo, reason, evidence, d.FixMode, prBranch, teamRules, planOut)
+	} else {
+		prompt = subagent.FixPrompt(s.Repo, reason, evidence, d.FixMode, prBranch, teamRules)
+	}
+
 	subStart := time.Now()
 	// Inject git AuthEnv (GIT_CONFIG_* http.extraHeader) so the subagent
 	// can `git push` without GITHUB_TOKEN in its allowlist — same credential
 	// path Promote/Revert use. Never pass App PEM / webhook secrets.
-	out, err := runner.Run(ctx, dir, prompt, d.Repos.AuthEnv())
+	out, err := runner.Run(ctx, dir, prompt, authEnv)
 	// Best-effort cost/tokens into Evidence (audit/backlog), even on error.
 	subagent.MergeCost(s.Evidence, out)
 	if d.Metrics != nil {

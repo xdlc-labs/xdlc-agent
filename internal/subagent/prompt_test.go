@@ -86,3 +86,28 @@ func TestFrameEvidenceTruncatesAtCap(t *testing.T) {
 		t.Fatalf("missing truncation marker in %q…", inner[len(inner)-40:])
 	}
 }
+
+func TestPlanPromptNoEdits(t *testing.T) {
+	p := PlanPrompt("svc", "fail", map[string]any{"log": "boom"}, "")
+	if !strings.Contains(p, "Do NOT edit files") {
+		t.Fatalf("missing plan-only instruction:\n%s", p)
+	}
+	if strings.Contains(p, "commit to the current branch") {
+		t.Fatal("plan prompt must not instruct commit")
+	}
+}
+
+func TestFixFromPlanPromptIncludesPlan(t *testing.T) {
+	p := FixFromPlanPrompt("svc", "fail", map[string]any{"x": 1}, "", "", "", "1. edit foo.go")
+	if !strings.Contains(p, planBegin) || !strings.Contains(p, "1. edit foo.go") {
+		t.Fatalf("missing plan block:\n%s", p)
+	}
+	if !strings.Contains(p, "Implement the trusted plan") {
+		t.Fatalf("missing implement instruction:\n%s", p)
+	}
+	begin := strings.Index(p, evidenceBegin)
+	planIdx := strings.Index(p, planBegin)
+	if begin < 0 || planIdx < 0 || planIdx < begin {
+		t.Fatal("plan must appear after untrusted evidence block start")
+	}
+}

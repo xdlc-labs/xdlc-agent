@@ -134,6 +134,7 @@ func daemonCmd() *cobra.Command {
 			disp := dispatch.New(repoMgr, runner, log)
 			disp.Metrics = &metrics
 			disp.FixMode = cfg.Agent.FixMode
+			disp.FixPlan = cfg.Agent.FixPlan
 			disp.DefaultProvider = cfg.Agent.Provider
 			disp.Route = cfg.Agent.Route
 			disp.Providers = append([]string(nil), cfg.Agent.Providers...)
