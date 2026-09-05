@@ -86,13 +86,15 @@ const (
 	ProviderCursor Provider = "cursor" // Cursor CLI (cursor-agent)
 )
 
-// promptPlaceholder is the token in an args template that gets replaced
-// with the actual prompt text at Run time.
+// promptPlaceholder marks where the prompt used to sit on argv. At Run
+// time that token is stripped and the prompt is fed on stdin instead, so
+// it never appears in /proc/*/cmdline (issue #11). Keep the marker in
+// defaults/templates so operator overrides still declare intent.
 const promptPlaceholder = "{{prompt}}"
 
 type providerSpec struct {
 	binary string
-	args   []string // one element must be promptPlaceholder
+	args   []string // may include promptPlaceholder (stripped → stdin)
 }
 
 // providerDefaults holds each Provider's default binary and headless
@@ -128,18 +130,18 @@ type Runner interface {
 type SubprocessRunner struct {
 	Provider Provider
 	Binary   string
-	Args     []string // one element must be promptPlaceholder
+	Args     []string // promptPlaceholder stripped; prompt goes on stdin
 	Timeout  time.Duration
 	// ExtraEnvKeys widens the subprocess env allowlist — see ExtractEnv.
 	ExtraEnvKeys []string
 }
 
 // NewSubprocessRunner returns a SubprocessRunner for provider, applying
-// its default binary/args unless binary or args override them. args
-// must contain promptPlaceholder ("{{prompt}}") exactly once if given;
-// pass nil to use the provider default. timeout defaults to 10 minutes.
-// extraEnvKeys is config.yaml's agent.extra_env_keys, passed through to
-// ExtractEnv on every Run.
+// its default binary/args unless binary or args override them. args may
+// contain promptPlaceholder ("{{prompt}}") — it is stripped at Run and
+// the prompt is written to stdin; pass nil to use the provider default.
+// timeout defaults to 10 minutes. extraEnvKeys is config.yaml's
+// agent.extra_env_keys, passed through to ExtractEnv on every Run.
 func NewSubprocessRunner(provider Provider, binary string, args []string, timeout time.Duration, extraEnvKeys []string) *SubprocessRunner {
 	spec, ok := providerDefaults[provider]
 	if !ok {
@@ -157,28 +159,24 @@ func NewSubprocessRunner(provider Provider, binary string, args []string, timeou
 	return &SubprocessRunner{Provider: provider, Binary: binary, Args: args, Timeout: timeout, ExtraEnvKeys: extraEnvKeys}
 }
 
-// Run invokes the configured CLI in repoDir with prompt substituted into
-// Args, bounded by r.Timeout. extraEnv is appended after the allowlist
-// filter — use it for git AuthEnv (GIT_CONFIG_*), never for GITHUB_*.
+// Run invokes the configured CLI in repoDir with prompt on stdin (never
+// argv), bounded by r.Timeout. On timeout the whole process group is
+// killed. extraEnv is appended after the allowlist filter — use it for
+// git AuthEnv (GIT_CONFIG_*), never for GITHUB_*.
 func (r *SubprocessRunner) Run(ctx context.Context, repoDir, prompt string, extraEnv []string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
 	defer cancel()
 
-	argv := make([]string, len(r.Args))
-	for i, a := range r.Args {
-		if a == promptPlaceholder {
-			a = prompt
-		}
-		argv[i] = a
-	}
+	argv := stripPromptPlaceholder(r.Args)
 
 	// gosec G204: r.Binary and argv come from operator config
-	// (config.yaml's agent.binary/agent.provider/agent.args) and this
-	// daemon's own constructed prompt text (subagent.FixPrompt), not
-	// attacker-controlled input.
+	// (config.yaml's agent.binary/agent.provider/agent.args), not
+	// attacker-controlled input. Prompt is on stdin, not argv.
 	cmd := exec.CommandContext(ctx, r.Binary, argv...) //nolint:gosec
 	cmd.Dir = repoDir
 	cmd.Env = append(ExtractEnv(os.Environ(), r.ExtraEnvKeys), extraEnv...)
+	cmd.Stdin = strings.NewReader(prompt)
+	configureKillGroup(cmd)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -188,4 +186,16 @@ func (r *SubprocessRunner) Run(ctx context.Context, repoDir, prompt string, extr
 		return stdout.String(), fmt.Errorf("subagent: %s run in %s: %w: %s", r.Binary, repoDir, err, stderr.String())
 	}
 	return stdout.String(), nil
+}
+
+// stripPromptPlaceholder drops {{prompt}} from argv; content goes on stdin.
+func stripPromptPlaceholder(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == promptPlaceholder {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }

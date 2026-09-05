@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
 )
@@ -211,5 +212,54 @@ func TestEnsureClonedResetsStaleWorkingTree(t *testing.T) {
 	originRev := strings.TrimSpace(gitCmdTest(t, bareDir, "rev-parse", "develop"))
 	if localRev != originRev {
 		t.Errorf("local HEAD (%s) != origin develop (%s) after EnsureCloned", localRev, originRev)
+	}
+}
+
+func TestEnsureClonedSkipsFetchWhenSynced(t *testing.T) {
+	root := t.TempDir()
+	bareDir := filepath.Join(root, "origin.git")
+	seedDir := filepath.Join(root, "seed")
+	workDir := filepath.Join(root, "work")
+
+	gitCmdTest(t, root, "init", "--bare", bareDir)
+	gitCmdTest(t, root, "clone", bareDir, seedDir)
+	gitCmdTest(t, seedDir, "config", "user.email", "test@example.com")
+	gitCmdTest(t, seedDir, "config", "user.name", "test")
+	gitCmdTest(t, seedDir, "checkout", "-b", "develop")
+	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmdTest(t, seedDir, "add", ".")
+	gitCmdTest(t, seedDir, "commit", "-m", "v1")
+	gitCmdTest(t, seedDir, "push", "origin", "develop")
+	gitCmdTest(t, bareDir, "symbolic-ref", "HEAD", "refs/heads/develop")
+	gitCmdTest(t, root, "clone", "--branch", "develop", bareDir, workDir)
+
+	mgr := NewManager("unused-root", []config.Repo{
+		{Name: "svc", GitHub: "org/svc", Dir: workDir, Branch: "develop"},
+	}, nil)
+
+	// Prime FETCH_HEAD, then a synced EnsureCloned must not touch it.
+	if err := mgr.EnsureCloned(context.Background(), "svc"); err != nil {
+		t.Fatalf("prime EnsureCloned: %v", err)
+	}
+	// Force a fetch so FETCH_HEAD exists, then sync again after a pause
+	// so mtime comparison is meaningful.
+	gitCmdTest(t, workDir, "fetch", "origin", "develop")
+	fetchHead := filepath.Join(workDir, ".git", "FETCH_HEAD")
+	before, err := os.Stat(fetchHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := mgr.EnsureCloned(context.Background(), "svc"); err != nil {
+		t.Fatalf("synced EnsureCloned: %v", err)
+	}
+	after, err := os.Stat(fetchHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("FETCH_HEAD mtime changed (%v → %v); expected skip-fetch no-op", before.ModTime(), after.ModTime())
 	}
 }

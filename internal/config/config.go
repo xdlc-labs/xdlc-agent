@@ -247,9 +247,9 @@ type AgentConfig struct {
 	Mode     string `yaml:"mode"`     // "subprocess" | "sdk"
 	Provider string `yaml:"provider"` // "claude" | "codex" | "cursor"
 	Binary   string `yaml:"binary"`   // overrides the provider's default binary name
-	// Args overrides the provider's default headless invocation. One
-	// element must be the literal string "{{prompt}}" (see
-	// internal/subagent). Leave unset to use the provider default.
+	// Args overrides the provider's default headless invocation. May
+	// include the literal "{{prompt}}" marker (stripped at run; prompt
+	// goes on stdin — see internal/subagent). Leave unset for defaults.
 	Args    []string      `yaml:"args"`
 	Timeout time.Duration `yaml:"timeout"`
 	// MaxConcurrentFixes caps how many Fix subagent runs may execute at

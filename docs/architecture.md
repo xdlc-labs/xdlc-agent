@@ -69,17 +69,18 @@ vendor. `agent.provider` in `config.yaml` picks which headless CLI
 
 | Provider | CLI | Default headless invocation |
 |---|---|---|
-| `claude` (default) | Claude Code | `claude -p <prompt> --output-format json` |
-| `codex` | OpenAI Codex CLI | `codex exec <prompt>` |
-| `cursor` | Cursor CLI (`cursor-agent`) | `cursor-agent -p <prompt>` |
+| `claude` (default) | Claude Code | `claude -p --output-format json` (prompt on **stdin**) |
+| `codex` | OpenAI Codex CLI | `codex exec` (prompt on **stdin**) |
+| `cursor` | Cursor CLI (`cursor-agent`) | `cursor-agent -p` (prompt on **stdin**) |
+
+Prompt text is never placed on argv (so it cannot leak via `/proc/*/cmdline`). `agent.args` may still include the literal `{{prompt}}` marker — it is stripped at run time; the prompt is written to the subprocess stdin. On timeout the runner kills the whole process group (`Setpgid` + `Cancel`) so nested `node`/`git` children do not orphan.
 
 Each of these reuses the CLI's own built-in file-edit/bash/git tool use
 instead of reimplementing it. Tradeoff: less control over intermediate
 steps than a hand-rolled tool loop, and you're parsing CLI output rather
 than a typed API response. `agent.binary` overrides the default binary
 name (point it at a wrapper script if you need custom flags); `agent.args`
-overrides the whole argv shape, one element must be the literal string
-`{{prompt}}`. Adding a new provider is a `providerDefaults` entry in
+overrides the argv shape (optional `{{prompt}}` marker). Adding a new provider is a `providerDefaults` entry in
 `internal/subagent/runner.go`, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 A `mode: sdk` alternative (`internal/subagent`, unimplemented) would talk
@@ -107,12 +108,12 @@ See `internal/gate.Gate` and the built-ins under `internal/gate/`.
 
 `internal/repos.Manager` keeps one working clone per repo on disk
 (`repos/<name>` by default, `Repo.Dir` to override). `EnsureCloned` runs
-before every `Fix`/`Revert`/`Promote`: clone if missing, otherwise
-`fetch` + `checkout <branch>` + `reset --hard origin/<branch>`. That
-reset is deliberate, not optional: without it a repo that already has a
-local clone would drift from origin (a stale subagent edit, a manual
-edit, a previous run's leftover state), and Fix/Revert/Promote would
-silently operate against the wrong commit. Anything in these
+before every `Fix`/`Revert`/`Promote` (and at daemon start, in parallel
+with a small semaphore): clone if missing (`--depth 1 --single-branch`),
+otherwise skip the network when `HEAD` already matches `origin/<branch>`
+and the tree is clean; if dirty or diverged, `fetch` + `checkout` +
+`reset --hard origin/<branch>`. That reset is deliberate when needed:
+without it a stale local clone would drift from origin. Anything in these
 directories is agent-owned and disposable; don't hand-edit them.
 
 ## Git authentication

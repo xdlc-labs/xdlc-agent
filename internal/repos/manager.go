@@ -203,11 +203,10 @@ func AuthEnv(token string) []string {
 
 // EnsureCloned makes dir a clean checkout of repo's branch: clones it if
 // the directory doesn't exist, or fetches + hard-resets it to
-// origin/<branch> if it does. The hard reset matters — a plain `git
-// fetch` (this function's previous, buggy behavior) leaves the working
-// tree on whatever commit it happened to be at, so a subagent could edit
-// against stale code, or promote/revert could operate against a stale
-// HEAD.
+// origin/<branch> if it does. When HEAD already matches origin/<branch>
+// and the working tree is clean, the network fetch is skipped (issue #17).
+// The hard reset still runs when dirty or diverged — a plain `git fetch`
+// alone would leave the working tree on a stale commit.
 func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 	r, ok := m.repos[repo]
 	if !ok {
@@ -218,6 +217,9 @@ func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 	env := m.AuthEnv()
 
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		if synced, _ := localMatchesOrigin(ctx, dir, branch); synced {
+			return nil
+		}
 		if err := runGit(ctx, dir, env, "fetch", "origin", branch); err != nil {
 			return err
 		}
@@ -231,7 +233,39 @@ func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 		return fmt.Errorf("repos: mkdir %s: %w", dir, err)
 	}
 	url := fmt.Sprintf("https://github.com/%s.git", r.GitHub)
-	return runGit(ctx, "", env, "clone", "--branch", branch, url, dir)
+	return runGit(ctx, "", env, "clone", "--depth", "1", "--single-branch", "--branch", branch, url, dir)
+}
+
+// localMatchesOrigin is true when HEAD is on branch, equals
+// origin/<branch>, and the working tree is clean — no network needed.
+func localMatchesOrigin(ctx context.Context, dir, branch string) (bool, error) {
+	cur, err := gitOutput(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil || cur != branch {
+		return false, err
+	}
+	head, err := gitOutput(ctx, dir, "rev-parse", "HEAD")
+	if err != nil {
+		return false, err
+	}
+	origin, err := gitOutput(ctx, dir, "rev-parse", "origin/"+branch)
+	if err != nil || head != origin {
+		return false, err
+	}
+	status, err := gitOutput(ctx, dir, "status", "--porcelain")
+	if err != nil || status != "" {
+		return false, err
+	}
+	return true, nil
+}
+
+func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	cmdArgs := append([]string{"-C", dir}, args...)
+	cmd := exec.CommandContext(ctx, "git", cmdArgs...) //nolint:gosec // fixed git verbs
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func runGit(ctx context.Context, dir string, env []string, args ...string) error {

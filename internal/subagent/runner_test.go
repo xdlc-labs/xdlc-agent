@@ -2,6 +2,8 @@ package subagent
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -49,10 +51,8 @@ func TestNewSubprocessRunnerOverrides(t *testing.T) {
 }
 
 func TestRunSubstitutesPromptAndReturnsOutput(t *testing.T) {
-	// "echo" as a stand-in CLI: Args puts the prompt where a real
-	// provider's flag value would go, proving promptPlaceholder
-	// substitution reaches argv correctly.
-	r := NewSubprocessRunner(ProviderClaude, "echo", []string{promptPlaceholder}, time.Minute, nil)
+	// "cat" reads stdin: proves prompt is fed on stdin, not argv.
+	r := NewSubprocessRunner(ProviderClaude, "cat", []string{promptPlaceholder}, time.Minute, nil)
 
 	out, err := r.Run(context.Background(), t.TempDir(), "fix the failing test in svc-a", nil)
 	if err != nil {
@@ -60,6 +60,52 @@ func TestRunSubstitutesPromptAndReturnsOutput(t *testing.T) {
 	}
 	if !strings.Contains(out, "fix the failing test in svc-a") {
 		t.Errorf("output = %q, want it to contain the prompt", out)
+	}
+}
+
+func TestRunPromptNotOnArgv(t *testing.T) {
+	dir := t.TempDir()
+	outFile := dir + "/cmdline"
+	secret := "UNIQUE_PROMPT_SECRET_xyzzy_not_on_argv"
+	// Dump /proc/self/cmdline then exit. Prompt must not appear there.
+	script := "tr '\\0' ' ' </proc/self/cmdline >" + outFile
+	r := NewSubprocessRunner(ProviderClaude, "sh", []string{"-c", script, promptPlaceholder}, time.Minute, nil)
+	if _, err := r.Run(context.Background(), dir, secret, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), secret) {
+		t.Errorf("prompt leaked onto cmdline: %q", got)
+	}
+}
+
+func TestRunTimeoutKillsProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	childPIDFile := dir + "/child.pid"
+	// Parent spawns a long-lived child, records its pid, then sleeps.
+	// Timeout must kill the whole group so the child does not survive.
+	script := "sleep 120 & echo $! >" + childPIDFile + "; sleep 120"
+	r := NewSubprocessRunner(ProviderClaude, "sh", []string{"-c", script, promptPlaceholder}, 200*time.Millisecond, nil)
+	_, err := r.Run(context.Background(), dir, "unused", nil)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	time.Sleep(300 * time.Millisecond)
+	raw, err := os.ReadFile(childPIDFile)
+	if err != nil {
+		t.Fatalf("child pid file missing (script never started?): %v", err)
+	}
+	pidStr := strings.TrimSpace(string(raw))
+	if pidStr == "" {
+		t.Fatal("empty child pid")
+	}
+	// kill -0: process exists?
+	if err := exec.Command("kill", "-0", pidStr).Run(); err == nil {
+		_ = exec.Command("kill", "-9", pidStr).Run()
+		t.Fatalf("orphan child pid %s still alive after timeout", pidStr)
 	}
 }
 

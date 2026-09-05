@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `xdlc-agent doctor` — PATH / token / config / optional Prometheus checks (#12)
+- Docs: [vs alternatives](vs-alternatives.md), [why not a GitHub Action](why-not-github-action.md) (#13)
+
+### Changed
+
+- Subagent: prompt on stdin (not argv); kill process group on timeout; external gates get env allowlist + same kill hygiene (#11)
+- `EnsureCloned`: skip fetch when HEAD matches `origin/<branch>` and tree clean; shallow first clone; parallel startup pre-clone (#17)
+
 ## [0.0.1-beta.1] - 2026-09-05
 
 First public beta of the open-source `xdlc-agent` daemon (MIT).

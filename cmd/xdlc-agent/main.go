@@ -14,6 +14,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -70,6 +71,7 @@ func main() {
 		backlogCmd(),
 		historyCmd(),
 		initCmd(),
+		doctorCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -235,11 +237,21 @@ func daemonCmd() *cobra.Command {
 			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
+			// Bounded parallel pre-clone (issue #17); hard-reset still per-repo.
+			var wg sync.WaitGroup
+			sem := make(chan struct{}, 8)
 			for _, r := range cfg.Repos {
-				if err := repoMgr.EnsureCloned(ctx, r.Name); err != nil {
-					log.Warn("pre-clone failed", "repo", r.Name, "error", err)
-				}
+				wg.Add(1)
+				go func(name string) {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+					if err := repoMgr.EnsureCloned(ctx, name); err != nil {
+						log.Warn("pre-clone failed", "repo", name, "error", err)
+					}
+				}(r.Name)
 			}
+			wg.Wait()
 
 			// Built once and shared: the webhook path re-runs these same
 			// gates (probe Job included) instead of trusting an ArgoCD

@@ -48,7 +48,8 @@ This is not “replace your pipeline with a chatbot.” It is **policy-gated aut
 
 Green CI → DEV stays your GitOps path. The agent does not invent deploys; it reacts to gates you already trust.
 
-More detail: [docs/architecture.md](docs/architecture.md).
+More detail: [docs/architecture.md](docs/architecture.md).  
+Positioning: [vs alternatives](docs/vs-alternatives.md) · [why not a GitHub Action](docs/why-not-github-action.md).
 
 ---
 
@@ -109,6 +110,13 @@ helm install xdlc-agent deploy/helm/xdlc-agent \
 ```
 
 From source: `go build -o bin/xdlc-agent ./cmd/xdlc-agent` then `./bin/xdlc-agent daemon --config config.yaml`.
+
+Sanity-check the machine first:
+
+```sh
+export XDL_API_TOKEN=dev-token   # required for /api/*
+./bin/xdlc-agent doctor --config config.yaml --skip-network
+```
 
 ---
 

@@ -5,9 +5,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
+
+// externalAllowEnv is the only env passed to out-of-tree gate commands —
+// same secret-scrub intent as subagent.ExtractEnv (issue #11). KUBECONFIG
+// is included so kubectl-based gates still work.
+var externalAllowEnv = map[string]struct{}{
+	"PATH": {}, "HOME": {}, "USER": {}, "LOGNAME": {},
+	"LANG": {}, "LC_ALL": {}, "LANGUAGE": {}, "TZ": {},
+	"KUBECONFIG": {},
+}
 
 // ExternalGate runs an out-of-tree command as a Gate (v2 plugin shape).
 // Protocol: stdin JSON {"repo":"…"}; stdout JSON {"ok":bool,"evidence":{…}}.
@@ -42,6 +53,8 @@ func (g *ExternalGate) Check(ctx context.Context, repo string) (Result, error) {
 	}
 	cmd := exec.CommandContext(ctx, g.Argv[0], g.Argv[1:]...) //nolint:gosec // operator-configured gate command
 	cmd.Stdin = bytes.NewReader(in)
+	cmd.Env = filterExternalEnv(os.Environ())
+	configureKillGroup(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -65,4 +78,18 @@ func (g *ExternalGate) Check(ctx context.Context, repo string) (Result, error) {
 	}
 	ev["gate"] = g.GateName
 	return Result{Status: st, Evidence: ev, At: time.Now().UTC()}, nil
+}
+
+func filterExternalEnv(environ []string) []string {
+	out := make([]string, 0, len(externalAllowEnv))
+	for _, kv := range environ {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if _, keep := externalAllowEnv[key]; keep {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
