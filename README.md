@@ -149,8 +149,8 @@ docker run --rm -p 8080:8080 \
  -e GITHUB_WEBHOOK_SECRET \
  -e XDL_API_TOKEN \
  -e ANTHROPIC_API_KEY \
- ghcr.io/xdlc-labs/xdlc-agent:2.0.0 \
- daemon --config /etc/xdlc-agent/config.yaml
+  ghcr.io/xdlc-labs/xdlc-agent:0.0.1-beta.1 \
+  daemon --config /etc/xdlc-agent/config.yaml
 ```
 
 ---
@@ -165,9 +165,9 @@ kubectl create secret generic xdlc-agent-secrets \
  --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
 
 helm install xdlc-agent deploy/helm/xdlc-agent \
- --set image.tag=2.0.0 \
- --set existingSecret=xdlc-agent-secrets \
- --set-file config=config.yaml
+  --set image.tag=0.0.1-beta.1 \
+  --set existingSecret=xdlc-agent-secrets \
+  --set-file config=config.yaml
 ```
 
 See [deploy/helm/xdlc-agent/values.yaml](deploy/helm/xdlc-agent/values.yaml). Chart enforces `replicaCount: 1` (single-writer audit DB).
@@ -205,8 +205,9 @@ config.example.yaml reference config
 
 ```sh
 make test
+make bench         # microbenchmarks (Decide, validate, store, …)
 make build
-make lint # golangci-lint v2.13.2
+make lint          # golangci-lint v2.13.2
 cd ui && bun install && bun run test && bun run build
 ```
 

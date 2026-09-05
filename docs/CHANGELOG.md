@@ -6,6 +6,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.1-beta.1] - 2026-09-05
+
+First public beta of the open-source `xdlc-agent` daemon (MIT).
+
+### Added
+
+- Open-core public release: daemon, ops console, agent Helm chart
+- Signal loop: CI / DEV smoke / PROD health → Fix / Promote / Revert
+- BYO coding agents: `claude`, `codex`, `cursor`
+- Ops console with bearer auth, overview, repos, gates, activity, actions
+- `make bench` + microbenchmarks for Decide, validate.Config, store, ratelimit, FixPrompt
+- Docs: architecture, contributing, security, CoC, changelog
+
+### Notes
+
+- Helm chart / image tag: `0.0.1-beta.1`
+- Prior `1.x` / `2.x` CHANGELOG entries below describe pre-public stealth work;
+  treat this beta as the first installable OSS cut
+
 ## [2.0.0] - 2026-09-04
 
 ### Added
@@ -168,6 +187,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `claude.mode: sdk` reserved but unimplemented
 - AWS/EKS bootstrap not included (local Kind only)
 
+[0.0.1-beta.1]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.1
 [2.0.0]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v2.0.0
 [1.0.0]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v1.0.0
 [0.1.2]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.1.2
