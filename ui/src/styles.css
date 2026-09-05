@@ -522,3 +522,47 @@
     transform: none !important;
   }
 }
+
+/* Docs: highlight.js tokens — mission-control dark, not default github-dark */
+.docs-md .hljs {
+  background: transparent;
+  color: var(--foreground);
+  padding: 0;
+}
+.docs-md .hljs-comment,
+.docs-md .hljs-quote {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.docs-md .hljs-keyword,
+.docs-md .hljs-selector-tag,
+.docs-md .hljs-literal {
+  color: var(--primary);
+}
+.docs-md .hljs-string,
+.docs-md .hljs-attr,
+.docs-md .hljs-attribute {
+  color: var(--pass);
+}
+.docs-md .hljs-number,
+.docs-md .hljs-built_in,
+.docs-md .hljs-type {
+  color: var(--acting);
+}
+.docs-md .hljs-title,
+.docs-md .hljs-section,
+.docs-md .hljs-name {
+  color: color-mix(in oklab, var(--primary) 85%, white);
+}
+.docs-md .hljs-meta,
+.docs-md .hljs-subst {
+  color: var(--muted-foreground);
+}
+.docs-md .hljs-variable,
+.docs-md .hljs-template-variable {
+  color: var(--breach);
+}
+.docs-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}

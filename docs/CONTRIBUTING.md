@@ -16,7 +16,8 @@ cd ui && bun install && bun run lint && bun run test && bun run build
 
 Do not run bare `go test ./...` after `bun install` — `ui/node_modules` can ship Go files. Use `make test`.
 
-For a real coding-agent Fix in demo/UI, map your key to the CLI env name:
+Docs: [Getting started](docs/getting-started.md) · [Production loop](docs/production-loop.md). Console **Docs** nav after `bun run build` (syncs `docs/` → UI).
+
 
 ```sh
 export CURSOR_API_KEY="$cursor_agent_key"   # or ANTHROPIC_API_KEY / OPENAI_API_KEY

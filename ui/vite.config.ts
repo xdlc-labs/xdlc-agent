@@ -1,8 +1,13 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import tsConfigPaths from "vite-tsconfig-paths";
+
+const uiRoot = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(uiRoot, "..");
 
 // Plain client-side SPA build: no SSR, no server bundle. `vite build`
 // produces a standard dist/ (index.html + hashed assets) that
@@ -14,6 +19,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: false,
+    fs: { allow: [repoRoot] },
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8080",

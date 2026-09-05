@@ -1,0 +1,1 @@
+import{t as e}from"./jsx-runtime-DRF4vMFQ.js";import{n as t}from"./Match-DUOh-Tvm.js";var n=e();function r(){return(0,n.jsx)(t,{})}export{r as component};

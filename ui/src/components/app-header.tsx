@@ -6,12 +6,16 @@ import { fetchAuthConfig, fetchRole } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { resolveTheme, toggleTheme, type Theme } from "@/lib/theme";
 
-const nav = [
+const navOps = [
   { to: "/", key: "nav.overview" },
   { to: "/gates", key: "nav.gates" },
   { to: "/repos", key: "nav.repos" },
   { to: "/activity", key: "nav.activity" },
   { to: "/actions", key: "nav.actions" },
+] as const;
+
+const navMeta = [
+  { to: "/docs", key: "nav.docs" },
   { to: "/settings", key: "nav.settings" },
 ] as const;
 
@@ -112,31 +116,54 @@ export function AppSidebar() {
         </Link>
       </div>
 
-      <nav aria-label={t("header.nav")} className="flex flex-1 flex-col gap-1 px-3 py-5">
-        {nav.map((n) => (
-          <Link
-            key={n.to}
-            to={n.to}
-            activeOptions={{ exact: n.to === "/" }}
-            activeProps={{
-              className: "text-primary bg-primary/15 border-primary/40",
-            }}
-            inactiveProps={{
-              className: "text-muted-foreground border-transparent hover:bg-surface/80 hover:text-foreground",
-            }}
-            className="nav-link flex items-center justify-between gap-2 rounded border px-3 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em]"
-          >
-            <span>{t(n.key)}</span>
-            {n.to === "/actions" && openPRs > 0 ? (
-              <span
-                className="rounded bg-primary/20 px-1.5 py-0.5 font-mono text-[10px] normal-case tracking-normal text-primary"
-                aria-label={`${openPRs} open Fix PRs`}
-              >
-                {openPRs}
-              </span>
-            ) : null}
-          </Link>
-        ))}
+      <nav aria-label={t("header.nav")} className="flex flex-1 flex-col px-3 py-5">
+        <div className="flex flex-col gap-1">
+          {navOps.map((n) => (
+            <Link
+              key={n.to}
+              to={n.to}
+              activeOptions={{ exact: n.to === "/" }}
+              activeProps={{
+                className: "text-primary bg-primary/15 border-primary/40",
+              }}
+              inactiveProps={{
+                className: "text-muted-foreground border-transparent hover:bg-surface/80 hover:text-foreground",
+              }}
+              className="nav-link flex items-center justify-between gap-2 rounded border px-3 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em]"
+            >
+              <span>{t(n.key)}</span>
+              {n.to === "/actions" && openPRs > 0 ? (
+                <span
+                  className="rounded bg-primary/20 px-1.5 py-0.5 font-mono text-[10px] normal-case tracking-normal text-primary"
+                  aria-label={`${openPRs} open Fix PRs`}
+                >
+                  {openPRs}
+                </span>
+              ) : null}
+            </Link>
+          ))}
+        </div>
+
+        <div className="my-4 border-t border-border/50" role="separator" />
+
+        <div className="flex flex-col gap-1">
+          {navMeta.map((n) => (
+            <Link
+              key={n.to}
+              to={n.to}
+              activeOptions={{ exact: n.to === "/settings" }}
+              activeProps={{
+                className: "text-primary bg-primary/15 border-primary/40",
+              }}
+              inactiveProps={{
+                className: "text-muted-foreground border-transparent hover:bg-surface/80 hover:text-foreground",
+              }}
+              className="nav-link flex items-center justify-between gap-2 rounded border px-3 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em]"
+            >
+              <span>{t(n.key)}</span>
+            </Link>
+          ))}
+        </div>
       </nav>
 
       <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-border/70 px-4 py-4">
@@ -148,14 +175,6 @@ export function AppSidebar() {
         >
           {theme === "dark" ? "light" : "dark"}
         </button>
-        <a
-          href="https://github.com/xdlc-labs/xdlc-agent/blob/main/docs/architecture.md"
-          target="_blank"
-          rel="noreferrer"
-          className="font-mono text-[11px] text-muted-foreground hover:text-primary"
-        >
-          {t("header.docs")}
-        </a>
         <a
           href="https://github.com/xdlc-labs/xdlc-agent"
           target="_blank"

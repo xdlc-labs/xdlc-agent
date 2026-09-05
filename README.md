@@ -14,6 +14,17 @@ One open-source daemon watches your repos. When CI fails, DEV smoke fails, or pr
 
 ---
 
+## Docs
+
+- **[Getting started](docs/getting-started.md)** — demo or doctor + daemon  
+- **[API tokens](docs/api-tokens.md)** — create `XDLC_API_TOKEN`  
+- **[Production loop](docs/production-loop.md)** — GitHub → Fix → Argo → Promote → Prom → Revert  
+- [Configuration](docs/configuration.md) · [Deployment](docs/deployment.md) · [API](docs/api-reference.md) · [Architecture](docs/architecture.md)
+
+In a running console: **Docs** in the left nav (`/docs`) — same theme as the ops UI.
+
+---
+
 ## Why agentic platform engineering?
 
 Platform engineering already owns the paved road: CI, GitOps, environments, SLOs. What it usually *doesn't* own is the overnight grind when that road turns red  -  failed builds, flaky smokes, bad promotes, and “someone paste the logs into ChatGPT.”
