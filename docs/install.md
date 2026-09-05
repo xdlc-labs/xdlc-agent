@@ -62,6 +62,7 @@ go build -o bin/xdlc ./cmd/xdlc-agent
 
 ## Next
 
-- [Getting started](getting-started.md) — demo or doctor + daemon
+- [Getting started](getting-started.md) — demo or CI Fix daemon
+- [Optional profiles](production-loop.md) — GitOps / prod later
 - [Deployment](deployment.md) — Helm / cluster
 - [API tokens](api-tokens.md) — console bearer

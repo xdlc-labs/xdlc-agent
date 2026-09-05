@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xdlc-labs/xdlc-agent/internal/config"
+	"github.com/xdlc-labs/xdlc-agent/internal/validate"
 )
 
 func TestParseGitHubRemote(t *testing.T) {
@@ -57,10 +61,81 @@ func TestScanReposFindsGitHubCheckouts(t *testing.T) {
 		t.Fatalf("dir must be absolute for config.yaml: %q", found[0].Dir)
 	}
 
-	cfg := configFromScan(found)
+	cfg := configFromScan(found, "ci")
 	for _, want := range []string{"name: api", "github: acme/api", "gates: [ci]", "provider: claude"} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("generated config missing %q:\n%s", want, cfg)
+		}
+	}
+	if strings.Contains(cfg, "dev-smoke") {
+		t.Errorf("ci profile must not enable dev-smoke:\n%s", cfg)
+	}
+}
+
+func TestParseInitProfile(t *testing.T) {
+	cases := map[string]string{
+		"":       "ci",
+		"ci":     "ci",
+		"CI":     "ci",
+		"gitops": "gitops",
+		"full":   "full",
+	}
+	for in, want := range cases {
+		got, err := parseInitProfile(in)
+		if err != nil {
+			t.Errorf("parseInitProfile(%q): %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("parseInitProfile(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if _, err := parseInitProfile("paved"); err == nil {
+		t.Fatal("expected error for unknown profile")
+	}
+}
+
+func TestStarterYAMLProfiles(t *testing.T) {
+	ci := starterYAML("ci")
+	if !strings.Contains(ci, "gates: [ci]") || strings.Contains(ci, "dev-smoke") {
+		t.Fatalf("ci starter must be CI-only:\n%s", ci)
+	}
+	gitops := starterYAML("gitops")
+	if !strings.Contains(gitops, "gates: [ci, dev-smoke]") || strings.Contains(gitops, "prod-health") {
+		t.Fatalf("gitops starter must omit prod-health:\n%s", gitops)
+	}
+	full := starterYAML("full")
+	if !strings.Contains(full, "prod-health") || !strings.Contains(full, "argocd_app") {
+		t.Fatalf("full starter missing paved-road keys:\n%s", full)
+	}
+}
+
+func TestConfigFromScanGitops(t *testing.T) {
+	found := []scannedRepo{{Name: "api", GitHub: "acme/api", Dir: "/src/api"}}
+	cfg := configFromScan(found, "gitops")
+	for _, want := range []string{"gates: [ci, dev-smoke]", "argocd_app: dev-api", "ARGOCD_WEBHOOK_SECRET"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("gitops scan config missing %q:\n%s", want, cfg)
+		}
+	}
+	if strings.Contains(cfg, "prod-health") {
+		t.Errorf("gitops scan must not enable prod-health:\n%s", cfg)
+	}
+}
+
+func TestStarterYAMLValidates(t *testing.T) {
+	for _, profile := range []string{"ci", "gitops", "full"} {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(starterYAML(profile)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := config.Load(path)
+		if err != nil {
+			t.Errorf("profile %s load: %v", profile, err)
+			continue
+		}
+		if issues := validate.Config(cfg); len(issues) > 0 {
+			t.Errorf("profile %s validate: %v", profile, issues)
 		}
 	}
 }

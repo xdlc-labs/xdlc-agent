@@ -1,6 +1,8 @@
-# Production loop
+# Optional profiles
 
-Wire the full paved road: CI fail → Fix → GitOps DEV → smoke → Promote → prod SLOs → Revert.
+The **default install is CI Fix**: GitHub `workflow_run` fail → **Fix**. You do not need Argo, Prometheus, or kubectl for that. See [Getting started](getting-started.md).
+
+This page is the opt-in paved road: CI fail → Fix → GitOps DEV → smoke → Promote → prod SLOs → Revert. Enable it with `xdlc init --profile gitops` or `--profile full` (or by adding gates to an existing `config.yaml`).
 
 ```mermaid
 flowchart TB
@@ -13,7 +15,17 @@ flowchart TB
   Smoke -->|fail| Fix
 ```
 
-## Gate → action
+## Profiles
+
+| Profile | Command | Gates | What you must already have |
+|---------|---------|-------|----------------------------|
+| **ci** (default) | `xdlc init` | `ci` | GitHub Actions + agent CLI |
+| **gitops** | `xdlc init --profile gitops` | `ci`, `dev-smoke` | ArgoCD app + smoke Job in `dev` |
+| **full** | `xdlc init --profile full` | `ci`, `dev-smoke`, `prod-health` | GitOps plus Prometheus or Alertmanager |
+
+Green CI → DEV remains **your** GitOps path. The agent does not invent deploys. It only reacts to gates you list on `repos[].gates`.
+
+## Gate → action (when the gate is enabled)
 
 | Signal | Action |
 |--------|--------|
@@ -22,17 +34,23 @@ flowchart TB
 | DEV smoke pass | **Promote** (fast-forward only) |
 | Prod p95 / error-rate breach | **Revert** |
 
-Green CI → DEV remains **your** GitOps path. The agent does not invent deploys.
-
 ## Ordered checklist
 
+**CI Fix (do this first)**
+
 1. [Deployment](deployment.md) — run `xdlc daemon` (Docker/Helm) with durable volume
-2. [Configuration](configuration.md) — repos, gates, agent provider
+2. [Configuration](configuration.md) — repos with `gates: [ci]`, agent provider
 3. [GitHub webhooks](github-webhooks.md) — App + `workflow_run` → `/webhooks/github`
 4. [Fix modes](fix-modes.md) — `direct` or `pr` + agent CLI/keys
-5. [GitOps / ArgoCD](gitops-argo.md) — `argocd_app`, smoke, promote
-6. [Prod health](prod-health.md) — PromQL / Alertmanager → revert
-7. [Operations](operations.md) — audit, console, upgrades
+5. [Operations](operations.md) — audit, console, upgrades
+
+**GitOps profile (optional)**
+
+6. [GitOps / ArgoCD](gitops-argo.md) — add `dev-smoke`, `argocd_app`, Helm `role.create=true`
+
+**Full profile (optional)**
+
+7. [Prod health](prod-health.md) — PromQL / Alertmanager → revert
 
 ## Verification status
 

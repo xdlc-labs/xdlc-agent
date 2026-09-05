@@ -18,6 +18,6 @@ Honest map of what peers own vs what this daemon owns. One screen for “how is 
 
 **Flagger / Rollouts?** Keep them for canary/analysis. Point Alertmanager / probes at us when you want an agent (or git revert) inside the same policy you already trust.
 
-**Another agent framework?** No. One loop, three gates, BYO coding-agent CLI. MIT, self-hosted, no SaaS in the path.
+**Another agent framework?** No. One loop, BYO coding-agent CLI. CI Fix by default; GitOps / prod gates optional. MIT, self-hosted, no SaaS in the path.
 
 See also: [why not a GitHub Action](why-not-github-action.md), [architecture](architecture.md).

@@ -14,7 +14,7 @@ function DocsLayout() {
 
   return (
     <div>
-      <PageHeader title="docs" sub="Start local, then wire the production loop." />
+      <PageHeader title="docs" sub="Start with CI Fix. GitOps and prod revert are optional." />
       <div className="flex flex-col lg:flex-row">
         <aside className="lg:sticky lg:top-12 lg:max-h-[calc(100vh-3rem)] lg:w-52 lg:shrink-0 lg:overflow-y-auto lg:border-r lg:border-border/60">
           {/* Mobile: horizontal section chips */}

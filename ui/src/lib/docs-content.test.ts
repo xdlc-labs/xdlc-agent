@@ -32,13 +32,13 @@ describe("docs-content", () => {
 });
 
 describe("docsAdjacent", () => {
-  it("orders install → getting started → api tokens → production", () => {
+  it("orders install → getting started → api tokens → GitHub", () => {
     const { next: fromInstall } = docsAdjacent("install");
     expect(fromInstall?.slug).toBe("getting-started");
     const { next } = docsAdjacent("getting-started");
     expect(next?.slug).toBe("api-tokens");
     const { prev, next: n2 } = docsAdjacent("api-tokens");
     expect(prev?.slug).toBe("getting-started");
-    expect(n2?.slug).toBe("production-loop");
+    expect(n2?.slug).toBe("github-webhooks");
   });
 });

@@ -8,11 +8,13 @@ Repo, GHCR image, and Helm chart stay **`xdlc-agent`**.
 ## The loop
 
 `xdlc daemon` runs one process: an HTTP server for GitHub
-`workflow_run`, ArgoCD notification, and Alertmanager webhooks, plus
-dashboard JSON under `/api/*` (reads for the console; operator
-Fix/Promote/Revert writes),
-plus tickers that poll the dev-smoke and prod-health gates (fallback when
-webhooks are quiet), all feeding a single `chan orchestrator.Signal`.
+`workflow_run` (always), plus ArgoCD notification and Alertmanager
+webhooks when those gates are enabled, dashboard JSON under `/api/*`,
+and tickers that poll only the gates listed on `repos[]`. Default
+install is **CI Fix** (`gates: [ci]`). GitOps promote and prod revert
+are opt-in ([Optional profiles](production-loop.md)).
+
+All of that feeds a single `chan orchestrator.Signal`.
 One goroutine (`orchestrator.Run`) reads that channel, calls `Decide`
 (pure function, `Signal -> Action`), then applies optional **fleet
 policy** that may suppress Fix/Revert/Promote to `noop`

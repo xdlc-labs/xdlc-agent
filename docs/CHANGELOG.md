@@ -15,6 +15,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Default install is **CI Fix** only (`gates: [ci]`). `xdlc init`, `config.example.yaml`, and Helm values no longer enable `dev-smoke` / `prod-health`. Opt in with `xdlc init --profile gitops` or `--profile full`. Helm `role.create` defaults to `false` (enable for GitOps smoke Jobs).
 - CLI binary renamed to **`xdlc`** (was `xdlc-agent`). Repo, module, GHCR image, and Helm chart stay **`xdlc-agent`**.
 - API bearer env is fixed **`XDLC_API_TOKEN`** (was `XDL_API_TOKEN` + configurable `server.api_token_env`). Optional viewer: **`XDLC_API_VIEWER_TOKEN`**.
 
@@ -25,6 +26,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Operator instructions on Manual Fix: optional free text in the console dialog and `POST /api/actions/fix` (`instructions`, ≤ 4096 bytes); trusted block placement, length-only in audit
 - `gemini` coding-agent provider (`gemini` CLI, `GEMINI_API_KEY`); opt-in in the container image via `--build-arg GEMINI_CLI_VERSION`
 - `xdlc init --scan <dir>` — seed `repos:` from local Git checkouts with a GitHub origin
+- `xdlc init --profile ci|gitops|full` — CI Fix is the default scaffold; GitOps / paved road are opt-in
 - `scripts/install.sh` — curl-install `xdlc` from GitHub Releases (checksum verified); [Install](install.md)
 - `scripts/e2e-local.sh` — loopback CI → Fix → Argo Promote → Alertmanager Revert (+ unknown-app 204). Token `dev-token`, `agent.timeout: 10m`, `OTEL_SDK_DISABLED=true`. Minikube/ArgoCD is a precondition, not installed.
 - `xdlc demo` — zero-infra Fix→Promote→Revert with `--provider fake` (#5)

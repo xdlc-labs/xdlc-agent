@@ -19,18 +19,25 @@ export const DOCS_NAV: DocsGroup[] = [
     ],
   },
   {
-    id: "production",
-    label: "Production loop",
+    id: "ci-fix",
+    label: "CI Fix",
     items: [
-      { slug: "production-loop", title: "Overview" },
       { slug: "github-webhooks", title: "GitHub" },
       { slug: "fix-modes", title: "Fix modes" },
       { slug: "rules-and-skills", title: "Rules and skills" },
       { slug: "sessions", title: "Fix sessions" },
-      { slug: "gitops-argo", title: "GitOps" },
-      { slug: "prod-health", title: "Prod health" },
       { slug: "deployment", title: "Deploy" },
       { slug: "operations", title: "Operations" },
+    ],
+  },
+  {
+    id: "optional",
+    label: "Optional gates",
+    collapsed: true,
+    items: [
+      { slug: "production-loop", title: "Profiles" },
+      { slug: "gitops-argo", title: "GitOps" },
+      { slug: "prod-health", title: "Prod health" },
     ],
   },
   {

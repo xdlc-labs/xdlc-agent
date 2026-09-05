@@ -34,37 +34,28 @@ service:
   type: ClusterIP
   port: 8080
 
-# Contents become config.yaml, mounted read-only. See config.example.yaml and
-# the starter config xdlc init writes for the full schema.
+# Contents become config.yaml, mounted read-only. Default is the CI Fix
+# profile (GitHub → Fix). Prefer --set-file config=config.yaml from
+# `xdlc init` (or --profile gitops|full). See config.example.yaml.
 config: |
   repos: []
   gates:
     ci:
       trigger: on_push
-    dev-smoke:
-      trigger: on_sync
-      namespace: dev
-      interval: 30s
-    prod-health:
-      trigger: continuous
-      metrics_url: ""
-      thresholds:
-        p95_ms: 500
-        error_rate: 0.01
-      interval: 30s
   server:
     addr: ":8080"
     require_webhook_secret: true
   agent:
     mode: subprocess
-    provider: claude # claude | codex | cursor
+    provider: claude # claude | codex | cursor | gemini
     timeout: 10m
 
-# Names of Secret keys expected to hold: GITHUB_TOKEN (PAT fallback)
-# and/or GITHUB_APP_ID + GITHUB_APP_INSTALLATION_ID + GITHUB_APP_PRIVATE_KEY,
-# GITHUB_WEBHOOK_SECRET (and optional ARGOCD_WEBHOOK_SECRET /
-# ALERTMANAGER_WEBHOOK_SECRET), plus whichever of ANTHROPIC_API_KEY /
-# OPENAI_API_KEY / CURSOR_API_KEY your agent.provider needs. Create the
+# Names of Secret keys expected to hold: XDLC_API_TOKEN, GITHUB_TOKEN
+# (PAT fallback) and/or GITHUB_APP_ID + GITHUB_APP_INSTALLATION_ID +
+# GITHUB_APP_PRIVATE_KEY, GITHUB_WEBHOOK_SECRET, plus whichever of
+# ANTHROPIC_API_KEY / OPENAI_API_KEY / CURSOR_API_KEY / GEMINI_API_KEY
+# your agent.provider needs. GitOps / full profiles also need
+# ARGOCD_WEBHOOK_SECRET and ALERTMANAGER_WEBHOOK_SECRET. Create the
 # Secret yourself (kubectl create secret generic xdlc-agent-secrets
 # --from-literal=...) and reference it here, never put tokens in
 # values.yaml.
@@ -75,11 +66,11 @@ serviceAccount:
   name: ""
 
 # Namespaced RBAC for reading Job status / pod logs in the smoke
-# probe namespace (dev-smoke.namespace). Role + RoleBinding land in
-# role.namespace, which may differ from the release namespace. Extend
-# role.rules only if the agent needs more in that namespace.
+# probe namespace. Off by default: the CI Fix profile does not call
+# kubectl. Set create: true (and role.namespace = gates.dev-smoke.namespace)
+# when you enable the GitOps profile (docs/gitops-argo.md).
 role:
-  create: true
+  create: false
   namespace: dev
   rules:
     - apiGroups: ["batch"]

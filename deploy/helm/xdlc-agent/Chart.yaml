@@ -1,6 +1,6 @@
 apiVersion: v2
 name: xdlc-agent
-description: xdlc orchestrator (xdlc-agent) - one loop, 3 gates
+description: xdlc orchestrator — CI Fix daemon; GitOps / prod gates optional
 type: application
 version: 0.0.1-beta.2
 appVersion: "0.0.1-beta.2"

@@ -2,24 +2,36 @@
 
 Primary file: `config.yaml` (schema: `schema/config.schema.json`). Starter: `config.example.yaml` or `xdlc init`.
 
-Seed `repos:` from the checkouts already on this machine:
+## Profiles
+
+| Profile | Command | `repos[].gates` |
+|---------|---------|-----------------|
+| **ci** (default) | `xdlc init` | `[ci]` |
+| **gitops** | `xdlc init --profile gitops` | `[ci, dev-smoke]` |
+| **full** | `xdlc init --profile full` | `[ci, dev-smoke, prod-health]` |
+
+Seed `repos:` from the checkouts already on this machine (still CI-only unless you pass `--profile`):
 
 ```sh
 xdlc init --scan ~/src
 ```
 
-Every Git checkout directly under that directory with a GitHub `origin` becomes a repo entry with the `ci` gate. Cluster keys (`argocd_app`, `probe_job`) are left commented for you to fill in.
+Every Git checkout directly under that directory with a GitHub `origin` becomes a repo entry with the `ci` gate. Cluster keys (`argocd_app`, `probe_job`) are left commented on profile `ci`.
+
+Gates the daemon does not list on a repo do not run: no Argo poller, no PromQL, no extra webhook secrets.
 
 ## Server
+
+CI Fix only needs the GitHub webhook secret:
 
 ```yaml
 server:
   addr: ":8080"
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
-  argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
-  alertmanager_webhook_secret_env: ALERTMANAGER_WEBHOOK_SECRET
   require_webhook_secret: false  # true in prod
 ```
+
+GitOps / full profiles also set `argocd_webhook_secret_env` and `alertmanager_webhook_secret_env`.
 
 API tokens are **fixed env names** (not configurable in YAML). You **generate** the secret yourself — see [API tokens](api-tokens.md).
 
@@ -34,18 +46,16 @@ API tokens are **fixed env names** (not configurable in YAML). You **generate** 
 repos:
   - name: example-service       # id used by API / Actions
     github: your-org/example-service
-    gates: [ci, dev-smoke, prod-health]
-    argocd_app: dev-example-service
-    probe_job: smoke-e2e
+    gates: [ci]
 ```
 
-Optional: `depends_on`, `promote_requires`, `agent_instructions`.
+GitOps adds `argocd_app` and `probe_job` ([GitOps](gitops-argo.md)). Optional on any profile: `depends_on`, `promote_requires`, `agent_instructions`.
 
 ## Gates
 
-- **ci** — `trigger: on_push` (webhook-driven)
-- **dev-smoke** — namespace + interval; Argo webhook / poller
-- **prod-health** — `metrics_url`, thresholds, PromQL templates
+- **ci** — `trigger: on_push` (webhook-driven). Default install.
+- **dev-smoke** — namespace + interval; Argo webhook / poller. [GitOps profile](gitops-argo.md).
+- **prod-health** — `metrics_url`, thresholds, PromQL templates. [Full profile](prod-health.md).
 
 ## Agent
 

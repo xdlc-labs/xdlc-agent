@@ -5,20 +5,23 @@ Ops docs for **xdlc-agent** (CLI binary **`xdlc`**).
 ## Start
 
 - [Install](install.md) — `curl … | sh`, Docker, from source
-- [Getting started](getting-started.md) — demo or doctor + daemon (`scripts/e2e-local.sh` for a repeatable loopback)
+- [Getting started](getting-started.md) — demo or CI Fix daemon (`scripts/e2e-local.sh` is the full paved-road loopback)
 - [API tokens](api-tokens.md) — create `XDLC_API_TOKEN` (shared secret)
 
-## Production loop
+## CI Fix
 
-- [Production loop](production-loop.md) — end-to-end checklist
 - [GitHub webhooks](github-webhooks.md) — `workflow_run` → Fix
 - [Fix modes](fix-modes.md) — direct push vs PR
 - [Rules and skills](rules-and-skills.md) — what the agent is told
 - [Fix sessions](sessions.md) — what the agent did
-- [GitOps / ArgoCD](gitops-argo.md) — DEV sync + Promote
-- [Prod health](prod-health.md) — Prometheus / Alertmanager → Revert
 - [Deployment](deployment.md) — Docker + Helm
 - [Operations](operations.md) — day-2
+
+## Optional gates
+
+- [Profiles](production-loop.md) — `ci` / `gitops` / `full`
+- [GitOps / ArgoCD](gitops-argo.md) — DEV smoke + Promote
+- [Prod health](prod-health.md) — Prometheus / Alertmanager → Revert
 
 ## Reference
 

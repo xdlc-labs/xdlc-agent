@@ -1,6 +1,6 @@
 # GitHub webhooks
 
-CI gate input is primarily GitHub Actions `workflow_run` deliveries to the daemon.
+CI gate input is primarily GitHub Actions `workflow_run` deliveries to the daemon. This is the **default CI Fix profile** — you do not need Argo or Prometheus for it.
 
 ## Auth to GitHub (API)
 
@@ -50,7 +50,7 @@ Webhook payload repo (`owner/name`) must match a `repos[].github` entry:
 repos:
   - name: example-service          # config id (console Actions use this)
     github: your-org/example-service
-    gates: [ci, dev-smoke, prod-health]
+    gates: [ci]
 ```
 
 Failed runs on the integration branch enqueue **Fix** (after optional flake ladder: `ci_rerun_before_fix`, default on).

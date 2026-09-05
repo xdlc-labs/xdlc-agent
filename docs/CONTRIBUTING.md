@@ -16,7 +16,7 @@ cd ui && bun install && bun run lint && bun run test && bun run build
 
 Do not run bare `go test ./...` after `bun install` — `ui/node_modules` can ship Go files. Use `make test`.
 
-Docs: [Getting started](docs/getting-started.md) · [Production loop](docs/production-loop.md). Console **Docs** nav after `bun run build` (syncs `docs/` → UI).
+Docs: [Getting started](docs/getting-started.md) (CI Fix) · [Optional profiles](docs/production-loop.md). Console **Docs** nav after `bun run build` (syncs `docs/` → UI).
 
 
 ```sh

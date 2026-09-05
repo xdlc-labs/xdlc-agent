@@ -1,12 +1,12 @@
 # yaml-language-server: $schema=./schema/config.schema.json
-# Example config — copy to config.yaml and edit.
+# CI Fix profile — the default install. Copy to config.yaml and edit.
+# GitOps promote / prod revert: `xdlc init --profile gitops|full` or
+# uncomment the blocks at the bottom (docs/production-loop.md).
 
 repos:
   - name: example-service
     github: your-org/example-service
-    gates: [ci, dev-smoke, prod-health]
-    argocd_app: dev-example-service
-    probe_job: smoke-e2e
+    gates: [ci]
 
 # github:  # optional — App preferred over GITHUB_TOKEN
 #   app_id: 123456
@@ -16,8 +16,6 @@ repos:
 server:
   addr: ":8080"
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
-  argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
-  alertmanager_webhook_secret_env: ALERTMANAGER_WEBHOOK_SECRET
   require_webhook_secret: false # local-dev only; daemon refuses non-loopback when false
   # webhook_rate_per_sec: 20
   # webhook_rate_burst: 40
@@ -35,19 +33,6 @@ server:
 gates:
   ci:
     trigger: on_push
-  dev-smoke:
-    trigger: on_sync
-    namespace: dev
-    interval: 30s
-  prod-health:
-    trigger: continuous
-    metrics_url: http://prometheus.your-domain.io
-    thresholds:
-      p95_ms: 500
-      error_rate: 0.01
-    interval: 30s
-    p95_query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{{repo}}"}[5m])) by (le)) * 1000
-    error_rate_query: sum(rate(http_requests_total{service="{{repo}}",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="{{repo}}"}[5m]))
 
 agent:
   mode: subprocess
@@ -73,3 +58,28 @@ agent:
 #   circuit_breach_ratio: 0.3
 #   notify_webhook_url: https://hooks.slack.com/services/...
 #   patient_zero: true          # Fix upstream on root_cause suppress (#4)
+
+# --- opt-in: GitOps profile (docs/gitops-argo.md) ---
+# Also add "dev-smoke" to repos[].gates, plus argocd_app and probe_job.
+# server:
+#   argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
+# gates:
+#   dev-smoke:
+#     trigger: on_sync
+#     namespace: dev
+#     interval: 30s
+
+# --- opt-in: full paved road (docs/prod-health.md) ---
+# Also add "prod-health" to repos[].gates.
+# server:
+#   alertmanager_webhook_secret_env: ALERTMANAGER_WEBHOOK_SECRET
+# gates:
+#   prod-health:
+#     trigger: continuous
+#     metrics_url: http://prometheus.your-domain.io
+#     thresholds:
+#       p95_ms: 500
+#       error_rate: 0.01
+#     interval: 30s
+#     p95_query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{{repo}}"}[5m])) by (le)) * 1000
+#     error_rate_query: sum(rate(http_requests_total{service="{{repo}}",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="{{repo}}"}[5m]))
