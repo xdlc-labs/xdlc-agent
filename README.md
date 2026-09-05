@@ -8,7 +8,7 @@
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](docs/CONTRIBUTING.md)
 
 **Self-hosted agentic delivery for platform teams.**  
-One open-source daemon watches your repos. When CI fails, DEV smoke fails, or prod SLOs breach, it **Fix**es, **Promote**s, or **Revert**s under policy — using *your* coding agent (`claude` / `codex` / `cursor`). MIT. No SaaS in the loop.
+One open-source daemon watches your repos. When CI fails, DEV smoke fails, or prod SLOs breach, it **Fix**es, **Promote**s, or **Revert**s under policy  -  using *your* coding agent (`claude` / `codex` / `cursor`). MIT. No SaaS in the loop.
 
 ![Architecture: xdlc-agent loop with CI, DEV, and PROD gates](docs/assets/architecture.jpg)
 
@@ -16,7 +16,7 @@ One open-source daemon watches your repos. When CI fails, DEV smoke fails, or pr
 
 ## Why agentic platform engineering?
 
-Platform engineering already owns the paved road: CI, GitOps, environments, SLOs. What it usually *doesn't* own is the overnight grind when that road turns red — failed builds, flaky smokes, bad promotes, and “someone paste the logs into ChatGPT.”
+Platform engineering already owns the paved road: CI, GitOps, environments, SLOs. What it usually *doesn't* own is the overnight grind when that road turns red  -  failed builds, flaky smokes, bad promotes, and “someone paste the logs into ChatGPT.”
 
 **Agentic platform engineering** means the platform itself can act on those signals, within the same gates and policy you already trust:
 
@@ -27,7 +27,7 @@ Platform engineering already owns the paved road: CI, GitOps, environments, SLOs
 | Manual PR, promote, or rollback | **Fix** / **Promote** / **Revert** under policy |
 | Tribal “who owns this at 2am?” | Audit trail + backlog when it can't finish |
 
-This is not “replace your pipeline with a chatbot.” It is **policy-gated automation on top of the delivery system you already run** — so routine, shaped failures drain without a human in the loop, and novel work stays with humans.
+This is not “replace your pipeline with a chatbot.” It is **policy-gated automation on top of the delivery system you already run**  -  so routine, shaped failures drain without a human in the loop, and novel work stays with humans.
 
 | This is for | This is not for |
 |-------------|-----------------|
@@ -41,10 +41,10 @@ This is not “replace your pipeline with a chatbot.” It is **policy-gated aut
 
 | Signal | Action |
 |--------|--------|
-| **CI fail** | **Fix** — coding-agent subagent (run URL / logs as evidence) |
-| **DEV smoke fail** | **Fix** — probe logs → subagent |
-| **DEV smoke pass** | **Promote** — fast-forward only `develop` → `main` |
-| **PROD p95 / error-rate breach** | **Revert** — `git revert` on `main` |
+| **CI fail** | **Fix**  -  coding-agent subagent (run URL / logs as evidence) |
+| **DEV smoke fail** | **Fix**  -  probe logs → subagent |
+| **DEV smoke pass** | **Promote**  -  fast-forward only `develop` → `main` |
+| **PROD p95 / error-rate breach** | **Revert**  -  `git revert` on `main` |
 
 Green CI → DEV stays your GitOps path. The agent does not invent deploys; it reacts to gates you already trust.
 
@@ -66,7 +66,7 @@ Embedded console at `/` (API under `/api/*`).
 
 ## Quick start
 
-**1. Config** — copy [`config.example.yaml`](config.example.yaml), set your repos and agent provider:
+**1. Config**  -  copy [`config.example.yaml`](config.example.yaml), set your repos and agent provider:
 
 ```yaml
 repos:
@@ -87,7 +87,7 @@ export XDL_API_TOKEN=...             # console / API
 export ANTHROPIC_API_KEY=...         # if provider: claude
 ```
 
-**3. Run** — Docker (console already embedded):
+**3. Run**  -  Docker (console already embedded):
 
 ```sh
 docker run --rm -p 8080:8080 \
@@ -99,7 +99,7 @@ docker run --rm -p 8080:8080 \
 
 Open http://127.0.0.1:8080/ · point GitHub `workflow_run` webhooks at `/webhooks/github`.
 
-**Helm** (single replica — audit DB is single-writer):
+**Helm** (single replica  -  audit DB is single-writer):
 
 ```sh
 helm install xdlc-agent deploy/helm/xdlc-agent \
@@ -125,7 +125,7 @@ The daemon is the loop. You still need:
 
 ## Benchmarks
 
-Hot-path microbenchmarks (`make bench`). Numbers from a recent laptop run (AMD Ryzen 5 PRO 5650U, linux/amd64) — re-run locally for your machine.
+Hot-path microbenchmarks (`make bench`). Numbers from a recent laptop run (AMD Ryzen 5 PRO 5650U, linux/amd64)  -  re-run locally for your machine.
 
 | Benchmark | ns/op | B/op | allocs/op |
 |-----------|------:|-----:|----------:|
