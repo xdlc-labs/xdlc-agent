@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PipelineDiagram } from "@/components/pipeline";
 import { ActivityFeed } from "@/components/activity-feed";
 import { ActionTag, Dot } from "@/components/status";
+import { QueryError, Skeleton } from "@/components/query-state";
 import { fetchOverview, type Gate, type GateStatus, type Repo } from "@/lib/api";
 
 export const Route = createFileRoute("/")({
@@ -210,12 +211,40 @@ function ActionsPanel({
 }
 
 function Overview() {
-  const { data, isLoading } = useQuery({ queryKey: ["overview"], queryFn: fetchOverview, refetchInterval: 10_000 });
+  const { data, isPending, isError, error, refetch } = useQuery({
+    queryKey: ["overview"],
+    queryFn: fetchOverview,
+    refetchInterval: 10_000,
+  });
   const daemon = data?.daemon;
   const kpis = data?.kpis;
   const events = data?.events ?? [];
   const repos = data?.repos ?? [];
   const gates = data?.gates ?? [];
+
+  if (isPending) {
+    return (
+      <div className="px-6 py-7 lg:px-8">
+        <h1 className="font-display text-sm font-semibold uppercase tracking-[0.28em] text-primary glow-text">
+          overview
+        </h1>
+        <Skeleton rows={6} className="px-0" />
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <div className="px-6 py-7 lg:px-8">
+        <h1 className="font-display text-sm font-semibold uppercase tracking-[0.28em] text-primary glow-text">
+          overview
+        </h1>
+        <QueryError
+          message={error instanceof Error ? error.message : "Failed to load overview"}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="px-6 py-7 lg:px-8">
@@ -225,9 +254,7 @@ function Overview() {
             overview
           </h1>
           <p className="mt-2 font-mono text-[12px] text-muted-foreground">
-            {isLoading
-              ? "loading…"
-              : `daemon ${daemon?.status ?? "—"} · uptime ${daemon?.uptime ?? "—"} · agent ${daemon?.agentProvider ?? "—"}`}
+            {`daemon ${daemon?.status ?? "—"} · uptime ${daemon?.uptime ?? "—"} · agent ${daemon?.agentProvider ?? "—"}`}
           </p>
         </div>
       </div>

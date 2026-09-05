@@ -50,6 +50,9 @@ type Repo struct {
 	// Thresholds optionally overrides gates.prod-health.thresholds for
 	// this repo. Nil → use the org-wide defaults.
 	Thresholds *Thresholds `yaml:"thresholds"`
+	// AgentInstructions is optional trusted team text prepended to
+	// FixPrompt (in addition to AGENTS.md / .xdlc/skills from the clone).
+	AgentInstructions string `yaml:"agent_instructions"`
 }
 
 // PromoteRequire is a min image tag pin on a dependency repo (v2).
@@ -279,6 +282,18 @@ type AgentConfig struct {
 	// add a key that holds a credential you don't want the subagent
 	// (and the untrusted content it processes) to have.
 	ExtraEnvKeys []string `yaml:"extra_env_keys"`
+	// FixReverify, when true, re-checks the failing gate after a Fix
+	// subagent exits successfully and only then records Status=ok.
+	// Default false (exit-code-only success).
+	FixReverify bool `yaml:"fix_reverify"`
+	// FixReverifyAttempts is max gate polls after Fix (0 → 6).
+	FixReverifyAttempts int `yaml:"fix_reverify_attempts"`
+	// FixReverifyInterval between polls (0 → 15s).
+	FixReverifyInterval time.Duration `yaml:"fix_reverify_interval"`
+	// CIRerunBeforeFix, when true (default), tries GitHub
+	// rerun-failed-jobs once per run_url before invoking the Fix agent.
+	// Set false to skip the ladder.
+	CIRerunBeforeFix *bool `yaml:"ci_rerun_before_fix"`
 }
 
 // Load reads and parses the YAML config at path. Unknown fields are

@@ -47,6 +47,9 @@ type Dispatcher struct {
 	Metrics  *otel.Metrics // optional
 	// FixMode is "direct" (or empty) vs "pr" — passed to subagent.FixPrompt.
 	FixMode string
+	// Reverify, when set, is called after a successful Fix subagent run
+	// (issue #2). Non-nil error means the gate is still red — Fix fails.
+	Reverify func(ctx context.Context, s orchestrator.Signal) error
 	// Provider routing (v2): Route "cheapest" picks among Providers.
 	Route           string
 	Providers       []string
@@ -114,7 +117,14 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 		// resulting PR up afterward without parsing CLI output for a URL.
 		prBranch = fmt.Sprintf("xdlc-fix-%d", time.Now().UnixNano())
 	}
-	prompt := subagent.FixPrompt(s.Repo, reason, evidence, d.FixMode, prBranch)
+	teamRules := subagent.ReadTeamInstructions(dir)
+	if extra := d.Repos.AgentInstructions(s.Repo); extra != "" {
+		if teamRules != "" {
+			teamRules += "\n\n"
+		}
+		teamRules += "config agent_instructions:\n" + strings.TrimSpace(extra)
+	}
+	prompt := subagent.FixPrompt(s.Repo, reason, evidence, d.FixMode, prBranch, teamRules)
 
 	runner := d.Subagent
 	provider := d.DefaultProvider
@@ -183,6 +193,18 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 			s.Evidence["pr_branch"] = prBranch
 		} else {
 			d.Log.Warn("fix_mode pr: no PR after subagent run", "repo", s.Repo, "branch", prBranch)
+		}
+	}
+
+	if d.Reverify != nil {
+		if rerr := d.Reverify(ctx, s); rerr != nil {
+			if s.Evidence != nil {
+				s.Evidence["escalate"] = "reverify_failed"
+			}
+			return fmt.Errorf("dispatch: fix: reverify: %w", rerr)
+		}
+		if s.Evidence != nil {
+			s.Evidence["reverify"] = "pass"
 		}
 	}
 	return nil

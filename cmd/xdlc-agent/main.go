@@ -178,7 +178,46 @@ func daemonCmd() *cobra.Command {
 				return &dispatch.PRRef{Number: pr.Number, URL: pr.URL, State: pr.State}, nil
 			}
 
+			ciGate := gatebuild.CI(cfg, tokens)
+			smokeGates := gatebuild.DevSmoke(cfg)
+			if cfg.Agent.FixReverify {
+				attempts := cfg.Agent.FixReverifyAttempts
+				if attempts <= 0 {
+					attempts = 6
+				}
+				interval := cfg.Agent.FixReverifyInterval
+				if interval <= 0 {
+					interval = 15 * time.Second
+				}
+				disp.Reverify = func(ctx context.Context, s orchestrator.Signal) error {
+					return reverifyGate(ctx, s, repoMgr, ciGate, smokeGates, attempts, interval, log)
+				}
+			}
+
 			o := orchestrator.New(disp, bl, log)
+			rerunOn := true
+			if cfg.Agent.CIRerunBeforeFix != nil {
+				rerunOn = *cfg.Agent.CIRerunBeforeFix
+			}
+			if rerunOn {
+				o.RerunCI = func(ctx context.Context, s orchestrator.Signal) (bool, error) {
+					runURL, _ := s.Evidence["run_url"].(string)
+					if runURL == "" {
+						return false, fmt.Errorf("no run_url in evidence")
+					}
+					green, conclusion, err := gh.RerunAndWait(ctx, runURL)
+					if err != nil {
+						return false, err
+					}
+					if s.Evidence != nil {
+						s.Evidence["rerun_conclusion"] = conclusion
+					}
+					if metrics.Reruns != nil {
+						metrics.Reruns.Add(ctx, 1)
+					}
+					return green, nil
+				}
+			}
 			o.Fleet = orchestrator.FleetPolicy{
 				FlapMaxCycles:      cfg.Fleet.FlapMaxCycles,
 				FlapWindow:         cfg.Fleet.FlapWindow,
@@ -252,12 +291,6 @@ func daemonCmd() *cobra.Command {
 				}(r.Name)
 			}
 			wg.Wait()
-
-			// Built once and shared: the webhook path re-runs these same
-			// gates (probe Job included) instead of trusting an ArgoCD
-			// notification's own "Synced+Healthy" claim, so a promote
-			// needs the same evidence however it was triggered.
-			smokeGates := gatebuild.DevSmoke(cfg)
 
 			// Real-time sources: GitHub / ArgoCD / Alertmanager webhooks.
 			addr := cfg.Server.Addr
@@ -656,6 +689,59 @@ func isLoopbackListenAddr(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// reverifyGate polls the gate that triggered Fix until green or budget exhausted (#2).
+func reverifyGate(
+	ctx context.Context,
+	s orchestrator.Signal,
+	repoMgr *repos.Manager,
+	ci *gate.CIGate,
+	smoke map[string]*gate.SmokeGate,
+	attempts int,
+	interval time.Duration,
+	log *slog.Logger,
+) error {
+	var g gate.Gate
+	checkRepo := s.Repo
+	switch s.Source {
+	case orchestrator.SourceCI:
+		g = ci
+		if gh := repoMgr.GitHub(s.Repo); gh != "" {
+			checkRepo = gh
+		}
+	case orchestrator.SourceDevGate:
+		if sg, ok := smoke[s.Repo]; ok {
+			g = sg
+		}
+	default:
+		log.Info("fix reverify skipped for source", "source", s.Source, "repo", s.Repo)
+		return nil
+	}
+	if g == nil {
+		return fmt.Errorf("no gate for source %s", s.Source)
+	}
+	var last gate.Result
+	for i := 0; i < attempts; i++ {
+		res, err := g.Check(ctx, checkRepo)
+		if err != nil {
+			log.Warn("fix reverify check error", "repo", s.Repo, "attempt", i+1, "error", err)
+		} else {
+			last = res
+			if res.Status == gate.StatusPass {
+				return nil
+			}
+		}
+		if i+1 == attempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+	return fmt.Errorf("gate %s still %s after %d attempts", g.Name(), last.Status, attempts)
 }
 
 func hasGate(r config.Repo, name string) bool {

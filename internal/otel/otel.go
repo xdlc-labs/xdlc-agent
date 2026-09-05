@@ -31,6 +31,8 @@ type Metrics struct {
 	Dispatch          metric.Float64Histogram
 	SubagentRuns      metric.Float64Histogram
 	FleetSuppressions metric.Int64Counter
+	// Reruns counts CI rerun-failed-jobs attempts (issue #3).
+	Reruns metric.Int64Counter
 	// PollerLastTick is a gauge of the Unix timestamp (seconds) at which a
 	// poller last attempted a Gate.Check for a given gate/repo, regardless
 	// of outcome. Alertmanager uses `time() - this` to detect a stalled
@@ -136,6 +138,11 @@ func buildInstruments(meter metric.Meter) (Metrics, error) {
 	if err != nil {
 		return Metrics{}, err
 	}
+	reruns, err := meter.Int64Counter("xdlc_agent_reruns_total",
+		metric.WithDescription("CI rerun-failed-jobs attempts before Fix"))
+	if err != nil {
+		return Metrics{}, err
+	}
 	pollerTick, err := meter.Float64Gauge("xdlc_agent_poller_last_tick_timestamp_seconds",
 		metric.WithDescription("Unix timestamp of the last poller tick attempt, per gate/repo"))
 	if err != nil {
@@ -152,6 +159,7 @@ func buildInstruments(meter metric.Meter) (Metrics, error) {
 		Dispatch:          dispatch,
 		SubagentRuns:      subagent,
 		FleetSuppressions: suppress,
+		Reruns:            reruns,
 		PollerLastTick:    pollerTick,
 		StoreErrors:       storeErrors,
 	}, nil

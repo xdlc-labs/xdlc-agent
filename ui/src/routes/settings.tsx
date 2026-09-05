@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchOverview } from "@/lib/api";
 import { clearToken, getToken, setToken } from "@/lib/auth";
 import { PageHeader } from "@/components/status";
+import { QueryError, Skeleton } from "@/components/query-state";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -14,7 +15,11 @@ export const Route = createFileRoute("/settings")({
 
 function Settings() {
   const queryClient = useQueryClient();
-  const { data } = useQuery({ queryKey: ["overview"], queryFn: fetchOverview, refetchInterval: 10_000 });
+  const { data, isPending, isError, error, refetch } = useQuery({
+    queryKey: ["overview"],
+    queryFn: fetchOverview,
+    refetchInterval: 10_000,
+  });
   const daemon = data?.daemon;
   const gates = data?.gates ?? [];
 
@@ -44,6 +49,14 @@ function Settings() {
         title="settings"
         sub="Bearer token for /api/* plus read-only view of the running daemon. Config edits still go through config.yaml."
       />
+
+      {isPending ? <Skeleton rows={4} /> : null}
+      {isError ? (
+        <QueryError
+          message={error instanceof Error ? error.message : "Failed to load settings"}
+          onRetry={() => void refetch()}
+        />
+      ) : null}
 
       <div className="grid gap-4 px-6 py-6 lg:grid-cols-2">
         <section className="border border-border bg-card p-4 lg:col-span-2">
@@ -84,6 +97,7 @@ function Settings() {
           </div>
         </section>
 
+        {!isPending && !isError ? (
         <section className="border border-border bg-card p-4">
           <h2 className="font-mono text-[13px] text-foreground">Agent provider</h2>
           <p className="mt-1 font-mono text-[11px] text-muted-foreground">From config agent.provider</p>
@@ -91,12 +105,14 @@ function Settings() {
             {daemon?.agentProvider ?? "—"}
           </div>
         </section>
+        ) : null}
 
+        {!isPending && !isError ? (
         <section className="border border-border bg-card p-4">
           <h2 className="font-mono text-[13px] text-foreground">Gates (last status)</h2>
           <div className="mt-3 space-y-2">
             {gates.length === 0 ? (
-              <p className="font-mono text-[11px] text-muted-foreground">No data from daemon.</p>
+              <p className="font-mono text-[11px] text-muted-foreground">No gates configured.</p>
             ) : (
               gates.map((g) => (
                 <div key={g.name} className="flex items-center justify-between border border-border bg-surface px-3 py-2">
@@ -107,6 +123,7 @@ function Settings() {
             )}
           </div>
         </section>
+        ) : null}
 
         <section className="border border-border bg-card p-4 lg:col-span-2">
           <h2 className="font-mono text-[13px] text-foreground">Daemon</h2>

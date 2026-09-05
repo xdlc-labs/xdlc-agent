@@ -9,6 +9,7 @@ const (
 	ActionFix     Action = "fix"     // dispatch subagent to fix-forward
 	ActionRevert  Action = "revert"  // git revert last change, push
 	ActionPromote Action = "promote" // fast-forward develop -> main
+	ActionRerun   Action = "rerun"   // GitHub rerun-failed-jobs (flake ladder)
 )
 
 // Decide maps a Signal to the Action the orchestrator should take.

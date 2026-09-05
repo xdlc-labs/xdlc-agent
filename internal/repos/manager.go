@@ -168,6 +168,11 @@ func (m *Manager) GitHub(repo string) string {
 	return m.repos[repo].GitHub
 }
 
+// AgentInstructions returns repos[].agent_instructions for repo.
+func (m *Manager) AgentInstructions(repo string) string {
+	return m.repos[repo].AgentInstructions
+}
+
 // AuthEnv returns the extra environment variables that authenticate git
 // against GitHub, for any git command that touches the network (clone,
 // fetch, push). See AuthEnv (package-level) for how the credential is

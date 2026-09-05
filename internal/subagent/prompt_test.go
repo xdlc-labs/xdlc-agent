@@ -8,7 +8,7 @@ import (
 func TestFixPromptFramesEvidenceAsUntrusted(t *testing.T) {
 	p := FixPrompt("svc-a", "build failed", map[string]any{
 		"log": "FAIL: TestFoo",
-	}, "", "")
+	}, "", "", "")
 
 	if !strings.Contains(p, evidenceBegin) || !strings.Contains(p, evidenceEnd) {
 		t.Fatalf("missing evidence delimiters:\n%s", p)
@@ -36,9 +36,9 @@ func TestFixPromptFramesEvidenceAsUntrusted(t *testing.T) {
 
 func TestFixPromptDirectVsPR(t *testing.T) {
 	ev := map[string]any{"x": 1}
-	direct := FixPrompt("svc", "fail", ev, "", "")
-	directExplicit := FixPrompt("svc", "fail", ev, "direct", "")
-	pr := FixPrompt("svc", "fail", ev, "pr", "xdlc-fix-123")
+	direct := FixPrompt("svc", "fail", ev, "", "", "")
+	directExplicit := FixPrompt("svc", "fail", ev, "direct", "", "")
+	pr := FixPrompt("svc", "fail", ev, "pr", "xdlc-fix-123", "")
 
 	if !strings.Contains(direct, "commit to the current branch, and push") {
 		t.Fatalf("empty mode should be direct:\n%s", direct)

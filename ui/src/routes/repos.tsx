@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchOverview, type Repo } from "@/lib/api";
 import { PageHeader, StatusTag, ActionTag } from "@/components/status";
 import { Dialog } from "@/components/dialog";
+import { EmptyState, QueryError, Skeleton } from "@/components/query-state";
 
 export const Route = createFileRoute("/repos")({
   head: () => ({
@@ -19,7 +20,11 @@ const healthTone = {
 } as const;
 
 function Repos() {
-  const { data } = useQuery({ queryKey: ["overview"], queryFn: fetchOverview, refetchInterval: 10_000 });
+  const { data, isPending, isError, error, refetch } = useQuery({
+    queryKey: ["overview"],
+    queryFn: fetchOverview,
+    refetchInterval: 10_000,
+  });
   const repos = data?.repos ?? [];
   const [open, setOpen] = useState<Repo | null>(null);
   const close = useCallback(() => setOpen(null), []);
@@ -28,10 +33,18 @@ function Repos() {
     <div>
       <PageHeader title="repos" sub="Services the daemon watches. Select a row for clone state and SLO queries." />
 
+      {isPending ? <Skeleton rows={5} /> : null}
+      {isError ? (
+        <QueryError
+          message={error instanceof Error ? error.message : "Failed to load repos"}
+          onRetry={() => void refetch()}
+        />
+      ) : null}
+      {!isPending && !isError && repos.length === 0 ? (
+        <EmptyState>No repos in config — check config.yaml.</EmptyState>
+      ) : null}
+      {!isPending && !isError && repos.length > 0 ? (
       <div className="overflow-x-auto px-6 py-6">
-        {repos.length === 0 ? (
-          <p className="font-mono text-[12px] text-muted-foreground">No repos in config — check config.yaml.</p>
-        ) : (
           <table className="w-full min-w-[900px] border border-border bg-card text-left">
             <thead>
               <tr className="border-b border-border font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -79,8 +92,8 @@ function Repos() {
               ))}
             </tbody>
           </table>
-        )}
       </div>
+      ) : null}
 
       <Dialog open={open !== null} onClose={close} title={open?.name ?? ""} variant="drawer">
         <dl className="space-y-3 px-5 py-4 font-mono text-[11px]">

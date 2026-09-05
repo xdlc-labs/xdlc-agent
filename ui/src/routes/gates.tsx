@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { fetchOverview } from "@/lib/api";
 import { PageHeader, StatusTag } from "@/components/status";
+import { EmptyState, QueryError, Skeleton } from "@/components/query-state";
 
 export const Route = createFileRoute("/gates")({
   head: () => ({
@@ -11,7 +12,11 @@ export const Route = createFileRoute("/gates")({
 });
 
 function Gates() {
-  const { data } = useQuery({ queryKey: ["overview"], queryFn: fetchOverview, refetchInterval: 10_000 });
+  const { data, isPending, isError, error, refetch } = useQuery({
+    queryKey: ["overview"],
+    queryFn: fetchOverview,
+    refetchInterval: 10_000,
+  });
   const gates = data?.gates ?? [];
 
   return (
@@ -20,12 +25,18 @@ function Gates() {
         title="gates"
         sub="Three pluggable gates feed the loop. Each reports a signal; the daemon maps it to Fix, Promote or Revert."
       />
+      {isPending ? <Skeleton rows={4} /> : null}
+      {isError ? (
+        <QueryError
+          message={error instanceof Error ? error.message : "Failed to load gates"}
+          onRetry={() => void refetch()}
+        />
+      ) : null}
+      {!isPending && !isError && gates.length === 0 ? (
+        <EmptyState>No gate data — start `xdlc-agent daemon` (proxied via /api).</EmptyState>
+      ) : null}
+      {!isPending && !isError && gates.length > 0 ? (
       <div className="grid gap-4 px-6 py-6 lg:grid-cols-3">
-        {gates.length === 0 ? (
-          <p className="col-span-full font-mono text-[12px] text-muted-foreground">
-            No gate data — start `xdlc-agent daemon` (proxied via /api).
-          </p>
-        ) : null}
         {gates.map((g) => (
           <article key={g.name} className="mc-panel flex flex-col overflow-hidden rounded-md">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -68,6 +79,7 @@ function Gates() {
           </article>
         ))}
       </div>
+      ) : null}
     </div>
   );
 }

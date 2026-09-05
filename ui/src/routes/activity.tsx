@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { fetchOverview, fetchHistory, fetchBacklog, fetchCostKPIs } from "@/lib/api";
 import { PageHeader, ActionTag } from "@/components/status";
+import { QueryError, Skeleton } from "@/components/query-state";
 
 export const Route = createFileRoute("/activity")({
   head: () => ({
@@ -12,14 +13,19 @@ export const Route = createFileRoute("/activity")({
 });
 
 function Activity() {
-  const { data: overview } = useQuery({ queryKey: ["overview"], queryFn: fetchOverview, refetchInterval: 10_000 });
-  const { data: events = [] } = useQuery({
+  const overviewQ = useQuery({ queryKey: ["overview"], queryFn: fetchOverview, refetchInterval: 10_000 });
+  const historyQ = useQuery({
     queryKey: ["history"],
     queryFn: () => fetchHistory(200),
     refetchInterval: 10_000,
   });
-  const { data: backlogMd = "" } = useQuery({ queryKey: ["backlog"], queryFn: fetchBacklog, refetchInterval: 15_000 });
-  const { data: costKPIs } = useQuery({ queryKey: ["kpis"], queryFn: fetchCostKPIs, refetchInterval: 30_000 });
+  const backlogQ = useQuery({ queryKey: ["backlog"], queryFn: fetchBacklog, refetchInterval: 15_000 });
+  const kpisQ = useQuery({ queryKey: ["kpis"], queryFn: fetchCostKPIs, refetchInterval: 30_000 });
+
+  const overview = overviewQ.data;
+  const events = historyQ.data ?? [];
+  const backlogMd = backlogQ.data ?? "";
+  const costKPIs = kpisQ.data;
 
   const [view, setView] = useState<"history" | "backlog">("history");
   const [repo, setRepo] = useState("all");
@@ -41,6 +47,26 @@ function Activity() {
   const t = costKPIs?.totals;
   const successPct =
     t?.fix_success_rate != null ? `${Math.round(t.fix_success_rate * 100)}%` : "—";
+
+  if (historyQ.isPending && overviewQ.isPending) {
+    return (
+      <div>
+        <PageHeader title="activity / audit" sub="Every signal and action is written to the history store and BACKLOG.md." />
+        <Skeleton rows={6} />
+      </div>
+    );
+  }
+  if (historyQ.isError) {
+    return (
+      <div>
+        <PageHeader title="activity / audit" sub="Every signal and action is written to the history store and BACKLOG.md." />
+        <QueryError
+          message={historyQ.error instanceof Error ? historyQ.error.message : "Failed to load history"}
+          onRetry={() => void historyQ.refetch()}
+        />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -96,7 +122,7 @@ function Activity() {
               ))}
             </select>
             <select value={action} onChange={(e) => setAction(e.target.value)} className={selectCls}>
-              {["all", "Fix", "Promote", "Revert", "None"].map((a) => (
+              {["all", "Fix", "Promote", "Revert", "Rerun", "None"].map((a) => (
                 <option key={a} value={a}>
                   {a === "all" ? "all actions" : a}
                 </option>

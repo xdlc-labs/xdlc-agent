@@ -661,6 +661,8 @@ func mapAction(a string) string {
 		return "Promote"
 	case "revert":
 		return "Revert"
+	case "rerun":
+		return "Rerun"
 	default:
 		return "None"
 	}

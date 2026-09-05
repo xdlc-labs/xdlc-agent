@@ -21,10 +21,10 @@ function useDaemon() {
 
 /** Top strip — online status + env sit on the right. */
 export function AppTopBar() {
-  const { data } = useDaemon();
+  const { data, isError, isPending } = useDaemon();
   const daemon = data?.daemon;
-  const status = daemon?.status ?? "stopped";
-  const online = status === "running";
+  const status = isError ? "stopped" : (daemon?.status ?? (isPending ? "running" : "stopped"));
+  const online = !isError && status === "running";
   const { data: authConfig } = useQuery({ queryKey: ["auth-config"], queryFn: fetchAuthConfig, staleTime: Infinity });
   const { data: role } = useQuery({ queryKey: ["role"], queryFn: fetchRole, refetchInterval: 60_000 });
 

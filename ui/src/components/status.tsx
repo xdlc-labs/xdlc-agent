@@ -41,6 +41,7 @@ const actionText: Record<ActionKind, string> = {
   Fix: "text-acting border-acting/40",
   Promote: "text-pass border-pass/40",
   Revert: "text-breach border-breach/40",
+  Rerun: "text-waiting border-waiting/40",
   None: "text-muted-foreground border-border",
 };
 

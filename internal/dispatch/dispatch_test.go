@@ -343,6 +343,52 @@ func TestFixPromptUsesFixMode(t *testing.T) {
 	}
 }
 
+func TestFixReverifyFailDoesNotReportOK(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &fakeRunner{}
+	d := New(mgr, runner, silentLogger())
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) error {
+		return errors.New("still red")
+	}
+	sig := orchestrator.Signal{
+		Repo:     "svc",
+		Source:   orchestrator.SourceCI,
+		Kind:     orchestrator.KindFail,
+		Evidence: map[string]any{},
+	}
+	err := d.Fix(context.Background(), sig)
+	if err == nil {
+		t.Fatal("expected reverify error")
+	}
+	if !strings.Contains(err.Error(), "reverify") {
+		t.Fatalf("error = %v", err)
+	}
+	if sig.Evidence["escalate"] != "reverify_failed" {
+		t.Fatalf("escalate = %v", sig.Evidence["escalate"])
+	}
+}
+
+func TestFixReverifyPass(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &fakeRunner{}
+	d := New(mgr, runner, silentLogger())
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) error { return nil }
+	sig := orchestrator.Signal{
+		Repo:     "svc",
+		Source:   orchestrator.SourceCI,
+		Kind:     orchestrator.KindFail,
+		Evidence: map[string]any{},
+	}
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatal(err)
+	}
+	if sig.Evidence["reverify"] != "pass" {
+		t.Fatalf("reverify = %v", sig.Evidence["reverify"])
+	}
+}
+
 func TestFixModePRRecordsPRIntoEvidence(t *testing.T) {
 	_, workDir := setupOrigin(t)
 	mgr := testManager(t, workDir)

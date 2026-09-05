@@ -10,6 +10,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `xdlc-agent doctor` — PATH / token / config / optional Prometheus checks (#12)
 - Docs: [vs alternatives](vs-alternatives.md), [why not a GitHub Action](why-not-github-action.md) (#13)
+- Console: distinct loading / empty / error states (fetch throws; Skeleton + QueryError) (#7)
+- FixPrompt honors `AGENTS.md`, `.xdlc/skills/*.md`, `repos[].agent_instructions` (#21)
+- CI flake ladder: rerun-failed-jobs once per `run_url` before Fix (`ci_rerun_before_fix`, default on) (#3)
+- Optional `agent.fix_reverify` — Fix Status=ok only after gate re-check (#2)
 
 ### Changed
 

@@ -5,6 +5,7 @@ import { fetchFixPRs, fetchOverview, policy, postAction, type ManualAction } fro
 import { fetchRole } from "@/lib/auth";
 import { PageHeader, ActionTag } from "@/components/status";
 import { Dialog } from "@/components/dialog";
+import { QueryError, Skeleton } from "@/components/query-state";
 import { t } from "@/lib/i18n";
 
 export const Route = createFileRoute("/actions")({
@@ -22,7 +23,11 @@ type Pending = {
 
 function Actions() {
   const queryClient = useQueryClient();
-  const { data } = useQuery({ queryKey: ["overview"], queryFn: fetchOverview, refetchInterval: 10_000 });
+  const { data, isPending, isError, error, refetch } = useQuery({
+    queryKey: ["overview"],
+    queryFn: fetchOverview,
+    refetchInterval: 10_000,
+  });
   const { data: role } = useQuery({ queryKey: ["role"], queryFn: fetchRole, refetchInterval: 60_000 });
   const canOperate = role === "operator";
   const { data: fixPRs } = useQuery({ queryKey: ["fix-prs"], queryFn: fetchFixPRs, refetchInterval: 30_000 });
@@ -95,6 +100,32 @@ function Actions() {
       tone: "text-breach border-breach/40",
     },
   ];
+
+  if (isPending) {
+    return (
+      <div>
+        <PageHeader
+          title="actions"
+          sub="Policy from Decide(). Manual Fix / Promote / Revert hit the daemon write API with bearer or SSO session auth."
+        />
+        <Skeleton rows={4} />
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <div>
+        <PageHeader
+          title="actions"
+          sub="Policy from Decide(). Manual Fix / Promote / Revert hit the daemon write API with bearer or SSO session auth."
+        />
+        <QueryError
+          message={error instanceof Error ? error.message : "Failed to load actions"}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
+  }
 
   return (
     <div>

@@ -1,11 +1,12 @@
-// Client for xdlc-agent daemon /api/*. Falls back to empty shell if daemon down.
-// Degraded fallback is marked (daemon.status=stopped, webhook=backend unreachable)
-// so prod outages do not look like an empty config.
+// Client for xdlc-agent daemon /api/*. Fetch helpers throw on failure so
+// React Query can distinguish loading / empty / error (issue #7). Soft
+// "daemon stopped" shells are only built when a caller explicitly asks
+// via emptyOverview().
 
 import { authHeaders } from "./auth";
 
 export type GateStatus = "pass" | "fail" | "acting" | "waiting" | "idle";
-export type ActionKind = "Fix" | "Promote" | "Revert" | "None";
+export type ActionKind = "Fix" | "Promote" | "Revert" | "Rerun" | "None";
 export type GateName = "CI" | "DEV smoke" | "PROD health";
 export type ManualAction = "fix" | "promote" | "revert";
 
@@ -108,7 +109,8 @@ export function isDegraded(overview: Overview): boolean {
   );
 }
 
-const emptyOverview = (webhook = "backend unreachable"): Overview => ({
+/** Build a stopped-daemon Overview shell (tests / explicit fallbacks only). */
+export const emptyOverview = (webhook = "backend unreachable"): Overview => ({
   daemon: {
     status: "stopped",
     version: "—",
@@ -133,7 +135,7 @@ const emptyOverview = (webhook = "backend unreachable"): Overview => ({
   backlogMd: "# BACKLOG\n\n(daemon not reachable — run `xdlc-agent daemon`)\n",
 });
 
-function degradeWebhook(status: number | null): string {
+export function degradeWebhook(status: number | null): string {
   if (status === 401) return "unauthorized (401) — set API token in Settings";
   if (status === 503) return "backend unreachable (503) — API token not configured on daemon";
   return "backend unreachable";
@@ -152,29 +154,17 @@ async function getJSON<T>(path: string): Promise<T> {
 }
 
 export async function fetchOverview(): Promise<Overview> {
-  try {
-    return await getJSON<Overview>("/api/overview");
-  } catch {
-    return emptyOverview(degradeWebhook(lastFetchStatus));
-  }
+  return getJSON<Overview>("/api/overview");
 }
 
 export async function fetchHistory(limit = 200): Promise<Event[]> {
-  try {
-    const data = await getJSON<{ events: Event[] }>(`/api/history?limit=${limit}`);
-    return data.events ?? [];
-  } catch {
-    return [];
-  }
+  const data = await getJSON<{ events: Event[] }>(`/api/history?limit=${limit}`);
+  return data.events ?? [];
 }
 
 export async function fetchBacklog(): Promise<string> {
-  try {
-    const data = await getJSON<{ markdown: string }>("/api/backlog");
-    return data.markdown ?? "";
-  } catch {
-    return emptyOverview().backlogMd;
-  }
+  const data = await getJSON<{ markdown: string }>("/api/backlog");
+  return data.markdown ?? "";
 }
 
 export interface FixPR {
@@ -189,12 +179,8 @@ export interface FixPR {
 
 /** Fix-PR work queue — only populated once fix_mode: pr is used. */
 export async function fetchFixPRs(): Promise<FixPR[]> {
-  try {
-    const data = await getJSON<{ prs: FixPR[] }>("/api/prs");
-    return data.prs ?? [];
-  } catch {
-    return [];
-  }
+  const data = await getJSON<{ prs: FixPR[] }>("/api/prs");
+  return data.prs ?? [];
 }
 
 export interface CostKPIs {
@@ -216,12 +202,8 @@ export interface CostKPIs {
   }[];
 }
 
-export async function fetchCostKPIs(): Promise<CostKPIs | null> {
-  try {
-    return await getJSON<CostKPIs>("/api/kpis");
-  } catch {
-    return null;
-  }
+export async function fetchCostKPIs(): Promise<CostKPIs> {
+  return getJSON<CostKPIs>("/api/kpis");
 }
 
 export async function postAction(

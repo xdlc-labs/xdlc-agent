@@ -24,6 +24,11 @@ type Dispatcher interface {
 	Promote(ctx context.Context, s Signal) error
 }
 
+// RerunCIFunc tries GitHub rerun-failed-jobs for a CI fail signal.
+// Returns green=true when the rerun concludes success (skip Fix).
+// nil disables the ladder (issue #3).
+type RerunCIFunc func(ctx context.Context, s Signal) (green bool, err error)
+
 // AuditFunc persists a structured record of one signal+action, e.g. to
 // the bbolt-backed internal/store for `xdlc-agent history`. Optional —
 // nil skips it. Kept as a func type (not a store.AuditStore field)
@@ -44,6 +49,12 @@ type Orchestrator struct {
 	Backlog    *backlog.Store
 	Audit      AuditFunc
 	Log        *slog.Logger
+
+	// RerunCI is the flake ladder before Fix (issue #3). Optional.
+	RerunCI RerunCIFunc
+	// reran tracks run_urls already attempted this process lifetime.
+	reranMu sync.Mutex
+	reran   map[string]struct{}
 
 	// Fleet policy (optional; zero Fleet = no suppressions).
 	Fleet    FleetPolicy
@@ -71,6 +82,7 @@ func New(dispatcher Dispatcher, bl *backlog.Store, log *slog.Logger) *Orchestrat
 		Log:        log,
 		breach:     map[string]bool{},
 		RepoDeps:   map[string][]string{},
+		reran:      map[string]struct{}{},
 	}
 }
 
@@ -138,7 +150,17 @@ func (o *Orchestrator) handle(ctx context.Context, s Signal) {
 	var err error
 	switch action {
 	case ActionFix:
-		err = o.Dispatcher.Fix(ctx, s)
+		if green, skipFix := o.tryCIRerun(ctx, &s); skipFix {
+			action = ActionRerun
+			if s.Evidence == nil {
+				s.Evidence = map[string]any{}
+			}
+			s.Evidence["rerun"] = "success"
+			err = nil
+			_ = green
+		} else {
+			err = o.Dispatcher.Fix(ctx, s)
+		}
 	case ActionRevert:
 		err = o.Dispatcher.Revert(ctx, s)
 	case ActionPromote:
@@ -159,4 +181,44 @@ func (o *Orchestrator) handle(ctx context.Context, s Signal) {
 			o.Log.Error("audit write failed", "error", auditErr)
 		}
 	}
+}
+
+// tryCIRerun runs the flake ladder once per run_url. Returns skipFix=true
+// when the rerun went green (caller must not invoke Runner).
+func (o *Orchestrator) tryCIRerun(ctx context.Context, s *Signal) (green bool, skipFix bool) {
+	if o.RerunCI == nil || s.Source != SourceCI {
+		return false, false
+	}
+	runURL, _ := s.Evidence["run_url"].(string)
+	if runURL == "" {
+		return false, false
+	}
+	o.reranMu.Lock()
+	if o.reran == nil {
+		o.reran = map[string]struct{}{}
+	}
+	if _, seen := o.reran[runURL]; seen {
+		o.reranMu.Unlock()
+		return false, false
+	}
+	o.reran[runURL] = struct{}{}
+	o.reranMu.Unlock()
+
+	if s.Evidence != nil {
+		s.Evidence["rerun_attempted"] = true
+	}
+	ok, err := o.RerunCI(ctx, *s)
+	if err != nil {
+		o.Log.Warn("ci rerun failed; falling through to Fix", "repo", s.Repo, "error", err)
+		if s.Evidence != nil {
+			s.Evidence["rerun_error"] = err.Error()
+		}
+		return false, false
+	}
+	if ok {
+		o.Log.Info("ci rerun went green; skipping Fix", "repo", s.Repo, "run_url", runURL)
+		return true, true
+	}
+	o.Log.Info("ci rerun still red; invoking Fix", "repo", s.Repo, "run_url", runURL)
+	return false, false
 }
