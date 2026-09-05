@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=./schema/config.schema.json
 # Example config — copy to config.yaml and edit.
 
 repos:
@@ -55,6 +56,7 @@ agent:
   provider: claude # claude | codex | cursor
   timeout: 10m
   # max_concurrent_fixes: 2
+  # fix_budget: 5m              # soft Fix deadline; 0 = unlimited (#9)
   # fix_mode: direct # or pr
   # fix_reverify: true          # require gate green after Fix (#2)
   # ci_rerun_before_fix: true  # flake ladder before agent (#3); default on

@@ -42,6 +42,10 @@ type Metrics struct {
 	// failures, labeled by op (append|all). See
 	// observability/prometheus/rules/prod-health.yaml.
 	StoreErrors metric.Int64Counter
+	// FixQueueDepth is waiting-for-slot + holding-slot Fix goroutines (#9).
+	FixQueueDepth metric.Int64UpDownCounter
+	// FixQueueWait is time spent blocked acquiring a Fix slot (#9).
+	FixQueueWait metric.Float64Histogram
 
 	handler http.Handler // Prometheus scrape; set by Setup
 }
@@ -153,6 +157,17 @@ func buildInstruments(meter metric.Meter) (Metrics, error) {
 	if err != nil {
 		return Metrics{}, err
 	}
+	fixDepth, err := meter.Int64UpDownCounter("xdlc_agent_fix_queue_depth",
+		metric.WithDescription("Fix goroutines waiting for a slot or holding one"))
+	if err != nil {
+		return Metrics{}, err
+	}
+	fixWait, err := meter.Float64Histogram("xdlc_agent_fix_queue_wait_seconds",
+		metric.WithDescription("Time waiting to acquire a Fix concurrency slot"),
+		metric.WithUnit("s"))
+	if err != nil {
+		return Metrics{}, err
+	}
 	return Metrics{
 		Webhooks:          webhooks,
 		GateChecks:        gates,
@@ -162,6 +177,8 @@ func buildInstruments(meter metric.Meter) (Metrics, error) {
 		Reruns:            reruns,
 		PollerLastTick:    pollerTick,
 		StoreErrors:       storeErrors,
+		FixQueueDepth:     fixDepth,
+		FixQueueWait:      fixWait,
 	}, nil
 }
 

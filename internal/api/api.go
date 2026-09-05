@@ -51,6 +51,8 @@ type Server struct {
 	PRStatus func(ctx context.Context, githubRepo string, number int) (PRLiveStatus, error)
 	// RepoDir returns the local clone path for a short repo name (issue #8 tags).
 	RepoDir func(name string) string
+	// FixQueueStats optional live Fix queue depth (issue #9).
+	FixQueueStats func() (waiting, inflight int)
 }
 
 // PRLiveStatus is the live GitHub view of a Fix PR (issue #14).
@@ -799,7 +801,7 @@ func (s *Server) buildKPIs(records []store.Record) map[string]any {
 			lastActionAt = r.At.UTC().Format("2006-01-02 15:04:05Z")
 		}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"reposWatched": len(s.Cfg.Repos),
 		"fixes":        fixes,
 		"promotes":     promotes,
@@ -807,6 +809,11 @@ func (s *Server) buildKPIs(records []store.Record) map[string]any {
 		"lastActionAt": lastActionAt,
 		"backlogOpen":  0, // ponytail: no open-item counter yet
 	}
+	if s.FixQueueStats != nil {
+		w, in := s.FixQueueStats()
+		out["fix_queue_depth"] = w + in
+	}
+	return out
 }
 
 func mapAction(a string) string {

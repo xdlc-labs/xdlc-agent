@@ -2,6 +2,8 @@
 // React Query can distinguish loading / empty / error (issue #7). Soft
 // "daemon stopped" shells are only built when a caller explicitly asks
 // via emptyOverview().
+//
+// Types mirror handlers; contract source of truth: openapi/openapi.yaml (#15).
 
 import { authHeaders } from "./auth";
 
@@ -201,6 +203,7 @@ export async function fetchFixPRs(all = false): Promise<FixPR[]> {
 
 export interface CostKPIs {
   totals: {
+    repo?: string;
     fixes: number;
     reverts: number;
     promotes: number;
@@ -213,8 +216,11 @@ export interface CostKPIs {
     repo: string;
     fixes: number;
     reverts: number;
+    promotes?: number;
     total_cost_usd: number;
     fix_success_rate: number | null;
+    duration_p50_ms?: number;
+    duration_p95_ms?: number;
   }[];
 }
 

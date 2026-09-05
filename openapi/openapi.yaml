@@ -1,0 +1,350 @@
+# Source of truth for /api/* — keep in sync with internal/api.Mount.
+# Drift: go test ./internal/api -run TestOpenAPI
+openapi: "3.1.0"
+info:
+  title: xdlc-agent ops API
+  version: "0.1.0"
+  description: Dashboard JSON + operator actions on the daemon mux.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/health:
+    get:
+      summary: Liveness (no auth)
+      security: []
+      responses:
+        "200":
+          description: Daemon running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /api/whoami:
+    get:
+      summary: Caller role (operator|viewer)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [role]
+                properties:
+                  role: { type: string, enum: [operator, viewer] }
+  /api/overview:
+    get:
+      summary: Console home snapshot
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Overview"
+  /api/history:
+    get:
+      summary: Audit event history
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: repo
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/Event" }
+  /api/backlog:
+    get:
+      summary: BACKLOG.md contents
+      parameters:
+        - name: repo
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [markdown]
+                properties:
+                  markdown: { type: string }
+  /api/repos:
+    get:
+      summary: Watched repos
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repos]
+                properties:
+                  repos:
+                    type: array
+                    items: { $ref: "#/components/schemas/Repo" }
+  /api/repos/{id}:
+    get:
+      summary: One repo + timeline
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repo, timeline]
+                properties:
+                  repo: { $ref: "#/components/schemas/Repo" }
+                  timeline:
+                    type: array
+                    items: { $ref: "#/components/schemas/Event" }
+  /api/events:
+    get:
+      summary: SSE audit fan-out
+      parameters:
+        - name: access_token
+          in: query
+          description: Bearer for EventSource (cannot set Authorization)
+          schema: { type: string }
+      responses:
+        "200":
+          description: text/event-stream of Event JSON
+  /api/prs:
+    get:
+      summary: Fix-PR work queue
+      parameters:
+        - name: all
+          in: query
+          description: "1 = include merged/closed"
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [prs]
+                properties:
+                  prs:
+                    type: array
+                    items: { $ref: "#/components/schemas/FixPR" }
+  /api/kpis:
+    get:
+      summary: Fix cost / outcome KPIs
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostKPIs"
+  /api/actions/fix:
+    post:
+      summary: Enqueue manual Fix (operator)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActionBody" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionEnqueued" }
+  /api/actions/promote:
+    post:
+      summary: Enqueue manual Promote (operator)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActionBody" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionEnqueued" }
+  /api/actions/revert:
+    post:
+      summary: Enqueue manual Revert (operator)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActionBody" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionEnqueued" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string }
+        version: { type: string }
+        agentProvider: { type: string }
+        configPath: { type: string }
+        uptime: { type: string }
+        addr: { type: string }
+    ActionBody:
+      type: object
+      required: [repo, confirm]
+      properties:
+        repo: { type: string }
+        confirm: { type: boolean }
+    ActionEnqueued:
+      type: object
+      properties:
+        enqueued: { type: boolean }
+        action: { type: string }
+        repo: { type: string }
+        source: { type: string }
+        kind: { type: string }
+    Event:
+      type: object
+      properties:
+        id: { type: string }
+        ts: { type: string }
+        repo: { type: string }
+        source: { type: string }
+        gate: { type: string }
+        signal: { type: string }
+        action: { type: string }
+        ok: { type: boolean }
+        evidence: { type: string }
+        url: { type: string }
+        chain_id: { type: string }
+        seq: { type: integer }
+    Repo:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        branch: { type: string }
+        lastGate: { type: string }
+        lastGateStatus: { type: string }
+        lastAction: { type: string }
+        lastActionAt: { type: string }
+        devTag: { type: string }
+        prodTag: { type: string }
+        health: { type: string }
+        cloneStatus: { type: string }
+        lastPromote: { type: string }
+        lastRevert: { type: string }
+        argocdApp: { type: string }
+        sloQueries:
+          type: array
+          items:
+            type: object
+            properties:
+              label: { type: string }
+              query: { type: string }
+    Gate:
+      type: object
+      properties:
+        name: { type: string }
+        provider: { type: string }
+        status: { type: string }
+        lastCheck: { type: string }
+        interval: { type: string }
+        trigger: { type: string }
+        evidence: { type: string }
+        url: { type: string }
+    Daemon:
+      type: object
+      properties:
+        status: { type: string }
+        version: { type: string }
+        env: { type: string }
+        uptime: { type: string }
+        webhook: { type: string }
+        configPath: { type: string }
+        gitopsDir: { type: string }
+        agentProvider: { type: string }
+    OverviewKPIs:
+      type: object
+      properties:
+        reposWatched: { type: integer }
+        fixes: { type: integer }
+        promotes: { type: integer }
+        reverts: { type: integer }
+        lastActionAt: { type: string }
+        backlogOpen: { type: integer }
+    Overview:
+      type: object
+      properties:
+        daemon: { $ref: "#/components/schemas/Daemon" }
+        pipeline:
+          type: array
+          items:
+            type: object
+            properties:
+              stage: { type: string }
+              label: { type: string }
+              status: { type: string }
+              detail: { type: string }
+        kpis: { $ref: "#/components/schemas/OverviewKPIs" }
+        gates:
+          type: array
+          items: { $ref: "#/components/schemas/Gate" }
+        repos:
+          type: array
+          items: { $ref: "#/components/schemas/Repo" }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/Event" }
+        backlogMd: { type: string }
+    FixPR:
+      type: object
+      properties:
+        repo: { type: string }
+        branch: { type: string }
+        number: { type: integer }
+        url: { type: string }
+        state: { type: string }
+        at: { type: string }
+        merged: { type: boolean }
+        title: { type: string }
+        ci: { type: string }
+        reviewer: { type: string }
+        stale: { type: boolean }
+    RepoKPI:
+      type: object
+      properties:
+        repo: { type: string }
+        fixes: { type: integer }
+        reverts: { type: integer }
+        promotes: { type: integer }
+        total_cost_usd: { type: number }
+        fix_success_rate: { type: ["number", "null"] }
+        duration_p50_ms: { type: number }
+        duration_p95_ms: { type: number }
+    CostKPIs:
+      type: object
+      required: [totals, repos]
+      properties:
+        totals: { $ref: "#/components/schemas/RepoKPI" }
+        repos:
+          type: array
+          items: { $ref: "#/components/schemas/RepoKPI" }

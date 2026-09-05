@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xdlc-labs.github.io/xdlc-agent/schema/config.schema.json",
+  "title": "xdlc-agent config.yaml",
+  "description": "Root config — mirrors internal/config.Config. Source: schema/config.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "repos": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Repo" }
+    },
+    "gates": { "$ref": "#/$defs/Gates" },
+    "agent": { "$ref": "#/$defs/Agent" },
+    "server": { "$ref": "#/$defs/Server" },
+    "github": { "$ref": "#/$defs/GitHub" },
+    "fleet": { "$ref": "#/$defs/Fleet" }
+  },
+  "$defs": {
+    "Repo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "github"],
+      "properties": {
+        "name": { "type": "string" },
+        "github": { "type": "string", "description": "org/repo" },
+        "gates": { "type": "array", "items": { "type": "string" } },
+        "dir": { "type": "string" },
+        "branch": { "type": "string" },
+        "prod_branch": { "type": "string" },
+        "depends_on": { "type": "array", "items": { "type": "string" } },
+        "promote_requires": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "repo": { "type": "string" },
+              "min_tag": { "type": "string" }
+            }
+          }
+        },
+        "argocd_app": { "type": "string" },
+        "probe_job": { "type": "string" },
+        "thresholds": { "$ref": "#/$defs/Thresholds" },
+        "agent_instructions": { "type": "string" }
+      }
+    },
+    "Thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "p95_ms": { "type": "number" },
+        "error_rate": { "type": "number" }
+      }
+    },
+    "Gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ci": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "trigger": { "type": "string" }
+          }
+        },
+        "dev-smoke": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "trigger": { "type": "string" },
+            "argocd_app": { "type": "string" },
+            "probe_job": { "type": "string" },
+            "namespace": { "type": "string" },
+            "interval": { "type": "string", "description": "Go duration e.g. 30s" }
+          }
+        },
+        "prod-health": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "trigger": { "type": "string" },
+            "metrics_url": { "type": "string" },
+            "prometheus_url": { "type": "string", "description": "Legacy alias for metrics_url" },
+            "thresholds": { "$ref": "#/$defs/Thresholds" },
+            "interval": { "type": "string" },
+            "p95_query": { "type": "string" },
+            "error_rate_query": { "type": "string" }
+          }
+        },
+        "external": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "command"],
+            "properties": {
+              "name": { "type": "string" },
+              "command": { "type": "array", "items": { "type": "string" } },
+              "trigger": { "type": "string" },
+              "interval": { "type": "string" },
+              "timeout": { "type": "string" },
+              "repos": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "Agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["subprocess", "sdk"] },
+        "provider": { "type": "string" },
+        "binary": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "timeout": { "type": "string" },
+        "max_concurrent_fixes": { "type": "integer" },
+        "fix_mode": { "type": "string", "enum": ["direct", "pr", ""] },
+        "providers": { "type": "array", "items": { "type": "string" } },
+        "route": { "type": "string" },
+        "route_min_success": { "type": "number" },
+        "extra_env_keys": { "type": "array", "items": { "type": "string" } },
+        "fix_reverify": { "type": "boolean" },
+        "fix_reverify_attempts": { "type": "integer" },
+        "fix_reverify_interval": { "type": "string" },
+        "ci_rerun_before_fix": { "type": "boolean" },
+        "fix_plan": { "type": "boolean" }
+      }
+    },
+    "Server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "addr": { "type": "string" },
+        "api_token_env": { "type": "string" },
+        "api_viewer_token_env": { "type": "string" },
+        "github_webhook_secret_env": { "type": "string" },
+        "argocd_webhook_secret_env": { "type": "string" },
+        "alertmanager_webhook_secret_env": { "type": "string" },
+        "require_webhook_secret": { "type": "boolean" },
+        "webhook_rate_per_sec": { "type": "number" },
+        "webhook_rate_burst": { "type": "integer" },
+        "oidc": { "$ref": "#/$defs/OIDC" }
+      }
+    },
+    "OIDC": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issuer_url": { "type": "string" },
+        "client_id": { "type": "string" },
+        "client_secret_env": { "type": "string" },
+        "redirect_url": { "type": "string" },
+        "scopes": { "type": "array", "items": { "type": "string" } },
+        "groups_claim": { "type": "string" },
+        "operator_groups": { "type": "array", "items": { "type": "string" } },
+        "viewer_groups": { "type": "array", "items": { "type": "string" } },
+        "session_secret_env": { "type": "string" },
+        "session_ttl": { "type": "string" },
+        "cookie_secure": { "type": "boolean" }
+      }
+    },
+    "GitHub": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "app_id": { "type": "integer" },
+        "installation_id": { "type": "integer" },
+        "private_key_env": { "type": "string" },
+        "private_key_file_env": { "type": "string" }
+      }
+    },
+    "Fleet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "flap_max_cycles": { "type": "integer" },
+        "flap_window": { "type": "string" },
+        "circuit_breach_ratio": { "type": "number" },
+        "notify_webhook_url": { "type": "string" },
+        "patient_zero": { "type": "boolean" }
+      }
+    }
+  }
+}

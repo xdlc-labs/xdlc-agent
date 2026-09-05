@@ -8,6 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `xdlc-agent demo` — zero-infra Fix→Promote→Revert with `--provider fake` (#5)
+- Typed contracts: `openapi/openapi.yaml` + `schema/config.schema.json`; drift tests; `docs/api-reference.md` (#15)
 - `xdlc-agent doctor` — PATH / token / config / optional Prometheus checks (#12)
 - Docs: [vs alternatives](vs-alternatives.md), [why not a GitHub Action](why-not-github-action.md) (#13)
 - Console: distinct loading / empty / error states (fetch throws; Skeleton + QueryError) (#7)
@@ -24,6 +26,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Store `Since(repo,t)` via `by_repo` index; flap path no longer scans All (#16)
 - Console `/repos/$id` timeline + real dev/prod tags / last promote/revert (#8)
 - `GET /api/events` SSE fan-out on audit Append; console live invalidate (#6)
+- Fix queue: latest-wins coalesce per source, 1 Fix/repo + global cap, optional `fix_budget`, `xdlc_agent_fix_queue_*` metrics + overview `fix_queue_depth` (#9)
 
 ### Changed
 

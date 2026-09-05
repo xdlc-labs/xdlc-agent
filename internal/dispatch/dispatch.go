@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/metric"
@@ -69,6 +71,14 @@ type Dispatcher struct {
 	NewRunner func(provider string) subagent.Runner
 	// fixSem caps concurrent Fix runs. Nil = unlimited (tests); set via SetFixConcurrency.
 	fixSem chan struct{}
+	// fixRepoSem: cap 1 Fix per repo when fixSem is set (#9 fair drain).
+	// ponytail: map+chan; upgrade weighted fair queue if >~50 repos contend.
+	fixRepoMu  sync.Mutex
+	fixRepoSem map[string]chan struct{}
+	// FixBudget soft-cancels Fix after duration (#9). 0 = unlimited.
+	FixBudget time.Duration
+	fixWaiting  atomic.Int64
+	fixInflight atomic.Int64
 }
 
 // New returns a Dispatcher.
@@ -85,21 +95,96 @@ func (d *Dispatcher) SetFixConcurrency(n int) {
 	d.fixSem = make(chan struct{}, n)
 }
 
+// FixQueueStats returns goroutines waiting for a Fix slot and holding one.
+func (d *Dispatcher) FixQueueStats() (waiting, inflight int) {
+	return int(d.fixWaiting.Load()), int(d.fixInflight.Load())
+}
+
+func (d *Dispatcher) repoFixSem(repo string) chan struct{} {
+	d.fixRepoMu.Lock()
+	defer d.fixRepoMu.Unlock()
+	if d.fixRepoSem == nil {
+		d.fixRepoSem = map[string]chan struct{}{}
+	}
+	ch, ok := d.fixRepoSem[repo]
+	if !ok {
+		ch = make(chan struct{}, 1)
+		d.fixRepoSem[repo] = ch
+	}
+	return ch
+}
+
 // Fix runs a per-repo subagent with the failure evidence, expecting it
 // to commit+push a fix or leave a note in BACKLOG.md if it can't.
 func (d *Dispatcher) Fix(ctx context.Context, s orchestrator.Signal) error {
+	d.fixWaiting.Add(1)
+	if d.Metrics != nil {
+		d.Metrics.FixQueueDepth.Add(ctx, 1)
+	}
+	waitStart := time.Now()
+	release, err := d.acquireFixSlot(ctx, s.Repo)
+	wait := time.Since(waitStart)
+	d.fixWaiting.Add(-1)
+	if err != nil {
+		if d.Metrics != nil {
+			d.Metrics.FixQueueDepth.Add(ctx, -1)
+			d.Metrics.FixQueueWait.Record(ctx, wait.Seconds())
+		}
+		return err
+	}
+	d.fixInflight.Add(1)
+	if d.Metrics != nil {
+		d.Metrics.FixQueueWait.Record(ctx, wait.Seconds())
+	}
+	defer func() {
+		release()
+		d.fixInflight.Add(-1)
+		if d.Metrics != nil {
+			d.Metrics.FixQueueDepth.Add(context.Background(), -1)
+		}
+	}()
+
+	if d.FixBudget > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d.FixBudget)
+		defer cancel()
+	}
+
+	start := time.Now()
+	err = d.fixInner(ctx, s)
+	d.observe("fix", start, err)
+	return err
+}
+
+// acquireFixSlot takes per-repo (cap 1) then global fixSem. release frees both.
+func (d *Dispatcher) acquireFixSlot(ctx context.Context, repo string) (release func(), err error) {
+	var repoSem chan struct{}
+	if d.fixSem != nil {
+		repoSem = d.repoFixSem(repo)
+		select {
+		case repoSem <- struct{}{}:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("dispatch: fix: wait repo slot: %w", ctx.Err())
+		}
+	}
 	if d.fixSem != nil {
 		select {
 		case d.fixSem <- struct{}{}:
-			defer func() { <-d.fixSem }()
 		case <-ctx.Done():
-			return fmt.Errorf("dispatch: fix: wait slot: %w", ctx.Err())
+			if repoSem != nil {
+				<-repoSem
+			}
+			return nil, fmt.Errorf("dispatch: fix: wait slot: %w", ctx.Err())
 		}
 	}
-	start := time.Now()
-	err := d.fixInner(ctx, s)
-	d.observe("fix", start, err)
-	return err
+	return func() {
+		if d.fixSem != nil {
+			<-d.fixSem
+		}
+		if repoSem != nil {
+			<-repoSem
+		}
+	}, nil
 }
 
 func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error {

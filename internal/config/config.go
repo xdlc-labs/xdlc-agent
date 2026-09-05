@@ -261,6 +261,8 @@ type AgentConfig struct {
 	// MaxConcurrentFixes caps how many Fix subagent runs may execute at
 	// once. 0 → default 2. Per-process only (see docs/capacity.md).
 	MaxConcurrentFixes int `yaml:"max_concurrent_fixes"`
+	// FixBudget is a soft deadline for one Fix run (issue #9). 0 = unlimited.
+	FixBudget time.Duration `yaml:"fix_budget"`
 	// FixMode controls how the Fix subagent lands changes:
 	// "direct" (default, empty) commit+push current branch;
 	// "pr" scratch branch + open PR, return when PR exists.

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -149,4 +150,84 @@ func TestSlowFixDoesNotBlockOtherRepoRevert(t *testing.T) {
 	close(disp.fixRelease)
 	cancel()
 	<-done
+}
+
+// countingFixDispatcher counts Fix calls; first Fix blocks until release.
+type countingFixDispatcher struct {
+	mu         sync.Mutex
+	n          int
+	fixStarted chan struct{}
+	fixRelease chan struct{}
+}
+
+func (d *countingFixDispatcher) Fix(ctx context.Context, _ Signal) error {
+	d.mu.Lock()
+	d.n++
+	n := d.n
+	d.mu.Unlock()
+	if n == 1 {
+		close(d.fixStarted)
+		select {
+		case <-d.fixRelease:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+func (d *countingFixDispatcher) Revert(context.Context, Signal) error  { return nil }
+func (d *countingFixDispatcher) Promote(context.Context, Signal) error { return nil }
+func (d *countingFixDispatcher) fixes() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.n
+}
+
+func TestFixCoalesceLatestWins(t *testing.T) {
+	bl, err := backlog.Open(filepath.Join(t.TempDir(), "BACKLOG.md"))
+	if err != nil {
+		t.Fatalf("backlog.Open: %v", err)
+	}
+	disp := &countingFixDispatcher{
+		fixStarted: make(chan struct{}),
+		fixRelease: make(chan struct{}),
+	}
+	o := New(disp, bl, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- o.Run(ctx) }()
+
+	o.Signals <- Signal{Source: SourceCI, Repo: "noisy", Kind: KindFail, Evidence: map[string]any{"n": 0}}
+	select {
+	case <-disp.fixStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first Fix never started")
+	}
+
+	for i := 1; i <= 20; i++ {
+		o.Signals <- Signal{Source: SourceCI, Repo: "noisy", Kind: KindFail, Evidence: map[string]any{"n": i}}
+	}
+	// Let Run drain Signals into the per-repo chan (coalesce while Fix holds).
+	time.Sleep(50 * time.Millisecond)
+
+	close(disp.fixRelease)
+	deadline := time.After(2 * time.Second)
+	for {
+		if disp.fixes() >= 2 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out; fixes=%d", disp.fixes())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	time.Sleep(50 * time.Millisecond) // any stragglers
+	cancel()
+	<-done
+
+	if n := disp.fixes(); n > 3 {
+		t.Fatalf("20 CI fails coalesced to %d Fixes; want ≤3", n)
+	}
 }

@@ -122,11 +122,33 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 					}
 				}(ch)
 			}
+			// ponytail: latest-wins per Source — drain same-Source pending
+			// before enqueue. O(buf) scan; fine at buf=64. Upgrade: ring
+			// with per-source slot if enqueue rate becomes hot.
+			drainSameSource(ch, s.Source)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case ch <- s:
 			}
+		}
+	}
+}
+
+// drainSameSource drops pending signals with src from ch, re-queues the rest.
+func drainSameSource(ch chan Signal, src Source) {
+	var keep []Signal
+	for {
+		select {
+		case old := <-ch:
+			if old.Source != src {
+				keep = append(keep, old)
+			}
+		default:
+			for _, k := range keep {
+				ch <- k
+			}
+			return
 		}
 	}
 }

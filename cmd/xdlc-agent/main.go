@@ -73,6 +73,7 @@ func main() {
 		historyCmd(),
 		initCmd(),
 		doctorCmd(),
+		demoCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -168,6 +169,7 @@ func daemonCmd() *cobra.Command {
 				fixN = 2
 			}
 			disp.SetFixConcurrency(fixN)
+			disp.FixBudget = cfg.Agent.FixBudget
 			gh := ghclient.NewFromProvider(tokens)
 			disp.FetchLogs = gh.FetchFailedJobLogs
 			disp.FindPR = func(ctx context.Context, ownerRepo, branch string) (*dispatch.PRRef, error) {
@@ -399,6 +401,7 @@ func daemonCmd() *cobra.Command {
 					}, nil
 				},
 				RepoDir: repoMgr.Dir,
+				FixQueueStats: disp.FixQueueStats,
 			}
 			if cfg.Server.OIDC.Enabled() {
 				oidcAuth, err := setupOIDC(cmd.Context(), cfg.Server.OIDC)
@@ -861,7 +864,9 @@ func initCmd() *cobra.Command {
 	}
 }
 
-const starterConfig = `repos:
+const starterConfig = `# yaml-language-server: $schema=./schema/config.schema.json
+# See config.example.yaml for commented keys (api_token_env, fleet, oidc, …).
+repos:
   - name: example-service
     github: your-org/example-service
     gates: [ci, dev-smoke, prod-health]
@@ -875,6 +880,8 @@ const starterConfig = `repos:
 
 server:
   addr: ":8080"
+  # api_token_env: XDL_API_TOKEN
+  # api_viewer_token_env: XDL_API_VIEWER_TOKEN
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
   argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
   alertmanager_webhook_secret_env: ALERTMANAGER_WEBHOOK_SECRET

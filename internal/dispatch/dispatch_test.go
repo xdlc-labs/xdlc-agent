@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -561,6 +562,118 @@ func TestFixConcurrencyCap(t *testing.T) {
 	if err := <-errCh; err != nil {
 		t.Fatalf("first Fix: %v", err)
 	}
+}
+
+// multiBlockRunner maps successive Run calls onto blockingRunner slots.
+type multiBlockRunner struct {
+	mu     sync.Mutex
+	starts []*blockingRunner
+	n      int
+}
+
+func (m *multiBlockRunner) Run(ctx context.Context, dir, prompt string, env []string) (string, error) {
+	m.mu.Lock()
+	idx := m.n
+	m.n++
+	var br *blockingRunner
+	if idx < len(m.starts) {
+		br = m.starts[idx]
+	} else {
+		br = &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+		close(br.release) // unexpected extras finish immediately
+	}
+	m.mu.Unlock()
+	return br.Run(ctx, dir, prompt, env)
+}
+
+func TestFairDrainMultiRepo(t *testing.T) {
+	_, workA := setupOrigin(t)
+	_, workB := setupOrigin(t)
+	mgr := repos.NewManager("unused", []config.Repo{
+		{Name: "a", GitHub: "org/a", Dir: workA, Branch: "develop"},
+		{Name: "b", GitHub: "org/b", Dir: workB, Branch: "develop"},
+	}, nil)
+
+	brA := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+	brB := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+	runner := &multiBlockRunner{starts: []*blockingRunner{brA, brB}}
+	d := New(mgr, runner, silentLogger())
+	d.SetFixConcurrency(2)
+
+	errA := make(chan error, 1)
+	go func() {
+		errA <- d.Fix(context.Background(), orchestrator.Signal{Repo: "a", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail})
+	}()
+	select {
+	case <-brA.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("repo A Fix never started")
+	}
+
+	// Second Fix on A must wait (per-repo cap 1) even though global has a free slot.
+	ctxA2, cancelA2 := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancelA2()
+	errA2 := make(chan error, 1)
+	go func() {
+		errA2 <- d.Fix(ctxA2, orchestrator.Signal{Repo: "a", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail})
+	}()
+
+	// Repo B should acquire the other global slot while A holds one.
+	errB := make(chan error, 1)
+	go func() {
+		errB <- d.Fix(context.Background(), orchestrator.Signal{Repo: "b", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail})
+	}()
+	select {
+	case <-brB.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("repo B Fix starved by repo A")
+	}
+
+	select {
+	case err := <-errA2:
+		if err == nil {
+			t.Fatal("second Fix on A should have blocked / timed out")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second Fix on A did not return after timeout")
+	}
+
+	w, in := d.FixQueueStats()
+	if in < 1 {
+		t.Fatalf("expected inflight ≥1, got waiting=%d inflight=%d", w, in)
+	}
+
+	close(brA.release)
+	close(brB.release)
+	if err := <-errA; err != nil {
+		t.Fatalf("A: %v", err)
+	}
+	if err := <-errB; err != nil {
+		t.Fatalf("B: %v", err)
+	}
+}
+
+func TestFixBudgetTimeout(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	br := &blockingRunner{started: make(chan struct{}), release: make(chan struct{})}
+	d := New(mgr, br, silentLogger())
+	d.FixBudget = 50 * time.Millisecond
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- d.Fix(context.Background(), orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail})
+	}()
+	<-br.started
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected budget timeout")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Fix did not return after budget")
+	}
+	close(br.release)
 }
 
 // planThenFixRunner: first call returns plan text (no git); second commits like fakeRunner.
