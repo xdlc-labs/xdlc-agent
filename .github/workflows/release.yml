@@ -61,7 +61,7 @@ jobs:
             git commit -m "chore: embed console for release"
           fi
           git tag -f "${GITHUB_REF_NAME}"
-      - uses: docker/setup-qemu-action@v4
+      # No QEMU: release images are linux/amd64 only (see .goreleaser.yml).
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v3
         with:
@@ -109,5 +109,3 @@ jobs:
           syft "$IMAGE" -o spdx-json > "xdlc-${TAG}.sbom.spdx.json"
           gh release upload "$TAG" "xdlc-${TAG}.sbom.spdx.json" --clobber
           cosign sign --yes "$IMAGE"
-          cosign sign --yes "${IMAGE}-amd64"
-          cosign sign --yes "${IMAGE}-arm64"

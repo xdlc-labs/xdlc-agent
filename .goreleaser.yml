@@ -30,36 +30,17 @@ changelog:
       - "^docs:"
       - "^test:"
 
+# linux/amd64 only — arm64 via QEMU was the release time sink.
+# Re-add arm64 (+ :latest) when we have a native arm runner / first GA.
 dockers:
   - ids:
       - xdlc-agent
     image_templates:
-      - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}-amd64"
+      - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}"
     dockerfile: deploy/Dockerfile.release
     use: buildx
     build_flag_templates:
       - "--platform=linux/amd64"
-  - ids:
-      - xdlc-agent
-    image_templates:
-      - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}-arm64"
-    dockerfile: deploy/Dockerfile.release
-    use: buildx
-    goarch: arm64
-    build_flag_templates:
-      - "--platform=linux/arm64"
-
-docker_manifests:
-  - name_template: "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}-amd64"
-      - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/xdlc-labs/xdlc-agent:latest"
-    # Avoid promoting prereleases to :latest
-    skip_push: "{{ .IsPreRelease }}"
-    image_templates:
-      - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}-amd64"
-      - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}-arm64"
 
 release:
   github:
