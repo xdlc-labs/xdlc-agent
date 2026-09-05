@@ -103,8 +103,9 @@ func TestRunTimeoutKillsProcessGroup(t *testing.T) {
 		t.Fatal("empty child pid")
 	}
 	// kill -0: process exists?
-	if err := exec.Command("kill", "-0", pidStr).Run(); err == nil {
-		_ = exec.Command("kill", "-9", pidStr).Run()
+	ctx := context.Background()
+	if err := exec.CommandContext(ctx, "kill", "-0", pidStr).Run(); err == nil {
+		_ = exec.CommandContext(ctx, "kill", "-9", pidStr).Run()
 		t.Fatalf("orphan child pid %s still alive after timeout", pidStr)
 	}
 }

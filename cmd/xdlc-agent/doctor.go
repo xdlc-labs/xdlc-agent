@@ -43,10 +43,10 @@ Exit 1 when any required check fails.`,
 					failed++
 				}
 				if detail == "" {
-					fmt.Fprintf(out, "[%s] %s\n", mark, name)
+					_, _ = fmt.Fprintf(out, "[%s] %s\n", mark, name)
 					return
 				}
-				fmt.Fprintf(out, "[%s] %s — %s\n", mark, name, detail)
+				_, _ = fmt.Fprintf(out, "[%s] %s — %s\n", mark, name, detail)
 			}
 
 			cfg, cfgErr := config.Load(cfgPath)
@@ -154,7 +154,7 @@ Exit 1 when any required check fails.`,
 					defer cancel()
 					req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 					ok := false
-					detail := url
+					var detail string
 					if err != nil {
 						detail = err.Error()
 					} else if resp, err := http.DefaultClient.Do(req); err != nil {
@@ -169,10 +169,10 @@ Exit 1 when any required check fails.`,
 			}
 
 			if failed > 0 {
-				fmt.Fprintf(out, "\n%d check(s) failed\n", failed)
+				_, _ = fmt.Fprintf(out, "\n%d check(s) failed\n", failed)
 				return errDoctor
 			}
-			fmt.Fprintln(out, "\nall checks passed")
+			_, _ = fmt.Fprintln(out, "\nall checks passed")
 			return nil
 		},
 	}
