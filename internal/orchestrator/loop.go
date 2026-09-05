@@ -6,6 +6,7 @@ package orchestrator
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,6 +70,10 @@ type Orchestrator struct {
 
 	breachMu sync.Mutex
 	breach   map[string]bool // prod-health breach by repo
+
+	// patientZeroFired: upstream already enqueued this breach episode (#4).
+	pzMu             sync.Mutex
+	patientZeroFired map[string]struct{}
 }
 
 // New returns an Orchestrator ready to Run — its Signals channel
@@ -130,7 +135,9 @@ func (o *Orchestrator) handle(ctx context.Context, s Signal) {
 	o.updateBreach(s)
 
 	action := Decide(s)
+	var suppress string
 	if reason := o.suppressReason(&s, action); reason != "" {
+		suppress = reason
 		o.Log.Warn("fleet policy suppressed action",
 			"repo", s.Repo, "would", action, "escalate", reason)
 		if o.Suppressions != nil {
@@ -181,6 +188,62 @@ func (o *Orchestrator) handle(ctx context.Context, s Signal) {
 			o.Log.Error("audit write failed", "error", auditErr)
 		}
 	}
+
+	if suppress == "root_cause" && o.Fleet.PatientZero {
+		o.enqueuePatientZero(s)
+	}
+}
+
+// enqueuePatientZero emits one Fix-triggering signal per upstream named
+// in evidence (issue #4). Once per upstream while that upstream stays red.
+func (o *Orchestrator) enqueuePatientZero(leaf Signal) {
+	ups, _ := leaf.Evidence["upstream"].(string)
+	for _, up := range strings.Split(ups, ",") {
+		up = strings.TrimSpace(up)
+		if up == "" {
+			continue
+		}
+		if !o.markPatientZero(up) {
+			continue
+		}
+		sig := Signal{
+			Source: SourceCI,
+			Repo:   up,
+			Kind:   KindFail,
+			Evidence: map[string]any{
+				"patient_zero": true,
+				"from_leaf":    leaf.Repo,
+				"reason":       "upstream of " + leaf.Repo + " breaching (patient-zero)",
+			},
+			At: time.Now().UTC(),
+		}
+		select {
+		case o.Signals <- sig:
+			o.Log.Info("patient-zero: enqueued Fix for upstream", "upstream", up, "leaf", leaf.Repo)
+		default:
+			o.Log.Warn("patient-zero: signals full; dropped", "upstream", up)
+			o.clearPatientZero(up)
+		}
+	}
+}
+
+func (o *Orchestrator) markPatientZero(repo string) bool {
+	o.pzMu.Lock()
+	defer o.pzMu.Unlock()
+	if o.patientZeroFired == nil {
+		o.patientZeroFired = map[string]struct{}{}
+	}
+	if _, ok := o.patientZeroFired[repo]; ok {
+		return false
+	}
+	o.patientZeroFired[repo] = struct{}{}
+	return true
+}
+
+func (o *Orchestrator) clearPatientZero(repo string) {
+	o.pzMu.Lock()
+	defer o.pzMu.Unlock()
+	delete(o.patientZeroFired, repo)
 }
 
 // tryCIRerun runs the flake ladder once per run_url. Returns skipFix=true

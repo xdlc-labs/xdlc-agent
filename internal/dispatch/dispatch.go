@@ -50,6 +50,11 @@ type Dispatcher struct {
 	// FixPlan enables optional plan-then-patch two-pass Fix (issue #23).
 	// Default false — one-shot FixPrompt.
 	FixPlan bool
+	// Lessons optional past-Fix inject (issue #19). nil skips.
+	Lessons interface {
+		Record(repo, source, outcome, symptom string) error
+		ForRepo(repo string, k int) string
+	}
 	// Reverify, when set, is called after a successful Fix subagent run
 	// (issue #2). Non-nil error means the gate is still red — Fix fails.
 	Reverify func(ctx context.Context, s orchestrator.Signal) error
@@ -148,6 +153,10 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 	}
 
 	authEnv := d.Repos.AuthEnv()
+	lessons := ""
+	if d.Lessons != nil {
+		lessons = d.Lessons.ForRepo(s.Repo, 5)
+	}
 	var prompt string
 	if d.FixPlan {
 		planPrompt := subagent.PlanPrompt(s.Repo, reason, evidence, teamRules)
@@ -164,14 +173,15 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 		}
 		d.Log.Info("subagent plan finished", "repo", s.Repo, "output", truncate(planOut, 2000))
 		if perr != nil {
+			d.recordLesson(s, "error", reason)
 			return fmt.Errorf("dispatch: fix: plan: %w", perr)
 		}
 		if s.Evidence != nil {
 			s.Evidence["fix_plan"] = "used"
 		}
-		prompt = subagent.FixFromPlanPrompt(s.Repo, reason, evidence, d.FixMode, prBranch, teamRules, planOut)
+		prompt = subagent.FixFromPlanPrompt(s.Repo, reason, evidence, d.FixMode, prBranch, teamRules, planOut, lessons)
 	} else {
-		prompt = subagent.FixPrompt(s.Repo, reason, evidence, d.FixMode, prBranch, teamRules)
+		prompt = subagent.FixPrompt(s.Repo, reason, evidence, d.FixMode, prBranch, teamRules, lessons)
 	}
 
 	subStart := time.Now()
@@ -191,6 +201,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 	}
 	d.Log.Info("subagent finished", "repo", s.Repo, "output", truncate(out, 2000))
 	if err != nil {
+		d.recordLesson(s, "error", reason)
 		return fmt.Errorf("dispatch: fix: subagent: %w", err)
 	}
 
@@ -230,13 +241,24 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 			if s.Evidence != nil {
 				s.Evidence["escalate"] = "reverify_failed"
 			}
+			d.recordLesson(s, "error", reason+": reverify failed")
 			return fmt.Errorf("dispatch: fix: reverify: %w", rerr)
 		}
 		if s.Evidence != nil {
 			s.Evidence["reverify"] = "pass"
 		}
 	}
+	d.recordLesson(s, "ok", reason)
 	return nil
+}
+
+func (d *Dispatcher) recordLesson(s orchestrator.Signal, outcome, symptom string) {
+	if d.Lessons == nil {
+		return
+	}
+	if err := d.Lessons.Record(s.Repo, string(s.Source), outcome, symptom); err != nil {
+		d.Log.Warn("lesson record failed", "repo", s.Repo, "error", err)
+	}
 }
 
 func (d *Dispatcher) observe(action string, start time.Time, err error) {

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/gate"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
@@ -15,13 +17,16 @@ import (
 type fakeGate struct {
 	results map[string]gate.Result
 	errs    map[string]error
+	mu      sync.Mutex
 	calls   []string
 }
 
 func (f *fakeGate) Name() string              { return "fake" }
 func (f *fakeGate) Trigger() gate.TriggerKind { return gate.Continuous }
 func (f *fakeGate) Check(_ context.Context, repo string) (gate.Result, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, repo)
+	f.mu.Unlock()
 	if err, ok := f.errs[repo]; ok {
 		return gate.Result{}, err
 	}
@@ -52,7 +57,7 @@ func TestPollerTick(t *testing.T) {
 		Log:     silentLogger(),
 	}
 
-	p.tick(context.Background())
+	p.tick(context.Background(), 30*time.Second)
 	close(signals)
 
 	got := map[string]orchestrator.Kind{}
@@ -88,7 +93,7 @@ func TestPollerTickNonProdHealthFailMapsToFail(t *testing.T) {
 		Log:     silentLogger(),
 	}
 
-	p.tick(context.Background())
+	p.tick(context.Background(), 30*time.Second)
 	close(signals)
 
 	s := <-signals
@@ -112,13 +117,13 @@ func TestPollerTickEdgeTriggered(t *testing.T) {
 		Log:     silentLogger(),
 	}
 
-	p.tick(context.Background()) // first pass → emit
-	p.tick(context.Background()) // same pass → suppress
+	p.tick(context.Background(), 30*time.Second) // first pass → emit
+	p.tick(context.Background(), 30*time.Second) // same pass → suppress
 	fg.results["svc"] = gate.Result{Status: gate.StatusFail}
-	p.tick(context.Background()) // fail → emit
-	p.tick(context.Background()) // same fail → suppress
+	p.tick(context.Background(), 30*time.Second) // fail → emit
+	p.tick(context.Background(), 30*time.Second) // same fail → suppress
 	fg.results["svc"] = gate.Result{Status: gate.StatusPass}
-	p.tick(context.Background()) // pass again → emit
+	p.tick(context.Background(), 30*time.Second) // pass again → emit
 
 	close(signals)
 	var kinds []orchestrator.Kind
@@ -163,7 +168,7 @@ func TestPollerPinsGatedSHA(t *testing.T) {
 		},
 	}
 
-	p.tick(context.Background())
+	p.tick(context.Background(), 30*time.Second)
 	if len(order) != 2 || order[0] != "sha" || order[1] != "check" {
 		t.Fatalf("order = %v, want the sha read before the probe", order)
 	}
@@ -173,7 +178,7 @@ func TestPollerPinsGatedSHA(t *testing.T) {
 	}
 
 	// Same kind, same commit → still suppressed.
-	p.tick(context.Background())
+	p.tick(context.Background(), 30*time.Second)
 	if len(signals) != 0 {
 		t.Fatalf("re-emitted for an unchanged commit: %+v", <-signals)
 	}
@@ -183,7 +188,7 @@ func TestPollerPinsGatedSHA(t *testing.T) {
 	// would leave it gated but never shipped.
 	const shaB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	sha = shaB
-	p.tick(context.Background())
+	p.tick(context.Background(), 30*time.Second)
 	got = <-signals
 	if got.SHA != shaB {
 		t.Errorf("signal sha = %q, want %q for the new commit", got.SHA, shaB)
@@ -204,7 +209,7 @@ func TestPollerSkipsRepoWhenSHAUnresolvable(t *testing.T) {
 		SHA:     func(context.Context, string) (string, error) { return "", errors.New("ls-remote failed") },
 	}
 
-	p.tick(context.Background())
+	p.tick(context.Background(), 30*time.Second)
 	if len(signals) != 0 {
 		t.Fatalf("emitted an unpinned dev-gate signal: %+v", <-signals)
 	}

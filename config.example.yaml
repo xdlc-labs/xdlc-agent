@@ -66,3 +66,4 @@ agent:
 #   flap_window: 2h
 #   circuit_breach_ratio: 0.3
 #   notify_webhook_url: https://hooks.slack.com/services/...
+#   patient_zero: true          # Fix upstream on root_cause suppress (#4)

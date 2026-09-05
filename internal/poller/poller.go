@@ -33,6 +33,9 @@ type Poller struct {
 	Signals  chan<- orchestrator.Signal
 	Log      *slog.Logger
 	Metrics  *otel.Metrics // optional
+	// Parallelism caps concurrent Gate.Check calls per tick (issue #10).
+	// 0 → default 8.
+	Parallelism int
 	// SHA optionally resolves the commit a Check's verdict applies to —
 	// the repo's dev branch tip (repos.Manager.RemoteSHA). Set it for
 	// gates whose pass authorizes a promote (dev-smoke), so the promote
@@ -71,69 +74,96 @@ func (p *Poller) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			p.tick(ctx)
+			p.tick(ctx, interval)
 		}
 	}
 }
 
-func (p *Poller) tick(ctx context.Context) {
+func (p *Poller) tick(ctx context.Context, interval time.Duration) {
+	start := time.Now()
+	n := p.Parallelism
+	if n <= 0 {
+		n = 8
+	}
+	sem := make(chan struct{}, n)
+	var wg sync.WaitGroup
 	for _, repo := range p.Repos {
-		if p.Metrics != nil {
-			// Recorded before Check so a stalled/hanging Gate.Check still
-			// shows the tick attempt — staleness alerts key off this.
-			p.Metrics.PollerLastTick.Record(ctx, float64(time.Now().Unix()), metric.WithAttributes(
-				otel.AttrGate(p.Gate.Name()), otel.AttrRepo(repo)))
-		}
-		// Read the gated commit before the check, not after: the verdict
-		// belongs to whatever was deployed when the probe started.
-		var sha string
-		if p.SHA != nil {
-			var err error
-			if sha, err = p.SHA(ctx, repo); err != nil {
-				// A pass we can't attribute to a commit would promote an
-				// unverified tip, so skip the repo this tick instead.
-				p.Log.Error("poller: cannot resolve gated sha", "gate", p.Gate.Name(), "repo", repo, "error", err)
-				continue
+		wg.Add(1)
+		go func(repo string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
 			}
-		}
+			p.checkOne(ctx, repo)
+		}(repo)
+	}
+	wg.Wait()
+	elapsed := time.Since(start)
+	if interval > 0 && elapsed > time.Duration(float64(interval)*0.8) {
+		p.Log.Warn("poller tick slow",
+			"gate", p.Gate.Name(), "elapsed", elapsed, "interval", interval, "repos", len(p.Repos))
+	}
+}
 
-		result, err := p.Gate.Check(ctx, repo)
-		if err != nil {
-			p.Log.Error("poller: gate check failed", "gate", p.Gate.Name(), "repo", repo, "error", err)
-			if p.Metrics != nil {
-				p.Metrics.GateChecks.Add(ctx, 1, metric.WithAttributes(
-					otel.AttrGate(p.Gate.Name()), otel.AttrStatus("error")))
-			}
-			continue
+func (p *Poller) checkOne(ctx context.Context, repo string) {
+	if p.Metrics != nil {
+		// Recorded before Check so a stalled/hanging Gate.Check still
+		// shows the tick attempt — staleness alerts key off this.
+		p.Metrics.PollerLastTick.Record(ctx, float64(time.Now().Unix()), metric.WithAttributes(
+			otel.AttrGate(p.Gate.Name()), otel.AttrRepo(repo)))
+	}
+	// Read the gated commit before the check, not after: the verdict
+	// belongs to whatever was deployed when the probe started.
+	var sha string
+	if p.SHA != nil {
+		var err error
+		if sha, err = p.SHA(ctx, repo); err != nil {
+			// A pass we can't attribute to a commit would promote an
+			// unverified tip, so skip the repo this tick instead.
+			p.Log.Error("poller: cannot resolve gated sha", "gate", p.Gate.Name(), "repo", repo, "error", err)
+			return
 		}
+	}
 
-		kind := orchestrator.KindPass
-		status := "pass"
-		if result.Status == gate.StatusFail {
-			kind = orchestrator.KindFail
-			status = "fail"
-			if p.Source == orchestrator.SourceProdHealth {
-				kind = orchestrator.KindBreach
-				status = "breach"
-			}
-		}
+	result, err := p.Gate.Check(ctx, repo)
+	if err != nil {
+		p.Log.Error("poller: gate check failed", "gate", p.Gate.Name(), "repo", repo, "error", err)
 		if p.Metrics != nil {
 			p.Metrics.GateChecks.Add(ctx, 1, metric.WithAttributes(
-				otel.AttrGate(p.Gate.Name()), otel.AttrStatus(status)))
+				otel.AttrGate(p.Gate.Name()), otel.AttrStatus("error")))
 		}
+		return
+	}
 
-		if !p.edge(repo, kind, sha) {
-			continue
+	kind := orchestrator.KindPass
+	status := "pass"
+	if result.Status == gate.StatusFail {
+		kind = orchestrator.KindFail
+		status = "fail"
+		if p.Source == orchestrator.SourceProdHealth {
+			kind = orchestrator.KindBreach
+			status = "breach"
 		}
+	}
+	if p.Metrics != nil {
+		p.Metrics.GateChecks.Add(ctx, 1, metric.WithAttributes(
+			otel.AttrGate(p.Gate.Name()), otel.AttrStatus(status)))
+	}
 
-		p.Signals <- orchestrator.Signal{
-			Source:   p.Source,
-			Repo:     repo,
-			Kind:     kind,
-			SHA:      sha,
-			Evidence: result.Evidence,
-			At:       time.Now(),
-		}
+	if !p.edge(repo, kind, sha) {
+		return
+	}
+
+	p.Signals <- orchestrator.Signal{
+		Source:   p.Source,
+		Repo:     repo,
+		Kind:     kind,
+		SHA:      sha,
+		Evidence: result.Evidence,
+		At:       time.Now(),
 	}
 }
 

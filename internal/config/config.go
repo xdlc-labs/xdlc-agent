@@ -77,6 +77,9 @@ type FleetConfig struct {
 	// NotifyWebhookURL, when set, receives a JSON POST on each fleet
 	// suppression (Slack-compatible: {"text":"..."}). Empty = off.
 	NotifyWebhookURL string `yaml:"notify_webhook_url"`
+	// PatientZero, when true, enqueues Fix on upstream repos when a
+	// leaf Revert is suppressed with escalate=root_cause (issue #4).
+	PatientZero bool `yaml:"patient_zero"`
 }
 
 // ServerConfig configures the daemon's webhook HTTP listener.

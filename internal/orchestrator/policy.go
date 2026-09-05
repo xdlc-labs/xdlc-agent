@@ -15,6 +15,7 @@ type FleetPolicy struct {
 	CircuitBreachRatio float64
 	RepoCount          int // configured repos; used for circuit ratio
 	NotifyWebhookURL   string
+	PatientZero        bool // issue #4: Fix upstream on root_cause suppress
 }
 
 // PromotePin is a min_tag requirement on a dependency repo (v2).
@@ -174,6 +175,7 @@ func (o *Orchestrator) updateBreach(s Signal) {
 		o.breach[s.Repo] = true
 	case KindPass:
 		o.breach[s.Repo] = false
+		o.clearPatientZero(s.Repo)
 	}
 }
 

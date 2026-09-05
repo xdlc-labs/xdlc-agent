@@ -25,7 +25,7 @@ func TestReadTeamInstructions(t *testing.T) {
 		t.Fatalf("missing content: %q", got)
 	}
 
-	p := FixPrompt("svc", "fail", map[string]any{"x": 1}, "", "", got)
+	p := FixPrompt("svc", "fail", map[string]any{"x": 1}, "", "", got, "")
 	if !strings.Contains(p, teamRulesBegin) || !strings.Contains(p, "use go fmt") {
 		t.Fatalf("team rules missing from prompt:\n%s", p)
 	}

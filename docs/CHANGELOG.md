@@ -17,6 +17,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Structural escalate before Runner: `escalate=structural` on rewrite / cross-service smells; manual Fix bypasses (#22)
 - Console Fix-PR work queue: title, age, CI, merged, reviewer, `?all=1`, Actions nav badge (#14)
 - Optional `agent.fix_plan` — diagnose-then-patch two-pass Fix; default off (#23)
+- Selective FixPrompt evidence: keep logs/conclusion/run_url, drop filler first (#20)
+- LESSONS.md inject into FixPrompt across runs (#19)
+- Prod-health poller: bounded parallel Checks (default 8) + slow-tick warn (#10)
+- Fleet `patient_zero`: enqueue Fix on upstream when leaf suppressed root_cause (#4)
 
 ### Changed
 

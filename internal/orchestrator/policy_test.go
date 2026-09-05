@@ -73,6 +73,70 @@ func TestRootCauseSuppressesRevert(t *testing.T) {
 	}
 }
 
+func TestPatientZeroEnqueuesUpstreamFix(t *testing.T) {
+	bl, err := backlog.Open(filepath.Join(t.TempDir(), "BACKLOG.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	disp := &fakeDispatcher{}
+	o := New(disp, bl, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	o.RepoDeps = map[string][]string{"web": {"api"}}
+	o.Fleet.RepoCount = 2
+	o.Fleet.PatientZero = true
+
+	auditCh := make(chan auditedSig, 4)
+	o.Audit = func(s Signal, action Action, _ error, _ time.Time) error {
+		auditCh <- auditedSig{s, action}
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = o.Run(ctx) }()
+
+	o.Signals <- Signal{Source: SourceProdHealth, Repo: "api", Kind: KindBreach}
+	select {
+	case a := <-auditCh:
+		if a.action != ActionRevert {
+			t.Fatalf("api want revert, got %v", a.action)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout api")
+	}
+
+	o.Signals <- Signal{Source: SourceProdHealth, Repo: "web", Kind: KindBreach}
+	// leaf noop + patient-zero Fix on api
+	sawNoop, sawFix := false, false
+	deadline := time.After(3 * time.Second)
+	for !sawNoop || !sawFix {
+		select {
+		case a := <-auditCh:
+			if a.s.Repo == "web" && a.action == ActionNoop {
+				sawNoop = true
+				if a.s.Evidence["escalate"] != "root_cause" {
+					t.Fatalf("escalate = %v", a.s.Evidence["escalate"])
+				}
+			}
+			if a.s.Repo == "api" && a.action == ActionFix {
+				sawFix = true
+				if a.s.Evidence["patient_zero"] != true {
+					t.Fatalf("evidence = %+v", a.s.Evidence)
+				}
+			}
+		case <-deadline:
+			t.Fatalf("want leaf noop + upstream fix; noop=%v fix=%v fixCalls=%d", sawNoop, sawFix, len(disp.fixCalls))
+		}
+	}
+	if len(disp.fixCalls) != 1 || disp.fixCalls[0].Repo != "api" {
+		t.Fatalf("fixCalls = %+v", disp.fixCalls)
+	}
+}
+
+type auditedSig struct {
+	s      Signal
+	action Action
+}
+
 func TestCircuitSuppressesFleet(t *testing.T) {
 	bl, err := backlog.Open(filepath.Join(t.TempDir(), "BACKLOG.md"))
 	if err != nil {

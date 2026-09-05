@@ -29,6 +29,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/gate"
 	"github.com/xdlc-labs/xdlc-agent/internal/gatebuild"
 	"github.com/xdlc-labs/xdlc-agent/internal/ghclient"
+	"github.com/xdlc-labs/xdlc-agent/internal/lessons"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	agentotel "github.com/xdlc-labs/xdlc-agent/internal/otel"
 	"github.com/xdlc-labs/xdlc-agent/internal/poller"
@@ -104,6 +105,10 @@ func daemonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			lessonStore, err := lessons.Open("LESSONS.md")
+			if err != nil {
+				return err
+			}
 
 			audit, err := store.Open(auditDBPath)
 			if err != nil {
@@ -135,6 +140,7 @@ func daemonCmd() *cobra.Command {
 			disp.Metrics = &metrics
 			disp.FixMode = cfg.Agent.FixMode
 			disp.FixPlan = cfg.Agent.FixPlan
+			disp.Lessons = lessonStore
 			disp.DefaultProvider = cfg.Agent.Provider
 			disp.Route = cfg.Agent.Route
 			disp.Providers = append([]string(nil), cfg.Agent.Providers...)
@@ -225,6 +231,7 @@ func daemonCmd() *cobra.Command {
 				CircuitBreachRatio: cfg.Fleet.CircuitBreachRatio,
 				RepoCount:          len(cfg.Repos),
 				NotifyWebhookURL:   cfg.Fleet.NotifyWebhookURL,
+				PatientZero:        cfg.Fleet.PatientZero,
 			}
 			o.RepoDeps = make(map[string][]string, len(cfg.Repos))
 			o.PromotePins = make(map[string][]orchestrator.PromotePin)

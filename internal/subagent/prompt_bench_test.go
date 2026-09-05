@@ -12,7 +12,7 @@ func BenchmarkFixPrompt(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = FixPrompt("svc-a", "build failed", ev, "direct", "", "")
+		_ = FixPrompt("svc-a", "build failed", ev, "direct", "", "", "")
 	}
 }
 
