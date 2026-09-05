@@ -21,5 +21,7 @@
   "prs.title": "fix-pr queue",
   "prs.empty": "No open Fix PRs (agent.fix_mode: pr not used, or nothing pending).",
   "prs.stale": "Some rows marked stale — GitHub recheck failed; showing last known snapshot.",
-  "prs.live": "Open PRs only; state rechecked live against GitHub when credentials are configured."
+  "prs.live": "Open PRs only; state rechecked live against GitHub when credentials are configured.",
+  "prs.showAll": "show closed/merged",
+  "prs.openOnly": "open only"
 }

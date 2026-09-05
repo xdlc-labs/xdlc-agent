@@ -10,10 +10,13 @@ import (
 
 // PRRef is the subset of a pull request the Fix-PR work queue needs.
 type PRRef struct {
-	Number int
-	URL    string
-	State  string // "open" or "closed" (go-github's two PR states)
-	Merged bool
+	Number   int
+	URL      string
+	State    string // "open" or "closed" (go-github's two PR states)
+	Merged   bool
+	Title    string
+	CI       string // combined commit status: success|pending|failure|error|""
+	Reviewer string // first requested reviewer login, if any
 }
 
 // GetPR fetches a pull request by number on "owner/repo".
@@ -29,12 +32,25 @@ func (c *Client) GetPR(ctx context.Context, repo string, number int) (*PRRef, er
 	if err != nil {
 		return nil, fmt.Errorf("ghclient: get PR %s#%d: %w", repo, number, err)
 	}
-	return &PRRef{
+	ref := &PRRef{
 		Number: pr.GetNumber(),
 		URL:    pr.GetHTMLURL(),
 		State:  pr.GetState(),
 		Merged: pr.GetMerged(),
-	}, nil
+		Title:  pr.GetTitle(),
+	}
+	if rs := pr.RequestedReviewers; len(rs) > 0 && rs[0] != nil {
+		ref.Reviewer = rs[0].GetLogin()
+	}
+	// Best-effort CI: combined status on head SHA. Failures leave CI empty.
+	if head := pr.GetHead(); head != nil {
+		if sha := head.GetSHA(); sha != "" {
+			if st, _, err := c.gh.Repositories.GetCombinedStatus(ctx, owner, name, sha, &github.ListOptions{PerPage: 1}); err == nil {
+				ref.CI = st.GetState()
+			}
+		}
+	}
+	return ref, nil
 }
 
 // FindPRByBranch looks up a PR whose head is branch on "owner/repo".
@@ -63,6 +79,7 @@ func (c *Client) FindPRByBranch(ctx context.Context, repo, branch string) (*PRRe
 		URL:    pr.GetHTMLURL(),
 		State:  pr.GetState(),
 		Merged: pr.GetMerged(),
+		Title:  pr.GetTitle(),
 	}, nil
 }
 
@@ -92,5 +109,6 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 		URL:    pr.GetHTMLURL(),
 		State:  pr.GetState(),
 		Merged: pr.GetMerged(),
+		Title:  pr.GetTitle(),
 	}, nil
 }

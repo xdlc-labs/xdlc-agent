@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { fetchOverview } from "@/lib/api";
+import { fetchFixPRs, fetchOverview } from "@/lib/api";
 import { fetchAuthConfig, fetchRole } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { resolveTheme, toggleTheme, type Theme } from "@/lib/theme";
@@ -17,6 +17,15 @@ const nav = [
 
 function useDaemon() {
   return useQuery({ queryKey: ["overview"], queryFn: fetchOverview, refetchInterval: 10_000 });
+}
+
+function useOpenFixPRCount() {
+  const { data } = useQuery({
+    queryKey: ["fix-prs", false],
+    queryFn: () => fetchFixPRs(false),
+    refetchInterval: 30_000,
+  });
+  return data?.length ?? 0;
 }
 
 /** Top strip — online status + env sit on the right. */
@@ -85,6 +94,7 @@ export function AppTopBar() {
 export function AppSidebar() {
   const { data } = useDaemon();
   const daemon = data?.daemon;
+  const openPRs = useOpenFixPRCount();
   const [theme, setThemeState] = useState<Theme>(() =>
     typeof window === "undefined" ? "dark" : resolveTheme(),
   );
@@ -114,9 +124,17 @@ export function AppSidebar() {
             inactiveProps={{
               className: "text-muted-foreground border-transparent hover:bg-surface/80 hover:text-foreground",
             }}
-            className="nav-link rounded border px-3 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em]"
+            className="nav-link flex items-center justify-between gap-2 rounded border px-3 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em]"
           >
-            {t(n.key)}
+            <span>{t(n.key)}</span>
+            {n.to === "/actions" && openPRs > 0 ? (
+              <span
+                className="rounded bg-primary/20 px-1.5 py-0.5 font-mono text-[10px] normal-case tracking-normal text-primary"
+                aria-label={`${openPRs} open Fix PRs`}
+              >
+                {openPRs}
+              </span>
+            ) : null}
           </Link>
         ))}
       </nav>

@@ -174,12 +174,17 @@ export interface FixPR {
   url: string;
   state: string;
   at: string;
+  merged?: boolean;
+  title?: string;
+  ci?: string;
+  reviewer?: string;
   stale?: boolean;
 }
 
 /** Fix-PR work queue — only populated once fix_mode: pr is used. */
-export async function fetchFixPRs(): Promise<FixPR[]> {
-  const data = await getJSON<{ prs: FixPR[] }>("/api/prs");
+export async function fetchFixPRs(all = false): Promise<FixPR[]> {
+  const q = all ? "?all=1" : "";
+  const data = await getJSON<{ prs: FixPR[] }>(`/api/prs${q}`);
   return data.prs ?? [];
 }
 

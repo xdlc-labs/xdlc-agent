@@ -47,7 +47,16 @@ type Server struct {
 	// PRStatus optionally re-checks a Fix PR against GitHub. githubRepo
 	// is "owner/name"; number is the PR number. nil → snapshot-only
 	// evidence from the audit store (legacy 2.8 behavior).
-	PRStatus func(ctx context.Context, githubRepo string, number int) (state string, merged bool, err error)
+	PRStatus func(ctx context.Context, githubRepo string, number int) (PRLiveStatus, error)
+}
+
+// PRLiveStatus is the live GitHub view of a Fix PR (issue #14).
+type PRLiveStatus struct {
+	State    string
+	Merged   bool
+	Title    string
+	CI       string
+	Reviewer string
 }
 
 // Mount registers dashboard routes on mux.
@@ -307,14 +316,17 @@ func (s *Server) handlePRs(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(records, func(i, j int) bool { return records[i].At.After(records[j].At) })
 
 	type prRow struct {
-		Repo   string `json:"repo"`
-		Branch string `json:"branch"`
-		Number int    `json:"number"`
-		URL    string `json:"url"`
-		State  string `json:"state"`
-		Merged bool   `json:"merged"`
-		Stale  bool   `json:"stale,omitempty"`
-		At     string `json:"at"`
+		Repo     string `json:"repo"`
+		Branch   string `json:"branch"`
+		Number   int    `json:"number"`
+		URL      string `json:"url"`
+		State    string `json:"state"`
+		Merged   bool   `json:"merged"`
+		Title    string `json:"title,omitempty"`
+		CI       string `json:"ci,omitempty"`
+		Reviewer string `json:"reviewer,omitempty"`
+		Stale    bool   `json:"stale,omitempty"`
+		At       string `json:"at"`
 	}
 	seen := map[string]bool{} // repo+branch — keep only the latest record per PR
 	var prs []prRow
@@ -360,13 +372,16 @@ func (s *Server) handlePRs(w http.ResponseWriter, r *http.Request) {
 					prs[i].Stale = true
 					return
 				}
-				state, merged, err := s.PRStatus(ctx, ghRepo, prs[i].Number)
+				live, err := s.PRStatus(ctx, ghRepo, prs[i].Number)
 				if err != nil {
 					prs[i].Stale = true
 					return
 				}
-				prs[i].State = state
-				prs[i].Merged = merged
+				prs[i].State = live.State
+				prs[i].Merged = live.Merged
+				prs[i].Title = live.Title
+				prs[i].CI = live.CI
+				prs[i].Reviewer = live.Reviewer
 			}(i, ghRepo)
 		}
 		wg.Wait()

@@ -148,11 +148,11 @@ func TestFixPRLiveRecheck(t *testing.T) {
 	cfg := &config.Config{Repos: []config.Repo{{Name: "svc-a", GitHub: "org/svc-a"}}}
 	srv := &Server{
 		Cfg: cfg, Audit: audit, Started: time.Now(), Token: "op",
-		PRStatus: func(_ context.Context, githubRepo string, number int) (string, bool, error) {
+		PRStatus: func(_ context.Context, githubRepo string, number int) (PRLiveStatus, error) {
 			if githubRepo != "org/svc-a" || number != 12 {
 				t.Fatalf("lookup %s#%d", githubRepo, number)
 			}
-			return "closed", true, nil
+			return PRLiveStatus{State: "closed", Merged: true, Title: "fix boom", CI: "success"}, nil
 		},
 	}
 	mux := http.NewServeMux()
@@ -187,6 +187,9 @@ func TestFixPRLiveRecheck(t *testing.T) {
 	if body.PRs[0]["state"] != "closed" || body.PRs[0]["merged"] != true {
 		t.Fatalf("%+v", body.PRs[0])
 	}
+	if body.PRs[0]["title"] != "fix boom" || body.PRs[0]["ci"] != "success" {
+		t.Fatalf("live fields: %+v", body.PRs[0])
+	}
 }
 
 func TestFixPRLiveRecheckStaleOnError(t *testing.T) {
@@ -204,8 +207,8 @@ func TestFixPRLiveRecheckStaleOnError(t *testing.T) {
 	srv := &Server{
 		Cfg:   &config.Config{Repos: []config.Repo{{Name: "svc-a", GitHub: "org/svc-a"}}},
 		Audit: audit, Started: time.Now(), Token: "op",
-		PRStatus: func(context.Context, string, int) (string, bool, error) {
-			return "", false, fmt.Errorf("github down")
+		PRStatus: func(context.Context, string, int) (PRLiveStatus, error) {
+			return PRLiveStatus{}, fmt.Errorf("github down")
 		},
 	}
 	mux := http.NewServeMux()

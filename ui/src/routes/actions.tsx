@@ -7,6 +7,7 @@ import { PageHeader, ActionTag } from "@/components/status";
 import { Dialog } from "@/components/dialog";
 import { QueryError, Skeleton } from "@/components/query-state";
 import { t } from "@/lib/i18n";
+import { formatAge } from "@/lib/utils";
 
 export const Route = createFileRoute("/actions")({
   head: () => ({
@@ -30,7 +31,12 @@ function Actions() {
   });
   const { data: role } = useQuery({ queryKey: ["role"], queryFn: fetchRole, refetchInterval: 60_000 });
   const canOperate = role === "operator";
-  const { data: fixPRs } = useQuery({ queryKey: ["fix-prs"], queryFn: fetchFixPRs, refetchInterval: 30_000 });
+  const [showAllPRs, setShowAllPRs] = useState(false);
+  const { data: fixPRs } = useQuery({
+    queryKey: ["fix-prs", showAllPRs],
+    queryFn: () => fetchFixPRs(showAllPRs),
+    refetchInterval: 30_000,
+  });
   const repos = data?.repos ?? [];
   const [repoPick, setRepoPick] = useState("");
   const [pending, setPending] = useState<Pending>(null);
@@ -187,36 +193,55 @@ function Actions() {
       </div>
 
       <section className="px-6 pb-6">
-        <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
-          {t("prs.title")}
-        </h2>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            {t("prs.title")}
+          </h2>
+          <label className="inline-flex cursor-pointer items-center gap-2 font-mono text-[10px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={showAllPRs}
+              onChange={(e) => setShowAllPRs(e.target.checked)}
+              className="accent-primary"
+            />
+            {showAllPRs ? t("prs.showAll") : t("prs.openOnly")}
+          </label>
+        </div>
         {fixPRs && fixPRs.length > 0 ? (
           <>
             <table className="w-full border border-border bg-card text-left font-mono text-[12px]">
               <thead>
                 <tr className="border-b border-border text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                   <th className="px-4 py-2.5 font-normal">repo</th>
-                  <th className="px-4 py-2.5 font-normal">branch</th>
+                  <th className="px-4 py-2.5 font-normal">title</th>
                   <th className="px-4 py-2.5 font-normal">pr</th>
+                  <th className="px-4 py-2.5 font-normal">age</th>
+                  <th className="px-4 py-2.5 font-normal">ci</th>
+                  <th className="px-4 py-2.5 font-normal">merged</th>
+                  <th className="px-4 py-2.5 font-normal">reviewer</th>
                   <th className="px-4 py-2.5 font-normal">state</th>
-                  <th className="px-4 py-2.5 font-normal">at</th>
                 </tr>
               </thead>
               <tbody>
                 {fixPRs.map((pr) => (
                   <tr key={`${pr.repo}-${pr.branch}`} className="border-b border-border last:border-0">
                     <td className="px-4 py-2.5 text-foreground">{pr.repo}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{pr.branch}</td>
+                    <td className="max-w-[14rem] truncate px-4 py-2.5 text-muted-foreground" title={pr.title ?? pr.branch}>
+                      {pr.title || pr.branch}
+                    </td>
                     <td className="px-4 py-2.5">
                       <a href={pr.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
                         #{pr.number}
                       </a>
                     </td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{formatAge(pr.at)}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{pr.ci || "—"}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{pr.merged ? "yes" : "no"}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{pr.reviewer || "—"}</td>
                     <td className="px-4 py-2.5 text-muted-foreground">
                       {pr.state}
                       {pr.stale ? " (stale)" : ""}
                     </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{pr.at}</td>
                   </tr>
                 ))}
               </tbody>

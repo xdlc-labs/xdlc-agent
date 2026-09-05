@@ -380,12 +380,15 @@ func daemonCmd() *cobra.Command {
 				Token:       os.Getenv(apiTokenEnv),
 				ViewerToken: os.Getenv(viewerTokenEnv),
 				Enqueue:     func(sig orchestrator.Signal) { o.Signals <- sig },
-				PRStatus: func(ctx context.Context, githubRepo string, number int) (string, bool, error) {
+				PRStatus: func(ctx context.Context, githubRepo string, number int) (api.PRLiveStatus, error) {
 					pr, err := gh.GetPR(ctx, githubRepo, number)
 					if err != nil {
-						return "", false, err
+						return api.PRLiveStatus{}, err
 					}
-					return pr.State, pr.Merged, nil
+					return api.PRLiveStatus{
+						State: pr.State, Merged: pr.Merged,
+						Title: pr.Title, CI: pr.CI, Reviewer: pr.Reviewer,
+					}, nil
 				},
 			}
 			if cfg.Server.OIDC.Enabled() {
