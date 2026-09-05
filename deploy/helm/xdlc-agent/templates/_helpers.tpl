@@ -31,12 +31,12 @@ xdlc-agent-history.db (internal/store/audit.go), so a second replica
 either crash-loops on the lock or, with persistence disabled, runs on a
 divergent audit store. Fail at template time instead — a silent
 replicaCount: 2 looks like HA and isn't. See
-docs/disaster-recovery.md#high-availability-not-implemented.
+chart values (HA not implemented).
 */}}
 {{- define "xdlc-agent.validateReplicas" -}}
 {{- $n := int (default 1 .Values.replicaCount) -}}
 {{- if gt $n 1 -}}
-{{- fail (printf "xdlc-agent: replicaCount=%d is not supported — the daemon holds an exclusive bbolt lock on the audit DB (single writer) and the data PVC is ReadWriteOnce, so a second replica cannot start. Use replicaCount: 1; see docs/disaster-recovery.md (High availability) for the leader-election status and the actual recovery story." $n) -}}
+{{- fail (printf "xdlc-agent: replicaCount=%d is not supported — the daemon holds an exclusive bbolt lock on the audit DB (single writer) and the data PVC is ReadWriteOnce, so a second replica cannot start. Use replicaCount: 1; HA is not implemented; keep replicaCount: 1." $n) -}}
 {{- end -}}
 {{- end -}}
 
