@@ -13,6 +13,8 @@ Ops docs for **xdlc-agent** (CLI binary **`xdlc`**).
 - [Production loop](production-loop.md) — end-to-end checklist
 - [GitHub webhooks](github-webhooks.md) — `workflow_run` → Fix
 - [Fix modes](fix-modes.md) — direct push vs PR
+- [Rules and skills](rules-and-skills.md) — what the agent is told
+- [Fix sessions](sessions.md) — what the agent did
 - [GitOps / ArgoCD](gitops-argo.md) — DEV sync + Promote
 - [Prod health](prod-health.md) — Prometheus / Alertmanager → Revert
 - [Deployment](deployment.md) — Docker + Helm

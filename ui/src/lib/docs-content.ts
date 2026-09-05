@@ -5,6 +5,8 @@ import apiTokens from "../../content/docs/api-tokens.md?raw";
 import productionLoop from "../../content/docs/production-loop.md?raw";
 import githubWebhooks from "../../content/docs/github-webhooks.md?raw";
 import fixModes from "../../content/docs/fix-modes.md?raw";
+import rulesAndSkills from "../../content/docs/rules-and-skills.md?raw";
+import sessions from "../../content/docs/sessions.md?raw";
 import gitopsArgo from "../../content/docs/gitops-argo.md?raw";
 import prodHealth from "../../content/docs/prod-health.md?raw";
 import deployment from "../../content/docs/deployment.md?raw";
@@ -25,6 +27,8 @@ const bySlug: Record<string, string> = {
   "production-loop": productionLoop,
   "github-webhooks": githubWebhooks,
   "fix-modes": fixModes,
+  "rules-and-skills": rulesAndSkills,
+  sessions,
   "gitops-argo": gitopsArgo,
   "prod-health": prodHealth,
   deployment,

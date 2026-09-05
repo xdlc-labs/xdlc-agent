@@ -21,6 +21,10 @@ Embedded SPA on the daemon HTTP port (`/`), API under `/api/*`.
 3. **Settings** → paste the **same** token → save
 4. Overview should leave “degraded / unauthorized” state
 
+## Manual Fix instructions
+
+The Manual Fix dialog takes an optional free-text note — what you would tell a coding agent yourself ("the flake is in the seed data"). It joins the prompt's trusted block after the repo rules. Only its length reaches the audit trail; the text itself is in the session's `prompt.txt`. See [Rules and skills](rules-and-skills.md).
+
 ## Manual Fix agent override
 
 Settings can store provider + API key in **localStorage** only. Manual Fix sends `X-XDLC-Agent-Provider` / `X-XDLC-Agent-Key`. Daemon default provider still comes from `config.yaml`.

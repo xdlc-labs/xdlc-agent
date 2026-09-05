@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -112,16 +113,49 @@ Exit 1 when any required check fails.`,
 			}
 			bin := cfg.Agent.Binary
 			if bin == "" {
-				switch subagent.Provider(provider) {
-				case subagent.ProviderCodex:
-					bin = "codex"
-				case subagent.ProviderCursor:
-					bin = "cursor-agent"
-				default:
-					bin = "claude"
+				bin = subagent.DefaultBinary(subagent.Provider(provider))
+			}
+			if !subagent.KnownProvider(provider) {
+				var names []string
+				for _, p := range subagent.Providers() {
+					names = append(names, string(p))
 				}
+				check("agent provider ("+provider+")", false,
+					"unknown provider — known: "+strings.Join(names, ", ")+" (falling back to the claude argv shape)")
 			}
 			check("agent CLI ("+bin+")", lookPath(bin), pathDetail(bin))
+			// Informational, never a failure: the CLIs also accept an
+			// interactive login, in which case no key env is set here.
+			keyEnv := subagent.APIKeyEnvName(subagent.Provider(provider))
+			keyDetail := "set"
+			if os.Getenv(keyEnv) == "" {
+				keyDetail = "not set — ok only if the CLI is already logged in"
+			}
+			check("agent API key ("+keyEnv+")", true, keyDetail)
+
+			// Rules the Fix agent will be given, per repo. Missing files
+			// are not a failure — they mean the agent runs on defaults.
+			for _, r := range cfg.Repos {
+				dir := r.Dir
+				if dir == "" {
+					dir = filepath.Join("repos", r.Name)
+				}
+				srcs := subagent.RuleSources(dir, cfg.Agent.RulesFile)
+				if len(srcs) == 0 {
+					check("agent rules ("+r.Name+")", true,
+						"none found in "+dir+" — Fix runs with no repo conventions (see docs/rules-and-skills.md)")
+					continue
+				}
+				var names []string
+				for _, src := range srcs {
+					name := src.Path
+					if src.Truncated {
+						name += " (truncated)"
+					}
+					names = append(names, name)
+				}
+				check("agent rules ("+r.Name+")", true, strings.Join(names, ", "))
+			}
 
 			hasApp := os.Getenv("GITHUB_APP_ID") != "" || (cfg.GitHub.AppID != 0)
 			hasPAT := os.Getenv("GITHUB_TOKEN") != ""

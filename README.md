@@ -7,7 +7,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](docs/CONTRIBUTING.md)
 
-You run one small daemon next to your repos. When CI breaks, a DEV smoke test fails, or prod looks unhealthy, it can open a **Fix**, **Promote** a good build, or **Revert** a bad one, using the coding agent you already use (`claude`, `codex`, or `cursor`). Open source (MIT). You host it; nothing phones home.
+You run one small daemon next to your repos. When CI breaks, a DEV smoke test fails, or prod looks unhealthy, it can open a **Fix**, **Promote** a good build, or **Revert** a bad one, using the coding agent you already use (`claude`, `codex`, `cursor`, or `gemini`). Open source (MIT). You host it; nothing phones home.
 
 The CLI is called **`xdlc`**. The container image, Helm chart, and this repo are **`xdlc-agent`**.
 
@@ -15,7 +15,7 @@ The CLI is called **`xdlc`**. The container image, Helm chart, and this repo are
 
 Built for platform and SRE teams that already have CI and GitOps. Overnight, someone still pastes failing logs into a coding agent by hand. This daemon does that job under your gates, then can promote a good DEV build or revert a bad prod one, and leaves an audit trail.
 
-**You keep control.** Self-hosted. MIT. Your agent CLI and keys (`claude` / `codex` / `cursor`). Policy runs before the agent. History goes to the console, the audit DB, and `BACKLOG.md`. Nothing phones home.
+**You keep control.** Self-hosted. MIT. Your agent CLI and keys (`claude` / `codex` / `cursor` / `gemini`). Policy runs before the agent. History goes to the console, the audit DB, and `BACKLOG.md`. Nothing phones home.
 
 **Not a substitute for:**
 
@@ -35,6 +35,8 @@ Gates fire in order: **CI → DEV → PROD**.
 | **DEV smoke fail** | **Fix** |
 | **DEV smoke pass** | **Promote** (fast-forward `develop` → `main` only) |
 | **PROD SLO breach** | **Revert** on `main` |
+
+Every Fix records what the agent was told and what it changed: `xdlc sessions show <id> --diff` ([Fix sessions](docs/sessions.md)). Teach it your conventions with `AGENTS.md` / `CLAUDE.md` ([Rules and skills](docs/rules-and-skills.md)).
 
 Green CI → DEV stays your GitOps path. The agent reacts to gates; it does not invent deploys.
 
@@ -103,7 +105,7 @@ Embedded at `/` when the daemon runs (API under `/api/*`).
 1. CI that fails clearly on the integration branch
 2. Deploy path green build → DEV (usually GitOps)
 3. Optional smoke + Prometheus for promote / revert
-4. Coding-agent CLI on `PATH` (`claude`, `codex`, or `cursor-agent`)
+4. Coding-agent CLI on `PATH` (`claude`, `codex`, `cursor-agent`, or `gemini`)
 
 ## Documentation
 
@@ -113,6 +115,7 @@ Full guides live under [`docs/`](docs/README.md). Same pages appear in the ops c
 |-------|------------|-----------|------|
 | [Install](docs/install.md) | [Production loop](docs/production-loop.md) | [Configuration](docs/configuration.md) | [vs alternatives](docs/vs-alternatives.md) |
 | [Getting started](docs/getting-started.md) | [GitHub](docs/github-webhooks.md) · [Fix](docs/fix-modes.md) · [GitOps](docs/gitops-argo.md) | [Deployment](docs/deployment.md) · [Operations](docs/operations.md) | [Why not a GitHub Action](docs/why-not-github-action.md) |
+| [Rules and skills](docs/rules-and-skills.md) | [Fix sessions](docs/sessions.md) | [Configuration](docs/configuration.md) | |
 | [API tokens](docs/api-tokens.md) | [Prod health](docs/prod-health.md) | [Architecture](docs/architecture.md) · [API](docs/api-reference.md) · [Security](docs/SECURITY.md) | [Changelog](docs/CHANGELOG.md) |
 
 ## Contribute

@@ -540,6 +540,47 @@ func TestManualActions(t *testing.T) {
 		}
 	})
 
+	t.Run("fix carries operator instructions", func(t *testing.T) {
+		res := post("/api/actions/fix", "op",
+			`{"repo":"svc-a","confirm":true,"instructions":"the flake is in the seed data"}`)
+		if res.Code != 200 {
+			t.Fatalf("status %d: %s", res.Code, res.Body.String())
+		}
+		sig := <-ch
+		if sig.OperatorInstructions != "the flake is in the seed data" {
+			t.Fatalf("instructions=%q", sig.OperatorInstructions)
+		}
+		// The text can name internal systems; evidence reaches BACKLOG.md
+		// and the audit DB, so only its length may go there.
+		if got, ok := sig.Evidence["operator_instructions_len"]; !ok || got != 29 {
+			t.Fatalf("want length-only evidence, got %v (%v)", got, ok)
+		}
+		for k, v := range sig.Evidence {
+			if str, ok := v.(string); ok && strings.Contains(str, "seed data") {
+				t.Fatalf("instruction text leaked into evidence[%s]", k)
+			}
+		}
+	})
+
+	t.Run("oversized instructions rejected", func(t *testing.T) {
+		body := `{"repo":"svc-a","confirm":true,"instructions":"` + strings.Repeat("x", maxOperatorInstructions+1) + `"}`
+		res := post("/api/actions/fix", "op", body)
+		if res.Code != http.StatusBadRequest {
+			t.Fatalf("status %d, want 400", res.Code)
+		}
+	})
+
+	t.Run("promote ignores instructions", func(t *testing.T) {
+		res := post("/api/actions/promote", "op", `{"repo":"svc-a","confirm":true,"instructions":"ignored"}`)
+		if res.Code != 200 {
+			t.Fatalf("status %d: %s", res.Code, res.Body.String())
+		}
+		sig := <-ch
+		if sig.OperatorInstructions != "" {
+			t.Fatalf("promote must not carry instructions: %q", sig.OperatorInstructions)
+		}
+	})
+
 	t.Run("fix agent headers stay off evidence", func(t *testing.T) {
 		res := httptest.NewRecorder()
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/actions/fix",

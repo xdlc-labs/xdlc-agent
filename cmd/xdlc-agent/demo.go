@@ -19,7 +19,7 @@ func demoCmd() *cobra.Command {
 		Long: `Run a self-contained Fix→Promote→Revert demo in a temp git repo.
 
 Default --provider fake needs no accounts or API keys and finishes in
-under three minutes. Real providers (claude|codex|cursor) require the
+under three minutes. Real providers (claude|codex|cursor|gemini) require the
 matching CLI on PATH.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err := demo.Run(cmd.Context(), demo.Options{
@@ -33,7 +33,7 @@ matching CLI on PATH.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&provider, "provider", "fake", "claude|codex|cursor|fake")
+	cmd.Flags().StringVar(&provider, "provider", "fake", "claude|codex|cursor|gemini|fake")
 	cmd.Flags().StringVar(&scenario, "scenario", "all", "ci-red|smoke-red|prod-breach|all")
 	return cmd
 }

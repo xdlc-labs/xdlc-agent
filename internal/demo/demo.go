@@ -18,6 +18,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/gate"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
+	"github.com/xdlc-labs/xdlc-agent/internal/session"
 	"github.com/xdlc-labs/xdlc-agent/internal/store"
 	"github.com/xdlc-labs/xdlc-agent/internal/subagent"
 )
@@ -26,7 +27,7 @@ const repoName = "demo"
 
 // Options configure Run.
 type Options struct {
-	Provider string    // fake | claude | codex | cursor (default fake)
+	Provider string    // fake | claude | codex | cursor | gemini (default fake)
 	Scenario string    // ci-red | smoke-red | prod-breach | all (default all)
 	WorkDir  string    // empty → MkdirTemp; printed to Out
 	Out      io.Writer // live loop lines; default os.Stdout
@@ -95,6 +96,14 @@ func Run(ctx context.Context, opts Options) error {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	disp := dispatch.New(mgr, runner, log)
 	disp.DefaultProvider = provider
+	// Record the demo Fix like a real one, so `xdlc sessions` has
+	// something to show the first time anyone runs it.
+	sessionDir := filepath.Join(workdir, "sessions")
+	sessions, err := session.Open(sessionDir, 0, 0)
+	if err != nil {
+		return err
+	}
+	disp.Sessions = sessions
 	// ponytail: in-process CI = go test; no GH Actions
 	disp.Reverify = func(ctx context.Context, s orchestrator.Signal) error {
 		if s.Source != orchestrator.SourceCI {
@@ -280,6 +289,9 @@ func Run(ctx context.Context, opts Options) error {
 	if runErr != nil {
 		return runErr
 	}
+	if metas, lerr := sessions.List("", 1); lerr == nil && len(metas) > 0 {
+		_, _ = fmt.Fprintf(out, "fix session: xdlc sessions show %s --diff --dir %s\n", metas[0].ID, sessionDir)
+	}
 	_, _ = fmt.Fprintln(out, "demo: ok")
 	return nil
 }
@@ -289,10 +301,12 @@ func newRunner(provider string) (subagent.Runner, error) {
 		return &fakeRunner{}, nil
 	}
 	p := subagent.Provider(provider)
-	switch p {
-	case subagent.ProviderClaude, subagent.ProviderCodex, subagent.ProviderCursor:
-	default:
-		return nil, fmt.Errorf("demo: unknown provider %q (want claude|codex|cursor|fake)", provider)
+	if !subagent.KnownProvider(provider) {
+		var names []string
+		for _, known := range subagent.Providers() {
+			names = append(names, string(known))
+		}
+		return nil, fmt.Errorf("demo: unknown provider %q (want %s|fake)", provider, strings.Join(names, "|"))
 	}
 	r := subagent.NewSubprocessRunner(p, "", nil, 10*time.Minute, nil)
 	if _, err := exec.LookPath(r.Binary); err != nil {

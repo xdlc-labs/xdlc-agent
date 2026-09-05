@@ -17,6 +17,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
+	"github.com/xdlc-labs/xdlc-agent/internal/session"
 )
 
 // runGit runs git in dir, failing the test on error. Used only to build
@@ -741,5 +742,144 @@ func TestFixPlanOnTwoRunnerCalls(t *testing.T) {
 	}
 	if sig.Evidence["fix_plan"] != "used" {
 		t.Fatalf("fix_plan evidence = %v", sig.Evidence["fix_plan"])
+	}
+}
+
+// TestFixRecordsSession covers the operator's after-the-fact question:
+// what was the agent told, what did it say, what did it change.
+func TestFixRecordsSession(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	store, err := session.Open(t.TempDir(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(mgr, &fakeRunner{}, silentLogger())
+	d.Sessions = store
+	d.DefaultProvider = "claude"
+
+	sig := orchestrator.Signal{
+		Repo:     "svc",
+		Source:   orchestrator.SourceCI,
+		Kind:     orchestrator.KindFail,
+		Evidence: map[string]any{"run_url": "http://ci/123"},
+	}
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+
+	metas, err := store.List("svc", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 {
+		t.Fatalf("want 1 recorded session, got %d", len(metas))
+	}
+	m := metas[0]
+	if m.Status != "ok" || m.Provider != "claude" || m.Source != "ci" {
+		t.Fatalf("unexpected meta: %+v", m)
+	}
+	if m.BaseSHA == "" || m.HeadSHA == "" || m.BaseSHA == m.HeadSHA {
+		t.Fatalf("want a base..head range for the agent's commit: %+v", m)
+	}
+	if id, ok := sig.Evidence["session_id"].(string); !ok || id != m.ID {
+		t.Fatalf("session id missing from evidence: %v", sig.Evidence["session_id"])
+	}
+
+	prompt, err := store.ReadFile(m.ID, session.FilePrompt)
+	if err != nil || !strings.Contains(prompt, "run_url") {
+		t.Fatalf("prompt not recorded: %q %v", prompt, err)
+	}
+	diff, err := store.ReadFile(m.ID, session.FileDiff)
+	if err != nil || !strings.Contains(diff, "fixed") {
+		t.Fatalf("diff not recorded: %q %v", diff, err)
+	}
+}
+
+// TestFixRecordsFailedSession: a failed Fix is the one you most want to
+// read afterwards, so the recording must survive the error path.
+func TestFixRecordsFailedSession(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	store, err := session.Open(t.TempDir(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(testManager(t, workDir), &errRunner{}, silentLogger())
+	d.Sessions = store
+
+	sig := orchestrator.Signal{
+		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
+		Evidence: map[string]any{},
+	}
+	if err := d.Fix(context.Background(), sig); err == nil {
+		t.Fatal("want the subagent error to surface")
+	}
+	metas, err := store.List("svc", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 || metas[0].Status != "error" || metas[0].Error == "" {
+		t.Fatalf("failed run not recorded: %+v", metas)
+	}
+	out, err := store.ReadFile(metas[0].ID, session.FileOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Fatalf("errRunner prints nothing; got %q", out)
+	}
+}
+
+// errRunner fails without touching the repo.
+type errRunner struct{}
+
+func (errRunner) Run(context.Context, string, string, []string) (string, error) {
+	return "", errors.New("agent exploded")
+}
+
+func TestFixPromptCarriesOperatorInstructions(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	runner := &fakeRunner{}
+	d := New(testManager(t, workDir), runner, silentLogger())
+
+	sig := orchestrator.Signal{
+		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
+		Evidence:             map[string]any{"run_url": "http://ci/1"},
+		OperatorInstructions: "the flake is in the seed data",
+	}
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if !strings.Contains(runner.gotPrompt, "the flake is in the seed data") {
+		t.Fatalf("operator instructions missing from prompt:\n%s", runner.gotPrompt)
+	}
+	// Operator text is trusted input: it must sit outside the untrusted
+	// evidence block, like AGENTS.md rules do.
+	trusted := strings.Index(runner.gotPrompt, "operator instructions for this run")
+	evidence := strings.Index(runner.gotPrompt, "---BEGIN UNTRUSTED EVIDENCE---")
+	if trusted < 0 || evidence < 0 || trusted > evidence {
+		t.Fatalf("operator instructions landed in the untrusted block:\n%s", runner.gotPrompt)
+	}
+}
+
+func TestFixUsesGlobalRulesFile(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	rules := filepath.Join(t.TempDir(), "rules.md")
+	if err := os.WriteFile(rules, []byte("never touch generated files"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	d := New(testManager(t, workDir), runner, silentLogger())
+	d.RulesFile = rules
+
+	sig := orchestrator.Signal{
+		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
+		Evidence: map[string]any{},
+	}
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if !strings.Contains(runner.gotPrompt, "never touch generated files") {
+		t.Fatalf("global rules file missing from prompt:\n%s", runner.gotPrompt)
 	}
 }

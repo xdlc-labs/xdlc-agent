@@ -51,7 +51,7 @@ gates:
 
 agent:
   mode: subprocess
-  provider: claude # claude | codex | cursor
+  provider: claude # claude | codex | cursor | gemini
   timeout: 10m
   # max_concurrent_fixes: 2
   # fix_budget: 5m              # soft Fix deadline; 0 = unlimited (#9)
@@ -60,6 +60,12 @@ agent:
   # ci_rerun_before_fix: true  # flake ladder before agent (#3); default on
   # fix_plan: true              # diagnose then patch (#23); default off
   # extra_env_keys: [HTTPS_PROXY]
+  # rules_file: /etc/xdlc/rules.md  # instructions added to every Fix prompt
+  # sessions:                       # prompt / output / diff per Fix (docs/sessions.md)
+  #   enabled: true
+  #   dir: sessions
+  #   retain: 720h
+  #   max_file_bytes: 2097152
 
 # fleet:
 #   flap_max_cycles: 3

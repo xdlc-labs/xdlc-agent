@@ -7,7 +7,7 @@ When CI or DEV smoke fails, the daemon runs a coding-agent **Fix**.
 ```yaml
 agent:
   mode: subprocess
-  provider: claude    # claude | codex | cursor
+  provider: claude    # claude | codex | cursor | gemini
   timeout: 10m
 ```
 
@@ -16,6 +16,9 @@ agent:
 | claude | `claude` | `ANTHROPIC_API_KEY` |
 | codex | `codex` | `OPENAI_API_KEY` |
 | cursor | `cursor-agent` | `CURSOR_API_KEY` |
+| gemini | `gemini` | `GEMINI_API_KEY` |
+
+Cursor and Gemini run with their approval prompts disabled (`--trust` and `--yolo`), because a headless Fix has no TTY to answer them. Override the whole argv with `agent.args` if that is not what you want.
 
 `xdlc doctor` checks the binary for the configured provider.
 
@@ -33,6 +36,19 @@ agent:
 - **pr** — opens a scratch-branch PR; console **Actions** shows the Fix-PR work queue (title, age, CI, merged).
 
 Related knobs (see `config.example.yaml`): `fix_reverify`, `ci_rerun_before_fix`, `fix_plan`, `max_concurrent_fixes`, `fix_budget`.
+
+## What the agent is told
+
+The prompt is assembled from your repo's instruction files, past lessons, and the failing gate's evidence. See **[Rules and skills](rules-and-skills.md)** for the full order, the size caps, and the optional per-run operator note on Manual Fix.
+
+## What the agent did
+
+Every Fix records its prompt, output and diff under `sessions/`. See **[Fix sessions](sessions.md)**.
+
+```sh
+xdlc sessions ls --repo example-service
+xdlc sessions show <id> --diff
+```
 
 ## Permissions
 

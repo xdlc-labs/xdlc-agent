@@ -150,6 +150,7 @@ function Settings() {
               <option value="cursor">cursor</option>
               <option value="claude">claude</option>
               <option value="codex">codex</option>
+              <option value="gemini">gemini</option>
             </select>
             <input
               type="password"
@@ -159,7 +160,7 @@ function Settings() {
                 setAgentKeyInput(e.target.value);
                 setAgentSaved(false);
               }}
-              placeholder="CURSOR_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY"
+              placeholder="ANTHROPIC_API_KEY / OPENAI_API_KEY / CURSOR_API_KEY / GEMINI_API_KEY"
               className="min-w-[16rem] flex-1 border border-border bg-surface px-3 py-1.5 font-mono text-[12px] text-foreground outline-none focus:border-primary"
             />
             <button

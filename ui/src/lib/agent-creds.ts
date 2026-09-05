@@ -9,9 +9,9 @@
 const PROVIDER_KEY = "xdlc_agent_provider";
 const API_KEY = "xdlc_agent_api_key";
 
-export type AgentProvider = "claude" | "codex" | "cursor";
+export type AgentProvider = "claude" | "codex" | "cursor" | "gemini";
 
-const PROVIDERS: AgentProvider[] = ["claude", "codex", "cursor"];
+const PROVIDERS: AgentProvider[] = ["claude", "codex", "cursor", "gemini"];
 
 export function getAgentProvider(): AgentProvider | "" {
   if (typeof localStorage === "undefined") return "";

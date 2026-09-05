@@ -112,7 +112,7 @@
       "additionalProperties": false,
       "properties": {
         "mode": { "type": "string", "enum": ["subprocess", "sdk"] },
-        "provider": { "type": "string" },
+        "provider": { "type": "string", "enum": ["claude", "codex", "cursor", "gemini"] },
         "binary": { "type": "string" },
         "args": { "type": "array", "items": { "type": "string" } },
         "timeout": { "type": "string" },
@@ -126,7 +126,20 @@
         "fix_reverify_attempts": { "type": "integer" },
         "fix_reverify_interval": { "type": "string" },
         "ci_rerun_before_fix": { "type": "boolean" },
-        "fix_plan": { "type": "boolean" }
+        "fix_plan": { "type": "boolean" },
+        "rules_file": { "type": "string" },
+        "sessions": { "$ref": "#/$defs/Sessions" }
+      }
+    },
+    "Sessions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-Fix recording of prompt, agent output and diff. See docs/sessions.md.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "dir": { "type": "string" },
+        "retain": { "type": "string" },
+        "max_file_bytes": { "type": "integer" }
       }
     },
     "Server": {

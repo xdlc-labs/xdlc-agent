@@ -106,6 +106,23 @@ fast-forwards.
 
 See `internal/gate.Gate` and the built-ins under `internal/gate/`.
 
+## What the Fix agent is given, and what it leaves behind
+
+Two files sit either side of a Fix run. `internal/subagent.ReadTeamInstructions`
+collects the *trusted* half of the prompt — `AGENTS.md`, `CLAUDE.md`,
+`.xdlc/rules.md`, `.xdlc/skills/*.md`, the daemon-wide `agent.rules_file`,
+`repos[].agent_instructions`, and an operator's per-run note — each capped at
+8 KB so no single file crowds the others out, all of it placed above the
+untrusted evidence block ([Rules and skills](rules-and-skills.md)).
+
+`internal/session` writes the other side: one directory per Fix holding the
+exact prompt, the agent's stdout, the diff between the pre-Fix commit and
+whatever the agent committed, and a `meta.json` carrying status, provider and
+cost. The audit store answers *whether* a Fix ran; this answers *what it did*
+([Fix sessions](sessions.md)). Recording is best-effort — a recorder failure
+logs a warning and never fails a Fix — and the session id is written into the
+audit record so the console's Activity row and the directory line up.
+
 ## Local repo clones
 
 `internal/repos.Manager` keeps one working clone per repo on disk

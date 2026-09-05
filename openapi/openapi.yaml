@@ -213,6 +213,14 @@ components:
       properties:
         repo: { type: string }
         confirm: { type: boolean }
+        instructions:
+          type: string
+          maxLength: 4096
+          description: >-
+            Optional operator note for a manual Fix — what you would tell a
+            coding agent yourself ("the flake is in the seed data").
+            Joins the prompt's trusted block after the repo rules.
+            Ignored for promote and revert. Only its length is audited.
     ActionEnqueued:
       type: object
       properties:

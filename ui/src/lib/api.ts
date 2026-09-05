@@ -232,7 +232,10 @@ export async function fetchCostKPIs(): Promise<CostKPIs> {
 export async function postAction(
   action: ManualAction,
   repo: string,
+  /** Operator note for a manual Fix — trusted text, ignored elsewhere. */
+  instructions?: string,
 ): Promise<{ ok: boolean; message: string; status: number }> {
+  const note = action === "fix" ? instructions?.trim() : "";
   const res = await fetch(`/api/actions/${action}`, {
     method: "POST",
     headers: {
@@ -240,7 +243,7 @@ export async function postAction(
       ...authHeaders(),
       ...(action === "fix" ? agentFixHeaders() : {}),
     },
-    body: JSON.stringify({ repo, confirm: true }),
+    body: JSON.stringify({ repo, confirm: true, ...(note ? { instructions: note } : {}) }),
   });
   const text = await res.text();
   let message = text.trim() || res.statusText || String(res.status);

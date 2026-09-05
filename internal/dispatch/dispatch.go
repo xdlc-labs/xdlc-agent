@@ -19,6 +19,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/otel"
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
+	"github.com/xdlc-labs/xdlc-agent/internal/session"
 	"github.com/xdlc-labs/xdlc-agent/internal/subagent"
 )
 
@@ -52,6 +53,12 @@ type Dispatcher struct {
 	// FixPlan enables optional plan-then-patch two-pass Fix (issue #23).
 	// Default false — one-shot FixPrompt.
 	FixPlan bool
+	// RulesFile is config.yaml's agent.rules_file — a daemon-wide
+	// instructions file appended to every Fix prompt's trusted block.
+	RulesFile string
+	// Sessions records each Fix's prompt, output and diff to disk.
+	// nil (or a nil *session.Store) disables recording.
+	Sessions *session.Store
 	// Lessons optional past-Fix inject (issue #19). nil skips.
 	Lessons interface {
 		Record(repo, source, outcome, symptom string) error
@@ -187,7 +194,7 @@ func (d *Dispatcher) acquireFixSlot(ctx context.Context, repo string) (release f
 	}, nil
 }
 
-func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error {
+func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (err error) {
 	if err := d.Repos.EnsureCloned(ctx, s.Repo); err != nil {
 		return fmt.Errorf("dispatch: fix: %w", err)
 	}
@@ -210,12 +217,21 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 		// resulting PR up afterward without parsing CLI output for a URL.
 		prBranch = fmt.Sprintf("xdlc-fix-%d", time.Now().UnixNano())
 	}
-	teamRules := subagent.ReadTeamInstructions(dir)
+	teamRules := subagent.ReadTeamInstructions(dir, d.RulesFile)
 	if extra := d.Repos.AgentInstructions(s.Repo); extra != "" {
 		if teamRules != "" {
 			teamRules += "\n\n"
 		}
 		teamRules += "config agent_instructions:\n" + strings.TrimSpace(extra)
+	}
+	// Operator's free-text goal from the console / API, last so it wins
+	// a conflict with the standing repo rules. Trusted: it comes from an
+	// authenticated operator, not from gate evidence.
+	if extra := strings.TrimSpace(s.OperatorInstructions); extra != "" {
+		if teamRules != "" {
+			teamRules += "\n\n"
+		}
+		teamRules += "operator instructions for this run:\n" + extra
 	}
 
 	runner := d.Subagent
@@ -244,6 +260,61 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 		s.Evidence["agent_provider"] = provider
 	}
 
+	// Session recording: the prompt the agent got, everything it printed,
+	// and the patch it left behind. Best-effort throughout — a recorder
+	// failure must never fail a Fix that otherwise worked.
+	var (
+		sess    *session.Session
+		baseSHA string
+	)
+	if d.Sessions != nil {
+		baseSHA = session.HeadSHA(ctx, dir)
+		manual, _ := s.Evidence["manual"].(bool)
+		started, serr := d.Sessions.Start(session.Meta{
+			Repo:     s.Repo,
+			Source:   string(s.Source),
+			Kind:     string(s.Kind),
+			Provider: provider,
+			FixMode:  d.FixMode,
+			Manual:   manual,
+			BaseSHA:  baseSHA,
+		})
+		if serr != nil {
+			d.Log.Warn("session start failed", "repo", s.Repo, "error", serr)
+		} else {
+			sess = started
+			if s.Evidence != nil && sess.ID() != "" {
+				s.Evidence["session_id"] = sess.ID()
+			}
+		}
+	}
+	defer func() {
+		if sess == nil {
+			return
+		}
+		// The Fix context may already be canceled (timeout / budget);
+		// the recording still has to be written.
+		dctx := context.WithoutCancel(ctx)
+		patch, changed := session.Diff(dctx, dir, baseSHA)
+		if werr := sess.Write(session.FileDiff, patch); werr != nil {
+			d.Log.Warn("session diff write failed", "repo", s.Repo, "error", werr)
+		}
+		branch := d.Repos.Branch(s.Repo)
+		if prBranch != "" {
+			branch = prBranch
+		}
+		sess.SetGit(baseSHA, session.HeadSHA(dctx, dir), branch, changed)
+		status := "ok"
+		msg := ""
+		if err != nil {
+			status, msg = "error", err.Error()
+		}
+		sess.SetResult(status, msg, costFields(s.Evidence))
+		if ferr := sess.Finish(); ferr != nil {
+			d.Log.Warn("session finish failed", "repo", s.Repo, "error", ferr)
+		}
+	}()
+
 	authEnv := d.Repos.AuthEnv()
 	// Console-supplied key: inject once, clear from Signal so it cannot
 	// reach audit/backlog if a later path dumps the struct.
@@ -259,6 +330,9 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 	var prompt string
 	if d.FixPlan {
 		planPrompt := subagent.PlanPrompt(s.Repo, reason, evidence, teamRules)
+		if werr := sess.Write(session.FilePrompt, planPrompt); werr != nil {
+			d.Log.Warn("session prompt write failed", "repo", s.Repo, "error", werr)
+		}
 		subStart := time.Now()
 		planOut, perr := runner.Run(ctx, dir, planPrompt, authEnv)
 		subagent.MergeCost(s.Evidence, planOut)
@@ -271,6 +345,9 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 				metric.WithAttributes(otel.AttrStatus(status)))
 		}
 		d.Log.Info("subagent plan finished", "repo", s.Repo, "output", truncate(planOut, 2000))
+		if werr := sess.Write(session.FilePlan, planOut); werr != nil {
+			d.Log.Warn("session plan write failed", "repo", s.Repo, "error", werr)
+		}
 		if perr != nil {
 			d.recordLesson(s, "error", reason)
 			return fmt.Errorf("dispatch: fix: plan: %w", perr)
@@ -281,6 +358,10 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 		prompt = subagent.FixFromPlanPrompt(s.Repo, reason, evidence, d.FixMode, prBranch, teamRules, planOut, lessons)
 	} else {
 		prompt = subagent.FixPrompt(s.Repo, reason, evidence, d.FixMode, prBranch, teamRules, lessons)
+	}
+
+	if werr := sess.Write(session.FilePrompt, prompt); werr != nil {
+		d.Log.Warn("session prompt write failed", "repo", s.Repo, "error", werr)
 	}
 
 	subStart := time.Now()
@@ -299,6 +380,9 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 			metric.WithAttributes(otel.AttrStatus(status)))
 	}
 	d.Log.Info("subagent finished", "repo", s.Repo, "output", truncate(out, 2000))
+	if werr := sess.Write(session.FileOutput, out); werr != nil {
+		d.Log.Warn("session output write failed", "repo", s.Repo, "error", werr)
+	}
 	if err != nil {
 		d.recordLesson(s, "error", reason)
 		return fmt.Errorf("dispatch: fix: subagent: %w", err)
@@ -326,6 +410,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 			}
 		}
 		if pr != nil {
+			sess.SetPR(pr.URL)
 			s.Evidence["pr_number"] = pr.Number
 			s.Evidence["pr_url"] = pr.URL
 			s.Evidence["pr_state"] = pr.State
@@ -370,6 +455,24 @@ func (d *Dispatcher) observe(action string, start time.Time, err error) {
 	}
 	d.Metrics.Dispatch.Record(context.Background(), time.Since(start).Seconds(),
 		metric.WithAttributes(otel.AttrAction(action), otel.AttrStatus(status)))
+}
+
+// costFields pulls the cost/usage keys MergeCost wrote into evidence,
+// for the session's meta.json. Nil when the provider reported none.
+func costFields(evidence map[string]any) map[string]any {
+	if evidence == nil {
+		return nil
+	}
+	out := map[string]any{}
+	for _, k := range []string{"total_cost_usd", "input_tokens", "output_tokens", "duration_ms"} {
+		if v, ok := evidence[k]; ok {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func copyEvidence(in map[string]any) map[string]any {

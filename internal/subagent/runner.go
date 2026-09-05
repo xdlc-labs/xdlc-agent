@@ -23,6 +23,7 @@ var allowlistEnvKeys = map[string]struct{}{
 	"PATH": {}, "HOME": {}, "USER": {}, "LOGNAME": {},
 	"LANG": {}, "LC_ALL": {}, "LANGUAGE": {}, "TZ": {},
 	"ANTHROPIC_API_KEY": {}, "OPENAI_API_KEY": {}, "CURSOR_API_KEY": {},
+	"GEMINI_API_KEY": {}, "GOOGLE_API_KEY": {},
 }
 
 // ExtractAllowlistEnv filters environ (os.Environ-style KEY=value
@@ -84,7 +85,37 @@ const (
 	ProviderClaude Provider = "claude" // Claude Code CLI
 	ProviderCodex  Provider = "codex"  // OpenAI Codex CLI
 	ProviderCursor Provider = "cursor" // Cursor CLI (cursor-agent)
+	ProviderGemini Provider = "gemini" // Google Gemini CLI
 )
+
+// Providers lists every built-in Provider, for CLI help, `xdlc doctor`
+// and config validation — one source of truth instead of a switch
+// repeated per call site.
+func Providers() []Provider {
+	return []Provider{ProviderClaude, ProviderCodex, ProviderCursor, ProviderGemini}
+}
+
+// KnownProvider reports whether p is one of Providers(). An unknown
+// provider still runs (Claude's argv shape is the fallback), so this is
+// for warnings, not enforcement.
+func KnownProvider(p string) bool {
+	for _, known := range Providers() {
+		if string(known) == p {
+			return true
+		}
+	}
+	return false
+}
+
+// DefaultBinary returns the CLI name a Provider shells out to with no
+// agent.binary override — what `xdlc doctor` looks for on PATH.
+func DefaultBinary(p Provider) string {
+	spec, ok := providerDefaults[p]
+	if !ok {
+		return providerDefaults[ProviderClaude].binary
+	}
+	return spec.binary
+}
 
 // promptPlaceholder marks where the prompt used to sit on argv. At Run
 // time that token is stripped and the prompt is fed on stdin instead, so
@@ -115,6 +146,13 @@ var providerDefaults = map[Provider]providerSpec{
 		// -p print/non-interactive; --trust required for temp/demo workdirs
 		args: []string{"-p", "--trust", promptPlaceholder},
 	},
+	ProviderGemini: {
+		binary: "gemini",
+		// -p headless prompt; --yolo auto-approves the file/shell tool
+		// calls a Fix needs (the CLI otherwise waits on a TTY prompt that
+		// never comes). Same tradeoff as cursor's --trust.
+		args: []string{"-p", promptPlaceholder, "--yolo"},
+	},
 }
 
 // Runner delegates one task to a coding agent, scoped to a single
@@ -144,6 +182,8 @@ func APIKeyEnvName(p Provider) string {
 		return "OPENAI_API_KEY"
 	case ProviderCursor:
 		return "CURSOR_API_KEY"
+	case ProviderGemini:
+		return "GEMINI_API_KEY"
 	default:
 		return "ANTHROPIC_API_KEY"
 	}

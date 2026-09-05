@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -187,5 +188,33 @@ func TestExtractEnvWithExtraKeys(t *testing.T) {
 	// nil extras behaves exactly like ExtractAllowlistEnv.
 	if strings.Join(ExtractEnv(in, nil), "\n") != strings.Join(ExtractAllowlistEnv(in), "\n") {
 		t.Error("ExtractEnv(in, nil) should match ExtractAllowlistEnv(in)")
+	}
+}
+
+func TestGeminiProviderDefaults(t *testing.T) {
+	r := NewSubprocessRunner(ProviderGemini, "", nil, 0, nil)
+	if r.Binary != "gemini" {
+		t.Fatalf("want gemini binary, got %q", r.Binary)
+	}
+	// --yolo auto-approves tool calls; without it the CLI blocks on a
+	// TTY prompt that a headless Fix can never answer.
+	if !slices.Contains(r.Args, "--yolo") {
+		t.Fatalf("want --yolo in argv, got %v", r.Args)
+	}
+	if got := APIKeyEnvName(ProviderGemini); got != "GEMINI_API_KEY" {
+		t.Fatalf("want GEMINI_API_KEY, got %s", got)
+	}
+	if !KnownProvider("gemini") || DefaultBinary(ProviderGemini) != "gemini" {
+		t.Fatal("gemini missing from the provider table")
+	}
+}
+
+func TestGeminiKeyReachesSubprocessEnv(t *testing.T) {
+	env := ExtractAllowlistEnv([]string{"GEMINI_API_KEY=k", "GITHUB_TOKEN=nope"})
+	if !slices.Contains(env, "GEMINI_API_KEY=k") {
+		t.Fatalf("gemini key dropped by allowlist: %v", env)
+	}
+	if slices.Contains(env, "GITHUB_TOKEN=nope") {
+		t.Fatal("GITHUB_TOKEN must never reach the coding agent")
 	}
 }

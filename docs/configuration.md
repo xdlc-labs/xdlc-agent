@@ -2,6 +2,14 @@
 
 Primary file: `config.yaml` (schema: `schema/config.schema.json`). Starter: `config.example.yaml` or `xdlc init`.
 
+Seed `repos:` from the checkouts already on this machine:
+
+```sh
+xdlc init --scan ~/src
+```
+
+Every Git checkout directly under that directory with a GitHub `origin` becomes a repo entry with the `ci` gate. Cluster keys (`argocd_app`, `probe_job`) are left commented for you to fill in.
+
 ## Server
 
 ```yaml
@@ -44,7 +52,7 @@ Optional: `depends_on`, `promote_requires`, `agent_instructions`.
 ```yaml
 agent:
   mode: subprocess
-  provider: claude   # claude | codex | cursor
+  provider: claude   # claude | codex | cursor | gemini
   timeout: 10m
   # fix_mode: direct | pr
   # max_concurrent_fixes: 2
@@ -52,7 +60,21 @@ agent:
   # fix_reverify: true
   # ci_rerun_before_fix: true
   # fix_plan: true
+  # rules_file: /etc/xdlc/rules.md   # applied to every repo
+  # sessions:
+  #   enabled: true
+  #   dir: sessions
+  #   retain: 720h
+  #   max_file_bytes: 2097152
 ```
+
+| Key | Default | What it does |
+|-----|---------|--------------|
+| `rules_file` | none | Instructions file added to every Fix prompt, after the repo's own rules. [Rules and skills](rules-and-skills.md) |
+| `sessions.enabled` | `true` | Record each Fix's prompt, output and diff to disk. [Fix sessions](sessions.md) |
+| `sessions.dir` | `sessions` | Where those directories go. Mount it in containers to survive restarts. |
+| `sessions.retain` | `720h` | Age after which a session is pruned. |
+| `sessions.max_file_bytes` | 2 MiB | Cap per artifact. |
 
 ## Fleet (optional)
 

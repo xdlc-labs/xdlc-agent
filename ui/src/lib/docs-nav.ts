@@ -25,6 +25,8 @@ export const DOCS_NAV: DocsGroup[] = [
       { slug: "production-loop", title: "Overview" },
       { slug: "github-webhooks", title: "GitHub" },
       { slug: "fix-modes", title: "Fix modes" },
+      { slug: "rules-and-skills", title: "Rules and skills" },
+      { slug: "sessions", title: "Fix sessions" },
       { slug: "gitops-argo", title: "GitOps" },
       { slug: "prod-health", title: "Prod health" },
       { slug: "deployment", title: "Deploy" },

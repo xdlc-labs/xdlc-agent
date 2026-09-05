@@ -20,3 +20,5 @@ Auth: `Authorization: Bearer <token>` (except `GET /api/health`). SSE may use `?
 | POST | `/api/actions/revert` | Enqueue manual Revert (operator) |
 
 Action body: `{ "repo": "<name>", "confirm": true }`.
+
+Manual Fix also accepts `"instructions": "<free text>"` (≤ 4096 bytes) — an operator note added to the prompt's trusted block. Ignored by Promote and Revert; only its length is audited. See [Rules and skills](rules-and-skills.md).

@@ -160,7 +160,16 @@ func (s *Server) requireOperator(next http.Handler) http.Handler {
 type actionBody struct {
 	Repo    string `json:"repo"`
 	Confirm bool   `json:"confirm"`
+	// Instructions is optional operator free text for a manual Fix —
+	// what you would tell a coding agent yourself. Ignored for
+	// promote/revert. Capped at maxOperatorInstructions.
+	Instructions string `json:"instructions,omitempty"`
 }
+
+// maxOperatorInstructions caps the free-text goal on a manual Fix. The
+// prompt already carries rules, lessons and evidence; a longer note
+// crowds them out rather than helping.
+const maxOperatorInstructions = 4096
 
 func (s *Server) handleActionFix(w http.ResponseWriter, r *http.Request) {
 	s.handleAction(w, r, "fix")
@@ -205,11 +214,22 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action str
 		if k := strings.TrimSpace(r.Header.Get("X-XDLC-Agent-Key")); k != "" {
 			sig.OperatorAgentKey = k
 		}
+		if instr := strings.TrimSpace(body.Instructions); instr != "" {
+			if len(instr) > maxOperatorInstructions {
+				http.Error(w, fmt.Sprintf("instructions too long (max %d bytes)", maxOperatorInstructions), http.StatusBadRequest)
+				return
+			}
+			sig.OperatorInstructions = instr
+			// Length only: the text can name internal systems, and this
+			// map is written to BACKLOG.md and the audit DB.
+			sig.Evidence["operator_instructions_len"] = len(instr)
+		}
 	}
 	if s.Log != nil {
 		s.Log.Info("manual action enqueued", "action", action, "repo", body.Repo,
 			"source", sig.Source, "kind", sig.Kind,
-			"agent_override", sig.OperatorAgentProvider != "")
+			"agent_override", sig.OperatorAgentProvider != "",
+			"operator_instructions", sig.OperatorInstructions != "")
 	}
 	s.Enqueue(sig)
 	writeJSON(w, map[string]any{

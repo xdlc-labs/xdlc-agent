@@ -13,6 +13,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Fix **sessions**: every Fix records prompt, agent output and diff under `sessions/`; `xdlc sessions ls|show|prune`; `session_id` in audit + `BACKLOG.md`; `agent.sessions.*` config ([Fix sessions](sessions.md))
+- Rule sources widened: `CLAUDE.md`, `.xdlc/rules.md` and daemon-wide `agent.rules_file` join `AGENTS.md` / `.xdlc/skills/*.md`; per-file 8 KB cap instead of one tail chop; duplicates dropped; `xdlc doctor` lists what each repo contributes ([Rules and skills](rules-and-skills.md))
+- Operator instructions on Manual Fix: optional free text in the console dialog and `POST /api/actions/fix` (`instructions`, ≤ 4096 bytes); trusted block placement, length-only in audit
+- `gemini` coding-agent provider (`gemini` CLI, `GEMINI_API_KEY`); opt-in in the container image via `--build-arg GEMINI_CLI_VERSION`
+- `xdlc init --scan <dir>` — seed `repos:` from local Git checkouts with a GitHub origin
 - `scripts/install.sh` — curl-install `xdlc` from GitHub Releases (checksum verified); [Install](install.md)
 - `xdlc demo` — zero-infra Fix→Promote→Revert with `--provider fake` (#5)
 - Console Settings: browser-local coding-agent provider + API key (localStorage); Manual Fix sends `X-XDLC-Agent-*` headers (never audit/disk)

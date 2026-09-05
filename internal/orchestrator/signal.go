@@ -51,4 +51,11 @@ type Signal struct {
 	// subprocess (console header). Never copy into Evidence / audit /
 	// backlog / logs — Dispatch consumes and clears it.
 	OperatorAgentKey string
+	// OperatorInstructions is optional free text an operator sends with
+	// a manual Fix ("the flake is in the seed data, not the test") —
+	// the thing you would type into a coding agent yourself. It joins
+	// the prompt's *trusted* block, after the repo's rules, because it
+	// comes from an authenticated operator rather than gate evidence.
+	// Empty for every automatic Fix.
+	OperatorInstructions string
 }

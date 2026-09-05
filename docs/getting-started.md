@@ -9,7 +9,7 @@ By the end you have either a zero-infra **demo** loop or a local **daemon** + op
 - Linux / macOS (or WSL)
 - `git` (demo / from-source paths)
 - **`xdlc` on PATH** — see **[Install](install.md)** (`curl … | sh`, Docker, or `go build`)
-- For a real Fix (optional): coding-agent CLI on `PATH` (`claude`, `codex`, or `cursor-agent`) + matching API key env
+- For a real Fix (optional): coding-agent CLI on `PATH` (`claude`, `codex`, `cursor-agent`, or `gemini`) + matching API key env
 
 ## Overview
 
@@ -53,6 +53,8 @@ xdlc demo --provider cursor --scenario all
 
 ```sh
 xdlc init
+# or seed repos: from the checkouts already on this box:
+xdlc init --scan ~/src
 # or: cp config.example.yaml config.yaml
 # edit repos[].github, agent.provider, gates as needed
 ```
@@ -67,6 +69,7 @@ export GITHUB_TOKEN=...                  # or GitHub App (preferred) when talkin
 # export ANTHROPIC_API_KEY=...           # if provider: claude
 # export OPENAI_API_KEY=...              # if provider: codex
 # export CURSOR_API_KEY=...              # if provider: cursor
+# export GEMINI_API_KEY=...              # if provider: gemini
 ```
 
 **3. Sanity**
@@ -87,17 +90,27 @@ Or Docker (tag must exist on GHCR for your release):
 docker run --rm -p 8080:8080 \
   -v "$PWD/config.yaml:/etc/xdlc-agent/config.yaml:ro" \
   -e XDLC_API_TOKEN -e GITHUB_TOKEN -e GITHUB_WEBHOOK_SECRET \
-  -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CURSOR_API_KEY \
+  -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CURSOR_API_KEY -e GEMINI_API_KEY \
   ghcr.io/xdlc-labs/xdlc-agent:0.0.1-beta.2 \
   daemon --config /etc/xdlc-agent/config.yaml
 ```
 
 Open http://127.0.0.1:8080/ — paste `XDLC_API_TOKEN` in **Settings**. Browse **Docs** in the nav for the rest of this guide.
 
+## After the first Fix
+
+```sh
+xdlc sessions ls                  # which Fixes ran
+xdlc sessions show <id> --diff    # what one of them changed
+```
+
+Then teach it your conventions with an `AGENTS.md` or `CLAUDE.md` in the repo — see [Rules and skills](rules-and-skills.md).
+
 ## Next steps
 
 | Role | Go to |
 |------|--------|
 | Operator / eval | [Console](console.md), Manual Actions |
+| Reviewing agent work | [Fix sessions](sessions.md), [Rules and skills](rules-and-skills.md) |
 | Platform admin | [Production loop](production-loop.md) |
 | Contributors | [CONTRIBUTING](CONTRIBUTING.md) |

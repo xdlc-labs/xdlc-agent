@@ -7,6 +7,10 @@ ARG KUBECTL_VERSION=1.34.0
 ARG ARGOCD_VERSION=3.5.2
 ARG CLAUDE_CODE_VERSION=2.1.260
 ARG CODEX_CLI_VERSION=0.153.2
+# Gemini CLI is opt-in: build with --build-arg GEMINI_CLI_VERSION=<version>
+# to get agent.provider: gemini in this image. Left empty rather than
+# pinned to a version this repo has not tested.
+ARG GEMINI_CLI_VERSION=
 
 # Ops console static assets → internal/console/dist (go:embed).
 FROM oven/bun:1 AS ui
@@ -32,6 +36,7 @@ ARG KUBECTL_VERSION
 ARG ARGOCD_VERSION
 ARG CLAUDE_CODE_VERSION
 ARG CODEX_CLI_VERSION
+ARG GEMINI_CLI_VERSION
 ARG TARGETARCH
 
 RUN apk add --no-cache git ca-certificates curl \
@@ -44,6 +49,9 @@ RUN apk add --no-cache git ca-certificates curl \
  && npm install -g \
       "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
       "@openai/codex@${CODEX_CLI_VERSION}" \
+ && if [ -n "${GEMINI_CLI_VERSION}" ]; then \
+      npm install -g "@google/gemini-cli@${GEMINI_CLI_VERSION}"; \
+    fi \
  && npm cache clean --force
 
 # Cursor CLI (cursor-agent) isn't npm-installable — it ships via the

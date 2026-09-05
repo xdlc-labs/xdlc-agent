@@ -243,7 +243,7 @@ type Thresholds struct {
 // fork wires into internal/subagent's provider table.
 type AgentConfig struct {
 	Mode     string `yaml:"mode"`     // "subprocess" | "sdk"
-	Provider string `yaml:"provider"` // "claude" | "codex" | "cursor"
+	Provider string `yaml:"provider"` // "claude" | "codex" | "cursor" | "gemini"
 	Binary   string `yaml:"binary"`   // overrides the provider's default binary name
 	// Args overrides the provider's default headless invocation. May
 	// include the literal "{{prompt}}" marker (stripped at run; prompt
@@ -294,6 +294,49 @@ type AgentConfig struct {
 	// FixPlan enables optional diagnose-then-patch two-pass Fix (#23).
 	// Default false — one-shot remains.
 	FixPlan bool `yaml:"fix_plan"`
+	// RulesFile is an optional daemon-wide instructions file appended to
+	// every Fix prompt after the repo's own AGENTS.md / CLAUDE.md /
+	// .xdlc/rules.md / .xdlc/skills. Use it for conventions that hold
+	// across every repo this daemon watches ("never touch generated
+	// files", "conventional commits"). Path is read at Fix time, so
+	// edits apply without a restart. See docs/rules-and-skills.md.
+	RulesFile string `yaml:"rules_file"`
+	// Sessions configures on-disk recording of what each Fix agent was
+	// told and what it did. See docs/sessions.md.
+	Sessions SessionsConfig `yaml:"sessions"`
+}
+
+// SessionsConfig controls the per-Fix session recorder — the prompt,
+// the agent's output, and the diff it produced, written to disk for the
+// operator who reviews an automated Fix after the fact.
+type SessionsConfig struct {
+	// Enabled defaults to true. Set false to record nothing.
+	Enabled *bool `yaml:"enabled"`
+	// Dir is where session directories live. Empty → "sessions" beside
+	// the working directory (same place BACKLOG.md and the audit DB go).
+	Dir string `yaml:"dir"`
+	// Retain is how long a session directory is kept. 0 → 30 days.
+	Retain time.Duration `yaml:"retain"`
+	// MaxFileBytes caps one artifact (prompt, output, diff). 0 → 2 MiB.
+	MaxFileBytes int64 `yaml:"max_file_bytes"`
+}
+
+// SessionsEnabled reports whether Fix session recording is on
+// (default true).
+func (a AgentConfig) SessionsEnabled() bool {
+	return a.Sessions.Enabled == nil || *a.Sessions.Enabled
+}
+
+// SessionsDir returns the configured session root, defaulting to
+// "sessions". Empty string when recording is disabled.
+func (a AgentConfig) SessionsDir() string {
+	if !a.SessionsEnabled() {
+		return ""
+	}
+	if a.Sessions.Dir != "" {
+		return a.Sessions.Dir
+	}
+	return "sessions"
 }
 
 // Load reads and parses the YAML config at path. Unknown fields are

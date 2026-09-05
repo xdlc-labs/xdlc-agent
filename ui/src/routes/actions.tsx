@@ -41,6 +41,7 @@ function Actions() {
   const [repoPick, setRepoPick] = useState("");
   const [pending, setPending] = useState<Pending>(null);
   const [busy, setBusy] = useState(false);
+  const [instructions, setInstructions] = useState("");
   const [log, setLog] = useState<string[]>([]);
 
   // Daemon expects config repo name (id), not github slug (name).
@@ -52,7 +53,10 @@ function Actions() {
     repos.find((r) => r.id === repo)?.name ?? repo;
 
   const close = useCallback(() => {
-    if (!busy) setPending(null);
+    if (!busy) {
+      setPending(null);
+      setInstructions("");
+    }
   }, [busy]);
 
   const pushLog = (line: string) => {
@@ -63,7 +67,7 @@ function Actions() {
     if (!pending || !repo) return;
     setBusy(true);
     try {
-      const res = await postAction(pending.action, repo);
+      const res = await postAction(pending.action, repo, instructions);
       pushLog(
         res.ok
           ? `${pending.action} ${repoLabel}: ok — ${res.message}`
@@ -74,6 +78,7 @@ function Actions() {
         void queryClient.invalidateQueries({ queryKey: ["history"] });
       }
       setPending(null);
+      setInstructions("");
     } catch (e) {
       pushLog(`${pending.action} ${repoLabel}: error — ${e instanceof Error ? e.message : String(e)}`);
       setPending(null);
@@ -327,6 +332,30 @@ function Actions() {
         }
       >
         <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">{pending?.body}</p>
+        {pending?.action === "fix" ? (
+          <div className="mt-3">
+            <label
+              htmlFor="fix-instructions"
+              className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
+            >
+              instructions (optional)
+            </label>
+            <textarea
+              id="fix-instructions"
+              rows={3}
+              maxLength={4096}
+              value={instructions}
+              disabled={busy}
+              onChange={(e) => setInstructions(e.target.value)}
+              placeholder="What you would tell the agent yourself — e.g. the flake is in the seed data, not the test."
+              className="mt-1 w-full border border-border bg-surface px-3 py-2 font-mono text-[11px] text-foreground outline-none focus:border-primary disabled:opacity-40"
+            />
+            <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+              Sent as trusted context after the repo rules. Only its length is written to the audit
+              trail.
+            </p>
+          </div>
+        ) : null}
       </Dialog>
     </div>
   );

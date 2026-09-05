@@ -11,7 +11,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -37,6 +39,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
 	"github.com/xdlc-labs/xdlc-agent/internal/ratelimit"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
+	"github.com/xdlc-labs/xdlc-agent/internal/session"
 	"github.com/xdlc-labs/xdlc-agent/internal/store"
 	"github.com/xdlc-labs/xdlc-agent/internal/subagent"
 	"github.com/xdlc-labs/xdlc-agent/internal/validate"
@@ -73,6 +76,7 @@ func main() {
 		backlogCmd(),
 		historyCmd(),
 		initCmd(),
+		sessionsCmd(),
 		doctorCmd(),
 		demoCmd(),
 	)
@@ -143,6 +147,14 @@ func daemonCmd() *cobra.Command {
 			disp.FixMode = cfg.Agent.FixMode
 			disp.FixPlan = cfg.Agent.FixPlan
 			disp.Lessons = lessonStore
+			disp.RulesFile = cfg.Agent.RulesFile
+			sessions, serr := session.Open(cfg.Agent.SessionsDir(), cfg.Agent.Sessions.Retain, cfg.Agent.Sessions.MaxFileBytes)
+			if serr != nil {
+				log.Warn("session recording disabled", "error", serr)
+			} else if sessions != nil {
+				log.Info("session recording", "dir", sessions.Root, "retain", sessions.Retain)
+			}
+			disp.Sessions = sessions
 			disp.DefaultProvider = cfg.Agent.Provider
 			disp.Route = cfg.Agent.Route
 			disp.Providers = append([]string(nil), cfg.Agent.Providers...)
@@ -845,17 +857,175 @@ func historyCmd() *cobra.Command {
 }
 
 func initCmd() *cobra.Command {
-	return &cobra.Command{
+	var scanDir string
+	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Scaffold a starter config.yaml for a new org",
+		Short: "Scaffold a starter config.yaml (optionally from local clones)",
+		Long: `Write a starter config.yaml.
+
+With --scan, every Git checkout directly under DIR that has a GitHub
+"origin" remote becomes a repos: entry with the ci gate, so you can point
+the daemon at the repos already on this machine instead of typing them
+out. Deploy-specific keys (argocd_app, probe_job) are left as comments
+for you to fill in.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := os.Stat("config.yaml"); err == nil {
 				return fmt.Errorf("config.yaml already exists")
 			}
-			return os.WriteFile("config.yaml", []byte(starterConfig), 0o600)
+			body := starterConfig
+			if scanDir != "" {
+				found, err := scanRepos(cmd.Context(), scanDir)
+				if err != nil {
+					return err
+				}
+				if len(found) == 0 {
+					return fmt.Errorf("no git checkouts with a GitHub origin found under %s", scanDir)
+				}
+				body = configFromScan(found)
+				for _, r := range found {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "found %s → %s\n", r.Name, r.GitHub)
+				}
+			}
+			if err := os.WriteFile("config.yaml", []byte(body), 0o600); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "wrote config.yaml — next: xdlc doctor --config config.yaml")
+			return nil
 		},
 	}
+	cmd.Flags().StringVar(&scanDir, "scan", "", "directory of local git checkouts to seed repos: from")
+	return cmd
 }
+
+// scannedRepo is one local checkout found by --scan.
+type scannedRepo struct {
+	Name   string // config short name (directory name)
+	GitHub string // owner/repo from the origin remote
+	Dir    string // absolute path to the checkout
+	Branch string // current branch, when it is not the default
+}
+
+// scanRepos finds Git checkouts one level under root that have a GitHub
+// origin. Non-Git directories, and Git repos whose origin is not GitHub,
+// are skipped silently — a dev machine has plenty of both.
+func scanRepos(ctx context.Context, root string) ([]scannedRepo, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("scan %s: %w", root, err)
+	}
+	var out []scannedRepo
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, ent.Name())
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+			continue
+		}
+		remote, err := gitOutput(ctx, dir, "remote", "get-url", "origin")
+		if err != nil || remote == "" {
+			continue
+		}
+		ownerRepo := parseGitHubRemote(remote)
+		if ownerRepo == "" {
+			continue
+		}
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			abs = dir
+		}
+		branch, _ := gitOutput(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
+		if branch == "develop" || branch == "HEAD" {
+			branch = "" // develop is the daemon default; detached HEAD is not a branch
+		}
+		out = append(out, scannedRepo{Name: ent.Name(), GitHub: ownerRepo, Dir: abs, Branch: branch})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	// gosec G204: args are literals below; dir comes from the operator's
+	// own --scan path.
+	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).Output() //nolint:gosec
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// parseGitHubRemote turns an SSH or HTTPS GitHub remote into
+// "owner/repo". Anything else returns "".
+func parseGitHubRemote(remote string) string {
+	remote = strings.TrimSpace(remote)
+	remote = strings.TrimSuffix(remote, ".git")
+	switch {
+	case strings.HasPrefix(remote, "git@github.com:"):
+		remote = strings.TrimPrefix(remote, "git@github.com:")
+	case strings.HasPrefix(remote, "ssh://git@github.com/"):
+		remote = strings.TrimPrefix(remote, "ssh://git@github.com/")
+	case strings.HasPrefix(remote, "https://github.com/"):
+		remote = strings.TrimPrefix(remote, "https://github.com/")
+	case strings.HasPrefix(remote, "http://github.com/"):
+		remote = strings.TrimPrefix(remote, "http://github.com/")
+	default:
+		return ""
+	}
+	parts := strings.Split(strings.Trim(remote, "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	return parts[0] + "/" + parts[1]
+}
+
+// configFromScan renders a starter config whose repos: block is the
+// scanned checkouts. Only the ci gate is enabled: dev-smoke and
+// prod-health need cluster wiring this command cannot discover.
+func configFromScan(found []scannedRepo) string {
+	var b strings.Builder
+	b.WriteString(scanConfigHeader)
+	for _, r := range found {
+		fmt.Fprintf(&b, "  - name: %s\n", r.Name)
+		fmt.Fprintf(&b, "    github: %s\n", r.GitHub)
+		fmt.Fprintf(&b, "    dir: %s\n", r.Dir)
+		if r.Branch != "" {
+			fmt.Fprintf(&b, "    branch: %s\n", r.Branch)
+		}
+		b.WriteString("    gates: [ci]\n")
+		b.WriteString("    # argocd_app: dev-" + r.Name + "\n")
+		b.WriteString("    # probe_job: smoke-e2e\n")
+	}
+	b.WriteString(scanConfigFooter)
+	return b.String()
+}
+
+const scanConfigHeader = `# yaml-language-server: $schema=./schema/config.schema.json
+# Generated by: xdlc init --scan
+# Only the ci gate is on — add dev-smoke / prod-health once ArgoCD and
+# Prometheus are wired (see docs/getting-started.md).
+# API bearer: export XDLC_API_TOKEN (optional viewer: XDLC_API_VIEWER_TOKEN).
+repos:
+`
+
+const scanConfigFooter = `
+server:
+  addr: ":8080"
+  github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
+  require_webhook_secret: false # loopback only while this is false
+
+gates:
+  ci:
+    trigger: on_push
+
+agent:
+  mode: subprocess
+  provider: claude # claude | codex | cursor | gemini
+  timeout: 10m
+  # rules_file: ~/.xdlc/rules.md   # instructions added to every Fix prompt
+  # sessions:
+  #   dir: sessions               # prompt / output / diff per Fix
+  #   retain: 720h
+`
 
 const starterConfig = `# yaml-language-server: $schema=./schema/config.schema.json
 # See config.example.yaml for commented keys (fleet, oidc, …).
