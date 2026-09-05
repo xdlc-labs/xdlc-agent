@@ -1,7 +1,9 @@
 // Package otel bootstraps OpenTelemetry metrics for the xdlc-agent
 // daemon. Always serves an in-process Prometheus registry via Handler()
-// for GET /metrics. OTLP export is skipped when OTEL_SDK_DISABLED=true
-// or OTLP setup fails — local binary-only runs stay light.
+// for GET /metrics. OTLP export is opt-in: only when
+// OTEL_EXPORTER_OTLP_ENDPOINT is set and OTEL_SDK_DISABLED is not
+// "true". An in-cluster collector default used to spam local daemons
+// with "failed to upload metrics" every 15s.
 package otel
 
 import (
@@ -60,7 +62,8 @@ func (m *Metrics) Handler() http.Handler {
 }
 
 // Setup installs a MeterProvider with a Prometheus reader (always) and
-// optional OTLP export. Shutdown flushes exporters; call on daemon exit.
+// optional OTLP export when OTEL_EXPORTER_OTLP_ENDPOINT is set.
+// Shutdown flushes exporters; call on daemon exit.
 func Setup(ctx context.Context, log *slog.Logger) (m Metrics, shutdown func(context.Context) error, err error) {
 	noop := func(context.Context) error { return nil }
 
@@ -86,20 +89,19 @@ func Setup(ctx context.Context, log *slog.Logger) (m Metrics, shutdown func(cont
 
 	if os.Getenv("OTEL_SDK_DISABLED") != "true" {
 		endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-		if endpoint == "" {
-			endpoint = "otel-collector.monitoring.svc:4318"
-		}
-		otlp, otlpErr := otlpmetrichttp.New(ctx,
-			otlpmetrichttp.WithEndpoint(endpoint),
-			otlpmetrichttp.WithInsecure(),
-		)
-		if otlpErr != nil {
-			if log != nil {
-				log.Warn("otel: OTLP unavailable, /metrics only", "error", otlpErr)
+		if endpoint != "" {
+			otlp, otlpErr := otlpmetrichttp.New(ctx,
+				otlpmetrichttp.WithEndpoint(endpoint),
+				otlpmetrichttp.WithInsecure(),
+			)
+			if otlpErr != nil {
+				if log != nil {
+					log.Warn("otel: OTLP unavailable, /metrics only", "error", otlpErr)
+				}
+			} else {
+				opts = append(opts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(otlp,
+					sdkmetric.WithInterval(15*time.Second))))
 			}
-		} else {
-			opts = append(opts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(otlp,
-				sdkmetric.WithInterval(15*time.Second))))
 		}
 	}
 

@@ -651,3 +651,48 @@ func TestManualActions(t *testing.T) {
 		}
 	})
 }
+
+func TestHistoryManualSourceIsDaemon(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "h.db")
+	audit, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = audit.Close() })
+
+	if err := audit.Append(store.Record{
+		At: time.Now().UTC(), Repo: "svc-a", Source: "daemon", Kind: "fail", Action: "fix",
+		Evidence: map[string]any{"manual": true, "via": "api", "action": "fix"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := &Server{
+		Cfg:   &config.Config{Repos: []config.Repo{{Name: "svc-a"}}},
+		Audit: audit, Started: time.Now(), Token: "tok",
+	}
+	mux := http.NewServeMux()
+	srv.Mount(mux)
+	res := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/history", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	mux.ServeHTTP(res, req)
+	if res.Code != 200 {
+		t.Fatalf("status %d: %s", res.Code, res.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	events, _ := body["events"].([]any)
+	if len(events) != 1 {
+		t.Fatalf("events=%v", events)
+	}
+	m := events[0].(map[string]any)
+	if m["source"] != "daemon" {
+		t.Fatalf("source=%v, want daemon (not github-actions)", m["source"])
+	}
+	if m["gate"] != "CI" {
+		t.Fatalf("gate=%v, want CI for a manual Fix", m["gate"])
+	}
+}

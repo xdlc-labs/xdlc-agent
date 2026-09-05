@@ -8,6 +8,28 @@ import (
 	"testing"
 )
 
+func TestSetupNoEndpointSkipsOTLP(t *testing.T) {
+	t.Setenv("OTEL_SDK_DISABLED", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	m, shutdown, err := Setup(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = shutdown(context.Background()) })
+	if m.Handler() == nil {
+		t.Fatal("Handler nil — /metrics must work without OTLP")
+	}
+	m.Webhooks.Add(context.Background(), 1)
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "xdlc_agent_webhooks_total") {
+		t.Fatalf("missing metric in body: %s", rec.Body.String())
+	}
+}
+
 func TestSetupDisabled(t *testing.T) {
 	t.Setenv("OTEL_SDK_DISABLED", "true")
 	m, shutdown, err := Setup(context.Background(), nil)

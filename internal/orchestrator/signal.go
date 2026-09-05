@@ -59,3 +59,19 @@ type Signal struct {
 	// Empty for every automatic Fix.
 	OperatorInstructions string
 }
+
+// AuditSource is the source string written to the history store.
+// Manual Actions keep SourceCI / SourceDevGate / SourceProdHealth so
+// Decide() still maps to Fix / Promote / Revert, but operators must see
+// them as daemon, not GitHub / Argo / Prometheus.
+func AuditSource(s Signal) string {
+	if s.Evidence != nil {
+		if m, ok := s.Evidence["manual"].(bool); ok && m {
+			return "daemon"
+		}
+		if v, _ := s.Evidence["via"].(string); v == "api" {
+			return "daemon"
+		}
+	}
+	return string(s.Source)
+}

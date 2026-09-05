@@ -33,6 +33,8 @@ function Settings() {
 
   const [tokenInput, setTokenInput] = useState(() => getToken());
   const [tokenSaved, setTokenSaved] = useState(false);
+  const [tokenSaving, setTokenSaving] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
 
   const [agentProvider, setAgentProviderState] = useState<AgentProvider | "">(
     () => getAgentProvider(),
@@ -40,21 +42,38 @@ function Settings() {
   const [agentKeyInput, setAgentKeyInput] = useState(() => getAgentAPIKey());
   const [agentSaved, setAgentSaved] = useState(false);
 
-  const saveApiToken = () => {
+  const saveApiToken = async () => {
     const trimmed = tokenInput.trim();
+    setTokenError(null);
+    setTokenSaved(false);
     if (trimmed) setToken(trimmed);
     else clearToken();
-    setTokenSaved(true);
-    void queryClient.invalidateQueries({ queryKey: ["overview"] });
-    void queryClient.invalidateQueries({ queryKey: ["history"] });
-    void queryClient.invalidateQueries({ queryKey: ["backlog"] });
+    setTokenSaving(true);
+    try {
+      const res = await fetch("/api/whoami", {
+        headers: trimmed ? { Authorization: `Bearer ${trimmed}` } : {},
+      });
+      if (!res.ok) {
+        setTokenError(res.status === 401 ? "token rejected" : `whoami → ${res.status}`);
+        return;
+      }
+      setTokenSaved(true);
+      void queryClient.invalidateQueries({ queryKey: ["overview"] });
+      void queryClient.invalidateQueries({ queryKey: ["history"] });
+      void queryClient.invalidateQueries({ queryKey: ["backlog"] });
+      void queryClient.invalidateQueries({ queryKey: ["role"] });
+    } finally {
+      setTokenSaving(false);
+    }
   };
 
   const clearApiToken = () => {
     clearToken();
     setTokenInput("");
     setTokenSaved(false);
+    setTokenError(null);
     void queryClient.invalidateQueries({ queryKey: ["overview"] });
+    void queryClient.invalidateQueries({ queryKey: ["role"] });
   };
 
   const saveAgentCreds = () => {
@@ -91,6 +110,8 @@ function Settings() {
           <p className="mt-1 font-mono text-[11px] text-muted-foreground">
             Stored in localStorage (`xdlc_api_token`). Optional default: `VITE_API_TOKEN`. Sent as{" "}
             <span className="text-foreground">Authorization: Bearer …</span>
+            Save calls <span className="text-foreground">GET /api/whoami</span> so a mismatch shows{" "}
+            <span className="text-foreground">token rejected</span> instead of a green saved chip.
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <input
@@ -100,16 +121,18 @@ function Settings() {
               onChange={(e) => {
                 setTokenInput(e.target.value);
                 setTokenSaved(false);
+                setTokenError(null);
               }}
               placeholder="XDLC_API_TOKEN value"
               className="min-w-[16rem] flex-1 border border-border bg-surface px-3 py-1.5 font-mono text-[12px] text-foreground outline-none focus:border-primary"
             />
             <button
               type="button"
-              onClick={saveApiToken}
+              onClick={() => void saveApiToken()}
+              disabled={tokenSaving}
               className="border border-primary bg-primary px-3 py-1.5 font-mono text-[11px] text-primary-foreground hover:opacity-90"
             >
-              save
+              {tokenSaving ? "…" : "save"}
             </button>
             <button
               type="button"
@@ -121,6 +144,9 @@ function Settings() {
             {tokenSaved && (
               <span className="font-mono text-[11px] text-pass">saved</span>
             )}
+            {tokenError ? (
+              <span className="font-mono text-[11px] text-breach">{tokenError}</span>
+            ) : null}
           </div>
         </section>
 
@@ -131,7 +157,9 @@ function Settings() {
             <span className="text-foreground">X-XDLC-Agent-Provider</span> /{" "}
             <span className="text-foreground">X-XDLC-Agent-Key</span> — daemon injects into the
             subprocess for that run, never writes the key to audit/backlog/disk. Leave empty to use
-            the daemon host env + config provider.
+            the daemon host env + config provider. Webhook-driven Fixes always use config.yaml; this
+            override is Manual Fix only. Raise <span className="text-foreground">agent.timeout</span>{" "}
+            (examples use 10m) before a real Cursor/Claude/Codex run.
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <label className="sr-only" htmlFor="agent-provider">

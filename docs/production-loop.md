@@ -36,12 +36,12 @@ Green CI → DEV remains **your** GitOps path. The agent does not invent deploys
 
 ## Verification status
 
-Live E2E against real GH / Argo / Prom is tracked separately:
+Live E2E against real GH / Argo / Prom is tracked separately. A Minikube guestbook + loopback webhooks (`scripts/e2e-local.sh`) does **not** close these issues:
 
-- [#24](https://github.com/xdlc-labs/xdlc-agent/issues/24) GitHub webhook
-- [#25](https://github.com/xdlc-labs/xdlc-agent/issues/25) Argo sync
-- [#26](https://github.com/xdlc-labs/xdlc-agent/issues/26) Prom breach
-- [#27](https://github.com/xdlc-labs/xdlc-agent/issues/27) Fix PR mode
-- [#28](https://github.com/xdlc-labs/xdlc-agent/issues/28) Image / GHCR
+- [#24](https://github.com/xdlc-labs/xdlc-agent/issues/24) GitHub webhook — real org HMAC, job logs, `ci_rerun_before_fix`
+- [#25](https://github.com/xdlc-labs/xdlc-agent/issues/25) Argo sync — image tag write-back on real values.yaml, not git FF alone
+- [#26](https://github.com/xdlc-labs/xdlc-agent/issues/26) Prom breach — live PromQL poller, not Alertmanager JSON only
+- [#27](https://github.com/xdlc-labs/xdlc-agent/issues/27) Fix PR mode — `fix_mode: pr` against GitHub
+- [#28](https://github.com/xdlc-labs/xdlc-agent/issues/28) Image / GHCR — chart/image, not a local `bin/xdlc`
 
 Local demo + package tests already cover policy and dispatch shapes — see [Getting started](getting-started.md).

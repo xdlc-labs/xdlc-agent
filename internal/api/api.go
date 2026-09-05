@@ -616,7 +616,7 @@ func recordToEvent(r store.Record) map[string]any {
 		"ts":       r.At.UTC().Format("2006-01-02 15:04:05Z"),
 		"repo":     r.Repo,
 		"source":   mapSource(r.Source),
-		"gate":     mapGate(r.Source),
+		"gate":     mapGate(r.Source, r.Evidence),
 		"signal":   r.Kind,
 		"action":   mapAction(r.Action),
 		"ok":       ok,
@@ -660,7 +660,7 @@ func (s *Server) buildRepos(records []store.Record) []map[string]any {
 		lastActionAt := "—"
 		health := "healthy"
 		if has {
-			lastGate = mapGate(rec.Source)
+			lastGate = mapGate(rec.Source, rec.Evidence)
 			lastGateStatus = mapKindStatus(rec.Kind)
 			lastAction = mapAction(rec.Action)
 			lastActionAt = rec.At.UTC().Format("2006-01-02 15:04:05Z")
@@ -861,7 +861,19 @@ func mapAction(a string) string {
 	}
 }
 
-func mapGate(source string) string {
+func mapGate(source string, evidence map[string]any) string {
+	if source == "daemon" {
+		action, _ := evidence["action"].(string)
+		switch action {
+		case "fix":
+			return "CI"
+		case "promote":
+			return "DEV smoke"
+		case "revert":
+			return "PROD health"
+		}
+		return "daemon"
+	}
 	switch source {
 	case "ci":
 		return "CI"

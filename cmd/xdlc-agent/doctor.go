@@ -33,6 +33,8 @@ func doctorCmd() *cobra.Command {
 
 Checks git / agent CLI on PATH, token env presence, config validation,
 and (unless --skip-network) optional Prometheus / reachability probes.
+GitHub auth is required when a repo has a github slug and no local dir,
+or when not --skip-network. Local dir clones warn if GITHUB_TOKEN is unset.
 Exit 1 when any required check fails.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -159,7 +161,14 @@ Exit 1 when any required check fails.`,
 
 			hasApp := os.Getenv("GITHUB_APP_ID") != "" || (cfg.GitHub.AppID != 0)
 			hasPAT := os.Getenv("GITHUB_TOKEN") != ""
-			check("GitHub auth env", hasApp || hasPAT, "GITHUB_TOKEN or GitHub App (GITHUB_APP_ID / config github.app_id)")
+			hasAuth := hasApp || hasPAT
+			if githubAuthRequired(cfg, skipNet) {
+				check("GitHub auth env", hasAuth, "GITHUB_TOKEN or GitHub App (GITHUB_APP_ID / config github.app_id)")
+			} else if hasAuth {
+				check("GitHub auth env", true, "set")
+			} else {
+				_, _ = fmt.Fprintf(out, "[warn] GitHub auth env — not set — ok for local dir clones (no GitHub API); export GITHUB_TOKEN or a GitHub App for CI log fetch / rerun\n")
+			}
 
 			check("XDLC_API_TOKEN set", os.Getenv("XDLC_API_TOKEN") != "", "required for /api/* console")
 
@@ -229,4 +238,27 @@ func optionalPath(bin string) string {
 		return p + " (optional)"
 	}
 	return "not found (optional — ok)"
+}
+
+// githubAuthRequired is true when this install cannot run without GitHub
+// credentials: a repo has a github slug but no local dir (needs clone),
+// or --skip-network is off and any repo is wired to GitHub (log fetch / rerun).
+func githubAuthRequired(cfg *config.Config, skipNet bool) bool {
+	if cfg == nil {
+		return false
+	}
+	if skipNet {
+		for _, r := range cfg.Repos {
+			if strings.TrimSpace(r.GitHub) != "" && strings.TrimSpace(r.Dir) == "" {
+				return true
+			}
+		}
+		return false
+	}
+	for _, r := range cfg.Repos {
+		if strings.TrimSpace(r.GitHub) != "" {
+			return true
+		}
+	}
+	return false
 }

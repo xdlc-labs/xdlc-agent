@@ -24,3 +24,21 @@ func TestDecide(t *testing.T) {
 		})
 	}
 }
+
+func TestAuditSourceManualIsDaemon(t *testing.T) {
+	ci := Signal{Source: SourceCI, Kind: KindFail, Evidence: map[string]any{"run_url": "https://x"}}
+	if got := AuditSource(ci); got != "ci" {
+		t.Fatalf("webhook CI = %q, want ci", got)
+	}
+	manual := Signal{
+		Source:   SourceCI,
+		Kind:     KindFail,
+		Evidence: map[string]any{"manual": true, "via": "api", "action": "fix"},
+	}
+	if got := AuditSource(manual); got != "daemon" {
+		t.Fatalf("manual Fix = %q, want daemon (Decide still uses SourceCI)", got)
+	}
+	if Decide(manual) != ActionFix {
+		t.Fatal("Decide must still return Fix for a manual CI-shaped signal")
+	}
+}

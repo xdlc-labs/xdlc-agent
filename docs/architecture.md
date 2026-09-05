@@ -58,7 +58,7 @@ The hero diagram is the target shape. What ships today:
 | ArgoCD / Alertmanager webhooks | Wired (`/webhooks/argocd`, `/webhooks/alertmanager`); pollers remain fallback |
 | Instant prod rollback | Wired: revert on `main`, align `develop` when tips matched |
 | Promote carries the gated image tag | Wired: `CarryProdTag` then FF `develop→main` |
-| OTel → PromQL store | Wired: apps export OTLP; gate queries `metrics_url` |
+| OTel → PromQL store | Wired: `/metrics` always; OTLP export only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; gate queries `metrics_url` |
 | GitHub App auth | Wired: App preferred, `GITHUB_TOKEN` fallback |
 | `agent.mode: sdk` | Reserved, unimplemented |
 | Ops console (`ui/`) over `/api/*` | Wired: reads plus operator Fix/Promote/Revert writes (`POST /api/actions/*`). No mocks — when the daemon is unreachable it renders an empty shell behind a `degraded` banner |

@@ -78,6 +78,12 @@ export GITHUB_TOKEN=...                  # or GitHub App (preferred) when talkin
 xdlc doctor --config config.yaml --skip-network
 ```
 
+Local clones with `repos[].dir` set do not need `GITHUB_TOKEN`; doctor **warns** instead of failing. Export a token (or GitHub App) when the daemon must clone, fetch CI logs, or rerun jobs.
+
+OTLP is off unless you set `OTEL_EXPORTER_OTLP_ENDPOINT`. Local `xdlc daemon` will not talk to `otel-collector.monitoring.svc`.
+
+Repeatable loopback (stub agent, optional Minikube Argo app): `scripts/e2e-local.sh` in this repo. Console token: `dev-token`. `agent.timeout` in that harness is **10m**.
+
 **4. Run**
 
 ```sh

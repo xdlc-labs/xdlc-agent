@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { fetchFixPRs, fetchOverview } from "@/lib/api";
+import { fetchFixPRs, fetchOverview, lastFetchStatus } from "@/lib/api";
 import { fetchAuthConfig, fetchRole } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { resolveTheme, toggleTheme, type Theme } from "@/lib/theme";
@@ -32,12 +32,41 @@ function useOpenFixPRCount() {
   return data?.length ?? 0;
 }
 
+/** Chip copy for the top-bar daemon status. Online only after a 200 overview. */
+export function daemonChipLabel(args: {
+  isPending: boolean;
+  isError: boolean;
+  daemonStatus?: string;
+  fetchStatus: number | null;
+}): string {
+  if (args.fetchStatus === 401) {
+    return "token rejected";
+  }
+  if (args.isPending) return "connecting";
+  if (args.isError) return "stopped";
+  const status = args.daemonStatus ?? "stopped";
+  if (status === "running") return "online";
+  return status;
+}
+
+function chipTone(label: string): "online" | "connecting" | "degraded" | "breach" {
+  if (label === "online") return "online";
+  if (label === "connecting") return "connecting";
+  if (label === "degraded") return "degraded";
+  return "breach";
+}
+
 /** Top strip — online status + env sit on the right. */
 export function AppTopBar() {
   const { data, isError, isPending } = useDaemon();
   const daemon = data?.daemon;
-  const status = isError ? "stopped" : (daemon?.status ?? (isPending ? "running" : "stopped"));
-  const online = !isError && status === "running";
+  const label = daemonChipLabel({
+    isPending,
+    isError,
+    daemonStatus: daemon?.status,
+    fetchStatus: lastFetchStatus,
+  });
+  const tone = chipTone(label);
   const { data: authConfig } = useQuery({ queryKey: ["auth-config"], queryFn: fetchAuthConfig, staleTime: Infinity });
   const { data: role } = useQuery({ queryKey: ["role"], queryFn: fetchRole, refetchInterval: 60_000 });
 
@@ -49,19 +78,23 @@ export function AppTopBar() {
 
       <span
         className={`inline-flex items-center gap-2 rounded border px-2.5 py-1 font-mono text-[11px] ${
-          online
+          tone === "online"
             ? "border-pass/40 bg-pass/10 text-pass"
-            : status === "degraded"
-              ? "border-acting/40 bg-acting/10 text-acting"
-              : "border-breach/40 bg-breach/10 text-breach"
+            : tone === "connecting"
+              ? "border-border bg-card text-muted-foreground"
+              : tone === "degraded"
+                ? "border-acting/40 bg-acting/10 text-acting"
+                : "border-breach/40 bg-breach/10 text-breach"
         }`}
-        aria-label={`${t("header.daemon")} ${online ? "online" : status}`}
+        aria-label={`${t("header.daemon")} ${label}`}
       >
         <span
-          className={`size-1.5 rounded-full ${online ? "bg-pass dot-live" : status === "degraded" ? "bg-acting" : "bg-breach"}`}
+          className={`size-1.5 rounded-full ${
+            tone === "online" ? "bg-pass dot-live" : tone === "connecting" ? "bg-muted-foreground" : tone === "degraded" ? "bg-acting" : "bg-breach"
+          }`}
           aria-hidden
         />
-        {online ? "online" : status}
+        {label}
       </span>
 
       {authConfig?.enabled && (

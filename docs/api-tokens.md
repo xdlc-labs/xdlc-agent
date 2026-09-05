@@ -28,7 +28,7 @@ Helm: put the value in the chart’s existing Secret (see [Deployment](deploymen
 
 **3. Paste the same value in the console**
 
-Open **Settings** → API token field → save. The browser stores it in `localStorage` and sends `Authorization: Bearer <token>` on API calls.
+Open **Settings** → API token field → save. Save calls `GET /api/whoami`; a mismatch shows **token rejected** (the top-bar chip does the same on 401). The browser stores a matching token in `localStorage` and sends `Authorization: Bearer <token>` on API calls.
 
 If the env var is **empty**, protected routes fail closed (**503**). `GET /api/health` stays open.
 

@@ -5,7 +5,7 @@ Ops docs for **xdlc-agent** (CLI binary **`xdlc`**).
 ## Start
 
 - [Install](install.md) — `curl … | sh`, Docker, from source
-- [Getting started](getting-started.md) — demo or doctor + daemon
+- [Getting started](getting-started.md) — demo or doctor + daemon (`scripts/e2e-local.sh` for a repeatable loopback)
 - [API tokens](api-tokens.md) — create `XDLC_API_TOKEN` (shared secret)
 
 ## Production loop

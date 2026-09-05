@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- OTLP metrics export only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (no in-cluster collector default; local daemon no longer logs upload failures every 15s). `GET /metrics` is unchanged.
+- Console status chip is **connecting** until overview 200, **token rejected** on 401 (was green “online” over a skeleton). Settings Save verifies `GET /api/whoami`.
+- Manual Fix / Promote / Revert audit **source** is `daemon`, not `github-actions` / Argo / Prometheus. Decide() mapping is unchanged.
+- `xdlc doctor --skip-network` warns (does not fail) when every repo has a local `dir:` and GitHub auth is unset.
+
 ### Changed
 
 - CLI binary renamed to **`xdlc`** (was `xdlc-agent`). Repo, module, GHCR image, and Helm chart stay **`xdlc-agent`**.
@@ -19,6 +26,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `gemini` coding-agent provider (`gemini` CLI, `GEMINI_API_KEY`); opt-in in the container image via `--build-arg GEMINI_CLI_VERSION`
 - `xdlc init --scan <dir>` — seed `repos:` from local Git checkouts with a GitHub origin
 - `scripts/install.sh` — curl-install `xdlc` from GitHub Releases (checksum verified); [Install](install.md)
+- `scripts/e2e-local.sh` — loopback CI → Fix → Argo Promote → Alertmanager Revert (+ unknown-app 204). Token `dev-token`, `agent.timeout: 10m`, `OTEL_SDK_DISABLED=true`. Minikube/ArgoCD is a precondition, not installed.
 - `xdlc demo` — zero-infra Fix→Promote→Revert with `--provider fake` (#5)
 - Console Settings: browser-local coding-agent provider + API key (localStorage); Manual Fix sends `X-XDLC-Agent-*` headers (never audit/disk)
 - Typed contracts: `openapi/openapi.yaml` + `schema/config.schema.json`; drift tests; `docs/api-reference.md` (#15)

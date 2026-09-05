@@ -4,9 +4,9 @@ Day-2 for a running daemon.
 
 ## Health
 
-- Console top bar: daemon online / degraded / stopped
+- Console top bar: **connecting** (first fetch), **online** (overview 200), **token rejected** (401), degraded, or stopped
 - `GET /api/health` — unauthenticated liveness
-- `GET /metrics` — Prometheus metrics (Fix queue depths, fleet suppressions, …)
+- `GET /metrics` — Prometheus metrics (Fix queue depths, fleet suppressions, …). OTLP push only if `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
 ## Auth
 
@@ -14,7 +14,7 @@ Day-2 for a running daemon.
 - Optional viewer: **`XDLC_API_VIEWER_TOKEN`**
 - Optional OIDC SSO — see `server.oidc` in `config.example.yaml` and [Security](SECURITY.md)
 
-Paste the operator token in console **Settings** (localStorage).
+Paste the operator token in console **Settings** (localStorage). Save verifies `/api/whoami`.
 
 ## Audit
 
@@ -24,7 +24,7 @@ Paste the operator token in console **Settings** (localStorage).
 
 ## Manual actions
 
-**Actions** tab: Fix / Promote / Revert for a config repo **id** (not the GitHub slug). Manual Fix can override agent provider/key from Settings.
+**Actions** tab: Fix / Promote / Revert for a config repo **id** (not the GitHub slug). Manual Fix can override agent provider/key from Settings. Activity lists those rows with source **daemon** (not github-actions).
 
 ## Doctor in CI
 

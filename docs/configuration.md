@@ -70,6 +70,7 @@ agent:
 
 | Key | Default | What it does |
 |-----|---------|--------------|
+| `timeout` | `10m` in examples | Kill the coding-agent subprocess after this. Too short (e.g. 1m) for a real Cursor Manual Fix. |
 | `rules_file` | none | Instructions file added to every Fix prompt, after the repo's own rules. [Rules and skills](rules-and-skills.md) |
 | `sessions.enabled` | `true` | Record each Fix's prompt, output and diff to disk. [Fix sessions](sessions.md) |
 | `sessions.dir` | `sessions` | Where those directories go. Mount it in containers to survive restarts. |

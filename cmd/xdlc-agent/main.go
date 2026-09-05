@@ -284,7 +284,7 @@ func daemonCmd() *cobra.Command {
 				return audit.Append(store.Record{
 					At:            time.Now().UTC(),
 					Repo:          s.Repo,
-					Source:        string(s.Source),
+					Source:        orchestrator.AuditSource(s),
 					Kind:          string(s.Kind),
 					Action:        string(action),
 					Status:        status,
