@@ -282,7 +282,7 @@ type argoCDNotification struct {
 // decision rested on two strings supplied by whoever could POST here:
 // anyone holding the shared secret, and — with
 // `require_webhook_secret: false`, which is what the example config and
-// `xdlc-agent init` ship — anyone at all. Meanwhile the poller path
+// `xdlc init` ship — anyone at all. Meanwhile the poller path
 // (gate.SmokeGate.Check) required the k6/Playwright probe Job to have
 // exited 0 before the same promote. Two paths to prod with different
 // evidence requirements is not a design, it's a bypass.

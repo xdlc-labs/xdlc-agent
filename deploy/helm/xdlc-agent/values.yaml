@@ -35,7 +35,7 @@ service:
   port: 8080
 
 # Contents become config.yaml, mounted read-only. See config.example.yaml and
-# the starter config xdlc-agent init writes for the full schema.
+# the starter config xdlc init writes for the full schema.
 config: |
   repos: []
   gates:

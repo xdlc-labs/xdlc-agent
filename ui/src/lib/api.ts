@@ -1,4 +1,4 @@
-// Client for xdlc-agent daemon /api/*. Fetch helpers throw on failure so
+// Client for the xdlc daemon /api/*. Fetch helpers throw on failure so
 // React Query can distinguish loading / empty / error (issue #7). Soft
 // "daemon stopped" shells are only built when a caller explicitly asks
 // via emptyOverview().
@@ -6,6 +6,7 @@
 // Types mirror handlers; contract source of truth: openapi/openapi.yaml (#15).
 
 import { authHeaders } from "./auth";
+import { agentFixHeaders } from "./agent-creds";
 
 export type GateStatus = "pass" | "fail" | "acting" | "waiting" | "idle";
 export type ActionKind = "Fix" | "Promote" | "Revert" | "Rerun" | "None";
@@ -126,7 +127,7 @@ export const emptyOverview = (webhook = "backend unreachable"): Overview => ({
     agentProvider: "claude",
   },
   pipeline: [
-    { stage: "github", label: "GitHub", status: "idle", detail: "start xdlc-agent daemon" },
+    { stage: "github", label: "GitHub", status: "idle", detail: "start xdlc daemon" },
     { stage: "ci", label: "CI gate", status: "idle", detail: "—" },
     { stage: "dev", label: "DEV smoke", status: "idle", detail: "—" },
     { stage: "promote", label: "Promote", status: "idle", detail: "—" },
@@ -136,7 +137,7 @@ export const emptyOverview = (webhook = "backend unreachable"): Overview => ({
   gates: [],
   repos: [],
   events: [],
-  backlogMd: "# BACKLOG\n\n(daemon not reachable — run `xdlc-agent daemon`)\n",
+  backlogMd: "# BACKLOG\n\n(daemon not reachable — run `xdlc daemon`)\n",
 });
 
 export function degradeWebhook(status: number | null): string {
@@ -237,6 +238,7 @@ export async function postAction(
     headers: {
       "Content-Type": "application/json",
       ...authHeaders(),
+      ...(action === "fix" ? agentFixHeaders() : {}),
     },
     body: JSON.stringify({ repo, confirm: true }),
   });

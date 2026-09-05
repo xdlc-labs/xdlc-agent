@@ -27,7 +27,7 @@ func TestAppendAndAll(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Reopen read-only, as `xdlc-agent history` does, and confirm both
+	// Reopen read-only, as `xdlc history` does, and confirm both
 	// records round-trip correctly.
 	ro, err := OpenReadOnly(path)
 	if err != nil {

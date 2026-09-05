@@ -6,11 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- CLI binary renamed to **`xdlc`** (was `xdlc-agent`). Repo, module, GHCR image, and Helm chart stay **`xdlc-agent`**.
+- API bearer env is fixed **`XDLC_API_TOKEN`** (was `XDL_API_TOKEN` + configurable `server.api_token_env`). Optional viewer: **`XDLC_API_VIEWER_TOKEN`**.
+
 ### Added
 
-- `xdlc-agent demo` — zero-infra Fix→Promote→Revert with `--provider fake` (#5)
+- `xdlc demo` — zero-infra Fix→Promote→Revert with `--provider fake` (#5)
+- Console Settings: browser-local coding-agent provider + API key (localStorage); Manual Fix sends `X-XDLC-Agent-*` headers (never audit/disk)
 - Typed contracts: `openapi/openapi.yaml` + `schema/config.schema.json`; drift tests; `docs/api-reference.md` (#15)
-- `xdlc-agent doctor` — PATH / token / config / optional Prometheus checks (#12)
+- `xdlc doctor` — PATH / token / config / optional Prometheus checks (#12)
 - Docs: [vs alternatives](vs-alternatives.md), [why not a GitHub Action](why-not-github-action.md) (#13)
 - Console: distinct loading / empty / error states (fetch throws; Skeleton + QueryError) (#7)
 - FixPrompt honors `AGENTS.md`, `.xdlc/skills/*.md`, `repos[].agent_instructions` (#21)
@@ -32,6 +38,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Subagent: prompt on stdin (not argv); kill process group on timeout; external gates get env allowlist + same kill hygiene (#11)
 - `EnsureCloned`: skip fetch when HEAD matches `origin/<branch>` and tree clean; shallow first clone; parallel startup pre-clone (#17)
+- Cursor CLI defaults: `-p --trust` for headless/demo workdirs
+- Actions: Manual Fix/Promote/Revert post config repo `id` (not GitHub slug)
+- Console `/repos/$id`: parent layout uses `<Outlet />` so timeline renders (was stuck on list)
 
 ## [0.0.1-beta.1] - 2026-09-05
 

@@ -85,14 +85,6 @@ type FleetConfig struct {
 // ServerConfig configures the daemon's webhook HTTP listener.
 type ServerConfig struct {
 	Addr string `yaml:"addr"` // defaults to ":8080"
-	// APITokenEnv names the env var holding the operator bearer token
-	// for /api/* (except GET /api/health). Defaults to XDL_API_TOKEN.
-	// Empty/unset token fail-closes protected routes with 503.
-	APITokenEnv string `yaml:"api_token_env"`
-	// APIViewerTokenEnv names the env var holding the optional viewer
-	// bearer token (read-only GETs). Defaults to XDL_API_VIEWER_TOKEN.
-	// Unset/empty → no viewer role; GETs still accept the operator token.
-	APIViewerTokenEnv string `yaml:"api_viewer_token_env"`
 	// GitHubWebhookSecretEnv names the env var holding the HMAC secret
 	// used to verify GitHub webhook deliveries. Defaults to
 	// GITHUB_WEBHOOK_SECRET. Verification is skipped (with a warning)
@@ -145,7 +137,7 @@ type OIDCConfig struct {
 	// OperatorGroups: any overlap with the token's GroupsClaim grants
 	// the operator role (Fix/Promote/Revert). Empty → SSO can never
 	// grant operator (fail-safe default; operator still works via the
-	// bearer APITokenEnv).
+	// bearer XDLC_API_TOKEN).
 	OperatorGroups []string `yaml:"operator_groups"`
 	// ViewerGroups: any overlap grants the viewer (read-only) role.
 	// Empty → any authenticated user who isn't an operator gets viewer

@@ -185,7 +185,7 @@ func revParse(ctx context.Context, repoDir string, env []string, rev string) (st
 // landed after the gate passed cannot ride along untested — the promote
 // fails with ErrMoved instead. Empty gatedSHA pushes the branch tip, as
 // before: that is the unpinned path used by operator-initiated promotes
-// (`xdlc-agent promote`, POST /api/actions/promote), where a human is
+// (`xdlc promote`, POST /api/actions/promote), where a human is
 // the authorization.
 //
 // env carries extra environment variables for git auth (see

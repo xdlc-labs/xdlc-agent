@@ -112,7 +112,8 @@ var providerDefaults = map[Provider]providerSpec{
 	},
 	ProviderCursor: {
 		binary: "cursor-agent",
-		args:   []string{"-p", promptPlaceholder},
+		// -p print/non-interactive; --trust required for temp/demo workdirs
+		args: []string{"-p", "--trust", promptPlaceholder},
 	},
 }
 
@@ -134,6 +135,18 @@ type SubprocessRunner struct {
 	Timeout  time.Duration
 	// ExtraEnvKeys widens the subprocess env allowlist — see ExtractEnv.
 	ExtraEnvKeys []string
+}
+
+// APIKeyEnvName is the subprocess env var each Provider's CLI reads.
+func APIKeyEnvName(p Provider) string {
+	switch p {
+	case ProviderCodex:
+		return "OPENAI_API_KEY"
+	case ProviderCursor:
+		return "CURSOR_API_KEY"
+	default:
+		return "ANTHROPIC_API_KEY"
+	}
 }
 
 // NewSubprocessRunner returns a SubprocessRunner for provider, applying

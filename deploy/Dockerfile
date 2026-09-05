@@ -25,7 +25,7 @@ COPY . .
 COPY --from=ui /ui/dist /tmp/ui-dist
 RUN mkdir -p internal/console/dist \
  && if [ -d /tmp/ui-dist ]; then cp -a /tmp/ui-dist/. internal/console/dist/; fi
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/xdlc-agent ./cmd/xdlc-agent
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/xdlc ./cmd/xdlc-agent
 
 FROM node:22-alpine
 ARG KUBECTL_VERSION
@@ -54,7 +54,7 @@ RUN apk add --no-cache git ca-certificates curl \
 # /usr/local/bin) and confirm it still matches Cursor's current docs —
 # left out here rather than guessed at.
 
-COPY --from=build /out/xdlc-agent /usr/local/bin/xdlc-agent
+COPY --from=build /out/xdlc /usr/local/bin/xdlc
 
 # Match distroless/static nonroot (65532) used by example-service.
 RUN addgroup -g 65532 -S nonroot \
@@ -64,5 +64,5 @@ RUN addgroup -g 65532 -S nonroot \
 
 USER nonroot:nonroot
 WORKDIR /var/lib/xdlc-agent
-ENTRYPOINT ["/usr/local/bin/xdlc-agent"]
+ENTRYPOINT ["/usr/local/bin/xdlc"]
 CMD ["daemon"]

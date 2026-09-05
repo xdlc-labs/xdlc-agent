@@ -18,7 +18,6 @@ repos:
 server:
   addr: "127.0.0.1:8080"
   require_webhook_secret: false
-  api_token_env: XDL_API_TOKEN
 gates:
   ci:
     trigger: on_push
@@ -29,7 +28,7 @@ agent:
 	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDL_API_TOKEN", "dev-token")
+	t.Setenv("XDLC_API_TOKEN", "dev-token")
 	t.Setenv("GITHUB_TOKEN", "ghp_test")
 
 	cfgPath = cfg

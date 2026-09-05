@@ -33,7 +33,7 @@ function Gates() {
         />
       ) : null}
       {!isPending && !isError && gates.length === 0 ? (
-        <EmptyState>No gate data — start `xdlc-agent daemon` (proxied via /api).</EmptyState>
+        <EmptyState>No gate data — start `xdlc daemon` (proxied via /api).</EmptyState>
       ) : null}
       {!isPending && !isError && gates.length > 0 ? (
       <div className="grid gap-4 px-6 py-6 lg:grid-cols-3">

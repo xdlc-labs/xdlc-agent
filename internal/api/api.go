@@ -197,9 +197,19 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action str
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
 	}
+	// Fix-only: optional console-local agent override. Headers never logged.
+	if action == "fix" {
+		if p := strings.TrimSpace(r.Header.Get("X-XDLC-Agent-Provider")); p != "" {
+			sig.OperatorAgentProvider = p
+		}
+		if k := strings.TrimSpace(r.Header.Get("X-XDLC-Agent-Key")); k != "" {
+			sig.OperatorAgentKey = k
+		}
+	}
 	if s.Log != nil {
 		s.Log.Info("manual action enqueued", "action", action, "repo", body.Repo,
-			"source", sig.Source, "kind", sig.Kind)
+			"source", sig.Source, "kind", sig.Kind,
+			"agent_override", sig.OperatorAgentProvider != "")
 	}
 	s.Enqueue(sig)
 	writeJSON(w, map[string]any{

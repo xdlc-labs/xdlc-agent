@@ -1,4 +1,4 @@
-# Release image. GoReleaser copies the pre-built xdlc-agent binary into
+# Release image. GoReleaser copies the pre-built xdlc binary into
 # the build context beside this file. Local/source builds use
 # deploy/Dockerfile instead (see scripts/bootstrap-local.sh).
 ARG KUBECTL_VERSION=1.34.0
@@ -28,7 +28,7 @@ RUN apk add --no-cache git ca-certificates curl \
 # Cursor CLI (cursor-agent) isn't npm-installable, see deploy/Dockerfile
 # for why it's left out of this image by default.
 
-COPY xdlc-agent /usr/local/bin/xdlc-agent
+COPY xdlc /usr/local/bin/xdlc
 
 # Match distroless/static nonroot (65532) used by example-service.
 RUN addgroup -g 65532 -S nonroot \
@@ -38,5 +38,5 @@ RUN addgroup -g 65532 -S nonroot \
 
 USER nonroot:nonroot
 WORKDIR /var/lib/xdlc-agent
-ENTRYPOINT ["/usr/local/bin/xdlc-agent"]
+ENTRYPOINT ["/usr/local/bin/xdlc"]
 CMD ["daemon"]

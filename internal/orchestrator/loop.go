@@ -31,7 +31,7 @@ type Dispatcher interface {
 type RerunCIFunc func(ctx context.Context, s Signal) (green bool, err error)
 
 // AuditFunc persists a structured record of one signal+action, e.g. to
-// the bbolt-backed internal/store for `xdlc-agent history`. Optional —
+// the bbolt-backed internal/store for `xdlc history`. Optional —
 // nil skips it. Kept as a func type (not a store.AuditStore field)
 // so orchestrator doesn't need to import store.
 // May be called concurrently from different repo workers; implementations

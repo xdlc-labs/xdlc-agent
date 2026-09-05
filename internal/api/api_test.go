@@ -540,6 +540,34 @@ func TestManualActions(t *testing.T) {
 		}
 	})
 
+	t.Run("fix agent headers stay off evidence", func(t *testing.T) {
+		res := httptest.NewRecorder()
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/actions/fix",
+			strings.NewReader(`{"repo":"svc-a","confirm":true}`))
+		req.Header.Set("Authorization", "Bearer op")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-XDLC-Agent-Provider", "cursor")
+		req.Header.Set("X-XDLC-Agent-Key", "secret-test-key")
+		mux.ServeHTTP(res, req)
+		if res.Code != 200 {
+			t.Fatalf("status %d: %s", res.Code, res.Body.String())
+		}
+		sig := <-ch
+		if sig.OperatorAgentProvider != "cursor" {
+			t.Fatalf("provider=%q", sig.OperatorAgentProvider)
+		}
+		if sig.OperatorAgentKey != "secret-test-key" {
+			t.Fatalf("key not threaded")
+		}
+		if _, ok := sig.Evidence["OperatorAgentKey"]; ok {
+			t.Fatal("key leaked into Evidence")
+		}
+		body := res.Body.String()
+		if strings.Contains(body, "secret-test-key") {
+			t.Fatal("key leaked into response body")
+		}
+	})
+
 	t.Run("promote enqueues dev-gate pass", func(t *testing.T) {
 		res := post("/api/actions/promote", "op", `{"repo":"svc-a","confirm":true}`)
 		if res.Code != 200 {

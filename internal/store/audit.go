@@ -1,5 +1,5 @@
 // Package store persists a structured Signal+Action history for the
-// `xdlc-agent history` command and, later, a dashboard. BACKLOG.md stays
+// `xdlc history` command and, later, a dashboard. BACKLOG.md stays
 // the human-facing view; this is the queryable one.
 package store
 
@@ -56,7 +56,7 @@ func (r Record) Succeeded() bool {
 }
 
 // AuditStore is a bbolt-backed append log of Records, read by
-// `xdlc-agent history`.
+// `xdlc history`.
 type AuditStore struct {
 	db *bolt.DB
 	// Metrics, if set, records a StoreErrors increment on every failed
@@ -129,7 +129,7 @@ func repoKey(repo string, seq uint64) []byte {
 // OpenReadOnly opens the store for reads only, using bbolt's shared
 // (not exclusive) file lock — safe to call while a `daemon` process
 // holds the store open for writing, which Open's exclusive lock is not.
-// Used by `xdlc-agent history` so it doesn't block on, or steal the
+// Used by `xdlc history` so it doesn't block on, or steal the
 // lock from, a running daemon.
 func OpenReadOnly(path string) (*AuditStore, error) {
 	db, err := bolt.Open(path, 0o644, &bolt.Options{ReadOnly: true, Timeout: 5 * time.Second})

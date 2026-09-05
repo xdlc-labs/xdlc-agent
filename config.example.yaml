@@ -15,8 +15,6 @@ repos:
 
 server:
   addr: ":8080"
-  # api_token_env: XDL_API_TOKEN
-  # api_viewer_token_env: XDL_API_VIEWER_TOKEN
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
   argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
   alertmanager_webhook_secret_env: ALERTMANAGER_WEBHOOK_SECRET

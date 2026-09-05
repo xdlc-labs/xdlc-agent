@@ -43,8 +43,13 @@ function Actions() {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
 
+  // Daemon expects config repo name (id), not github slug (name).
   const repo =
-    repoPick && repos.some((r) => r.name === repoPick) ? repoPick : (repos[0]?.name ?? "");
+    repoPick && repos.some((r) => r.id === repoPick)
+      ? repoPick
+      : (repos[0]?.id ?? "");
+  const repoLabel =
+    repos.find((r) => r.id === repo)?.name ?? repo;
 
   const close = useCallback(() => {
     if (!busy) setPending(null);
@@ -61,8 +66,8 @@ function Actions() {
       const res = await postAction(pending.action, repo);
       pushLog(
         res.ok
-          ? `${pending.action} ${repo}: ok — ${res.message}`
-          : `${pending.action} ${repo}: error (${res.status}) — ${res.message}`,
+          ? `${pending.action} ${repoLabel}: ok — ${res.message}`
+          : `${pending.action} ${repoLabel}: error (${res.status}) — ${res.message}`,
       );
       if (res.ok) {
         void queryClient.invalidateQueries({ queryKey: ["overview"] });
@@ -70,7 +75,7 @@ function Actions() {
       }
       setPending(null);
     } catch (e) {
-      pushLog(`${pending.action} ${repo}: error — ${e instanceof Error ? e.message : String(e)}`);
+      pushLog(`${pending.action} ${repoLabel}: error — ${e instanceof Error ? e.message : String(e)}`);
       setPending(null);
     } finally {
       setBusy(false);
@@ -88,21 +93,21 @@ function Actions() {
       action: "fix",
       title: "Manual Fix",
       desc: "Dispatch coding-agent Fix for the selected repo (same path as CI/smoke fail).",
-      body: `POST /api/actions/fix with confirm for "${repo || "…"}". Runs the Fix subagent against the configured branch.`,
+      body: `POST /api/actions/fix with confirm for "${repoLabel || "…"}". Runs the Fix subagent against the configured branch.`,
       tone: "text-acting border-acting/40",
     },
     {
       action: "promote",
       title: "Manual Promote",
       desc: "Fast-forward develop→main for the selected repo (refused if non-FF).",
-      body: `POST /api/actions/promote with confirm for "${repo || "…"}". Same as CLI promote — develop must be FF of main.`,
+      body: `POST /api/actions/promote with confirm for "${repoLabel || "…"}". Same as CLI promote — develop must be FF of main.`,
       tone: "text-pass border-pass/40",
     },
     {
       action: "revert",
       title: "Manual Revert",
       desc: "Git revert on main for the selected repo (rollback-first).",
-      body: `POST /api/actions/revert with confirm for "${repo || "…"}". Same as prod-health breach Revert.`,
+      body: `POST /api/actions/revert with confirm for "${repoLabel || "…"}". Same as prod-health breach Revert.`,
       tone: "text-breach border-breach/40",
     },
   ];
@@ -164,7 +169,7 @@ function Actions() {
             <option value="">no repos (daemon down?)</option>
           ) : (
             repos.map((r) => (
-              <option key={r.id || r.name} value={r.name}>
+              <option key={r.id || r.name} value={r.id}>
                 {r.name}
               </option>
             ))

@@ -43,4 +43,12 @@ type Signal struct {
 	// via /api/actions, and gates that cannot attribute a commit. Those
 	// promote the current dev tip, as before.
 	SHA string
+
+	// OperatorAgentProvider overrides config agent.provider for this Fix
+	// only (console header). Empty = use dispatcher default / route.
+	OperatorAgentProvider string
+	// OperatorAgentKey is request-scoped API key for the coding-agent
+	// subprocess (console header). Never copy into Evidence / audit /
+	// backlog / logs — Dispatch consumes and clears it.
+	OperatorAgentKey string
 }

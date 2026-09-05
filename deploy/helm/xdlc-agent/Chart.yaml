@@ -2,8 +2,8 @@ apiVersion: v2
 name: xdlc-agent
 description: xdlc orchestrator (xdlc-agent) - one loop, 3 gates
 type: application
-version: 0.0.1-beta.1
-appVersion: "0.0.1-beta.1"
+version: 0.0.1-beta.2
+appVersion: "0.0.1-beta.2"
 home: https://github.com/xdlc-labs/xdlc-agent
 sources:
   - https://github.com/xdlc-labs/xdlc-agent

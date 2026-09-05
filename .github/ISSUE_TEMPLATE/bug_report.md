@@ -18,4 +18,4 @@ labels: bug
 
 ```
 
-**Version** (`xdlc-agent --version` or commit SHA):
+**Version** (`xdlc --version` or commit SHA):

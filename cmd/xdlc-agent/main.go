@@ -1,5 +1,6 @@
-// Command xdlc-agent is both the daemon (the "one loop") and a CLI for
+// Command xdlc is both the daemon (the "one loop") and a CLI for
 // one-shot gate checks / manual promote, usable standalone or from CI.
+// Built from ./cmd/xdlc-agent; binary name is xdlc.
 package main
 
 import (
@@ -46,7 +47,7 @@ var cfgPath string
 
 // auditDBPath is where the bbolt-backed signal+action history lives —
 // BACKLOG.md is the human-facing view, this is the queryable one
-// (`xdlc-agent history`).
+// (`xdlc history`). Filename kept for existing data dirs.
 const auditDBPath = "xdlc-agent-history.db"
 
 // version and commit are set via -ldflags at build time (see
@@ -58,7 +59,7 @@ var (
 
 func main() {
 	root := &cobra.Command{
-		Use:     "xdlc-agent",
+		Use:     "xdlc",
 		Short:   "Agentic SDLC orchestrator — one loop, 3 gates",
 		Version: fmt.Sprintf("%s (%s)", version, commit),
 	}
@@ -95,7 +96,7 @@ func daemonCmd() *cobra.Command {
 				for _, i := range issues {
 					fmt.Fprintln(os.Stderr, i.String())
 				}
-				return fmt.Errorf("daemon: %s: %d config issue(s) — fix before starting (or run xdlc-agent validate)", cfgPath, len(issues))
+				return fmt.Errorf("daemon: %s: %d config issue(s) — fix before starting (or run xdlc validate)", cfgPath, len(issues))
 			}
 			if err := enforceWebhookSecrets(cfg); err != nil {
 				return err
@@ -371,14 +372,6 @@ func daemonCmd() *cobra.Command {
 			wh.Limiter = ratelimit.New(rate, burst)
 			mux := http.NewServeMux()
 			wh.Mount(mux)
-			apiTokenEnv := cfg.Server.APITokenEnv
-			if apiTokenEnv == "" {
-				apiTokenEnv = "XDL_API_TOKEN" //nolint:gosec // env var name, not a secret value
-			}
-			viewerTokenEnv := cfg.Server.APIViewerTokenEnv
-			if viewerTokenEnv == "" {
-				viewerTokenEnv = "XDL_API_VIEWER_TOKEN" //nolint:gosec // env var name, not a secret value
-			}
 			apiSrv := &api.Server{
 				Cfg:         cfg,
 				CfgPath:     cfgPath,
@@ -387,8 +380,8 @@ func daemonCmd() *cobra.Command {
 				Version:     version,
 				Started:     time.Now(),
 				Log:         log,
-				Token:       os.Getenv(apiTokenEnv),
-				ViewerToken: os.Getenv(viewerTokenEnv),
+				Token:       os.Getenv("XDLC_API_TOKEN"),        //nolint:gosec // G101: env lookup, not a hardcoded secret
+				ViewerToken: os.Getenv("XDLC_API_VIEWER_TOKEN"), //nolint:gosec // G101: env lookup, not a hardcoded secret
 				Enqueue:     func(sig orchestrator.Signal) { o.Signals <- sig },
 				PRStatus: func(ctx context.Context, githubRepo string, number int) (api.PRLiveStatus, error) {
 					pr, err := gh.GetPR(ctx, githubRepo, number)
@@ -400,7 +393,7 @@ func daemonCmd() *cobra.Command {
 						Title: pr.Title, CI: pr.CI, Reviewer: pr.Reviewer,
 					}, nil
 				},
-				RepoDir: repoMgr.Dir,
+				RepoDir:       repoMgr.Dir,
 				FixQueueStats: disp.FixQueueStats,
 			}
 			if cfg.Server.OIDC.Enabled() {
@@ -506,7 +499,7 @@ func daemonCmd() *cobra.Command {
 				go p.Run(ctx)
 			}
 
-			log.Info("xdlc-agent daemon starting", "config", cfgPath)
+			log.Info("xdlc daemon starting", "config", cfgPath)
 			err = o.Run(ctx)
 			if errors.Is(err, context.Canceled) {
 				log.Info("shutting down")
@@ -820,7 +813,7 @@ func historyCmd() *cobra.Command {
 		Short: "Print the structured signal+action audit log (see BACKLOG.md for the human-facing view)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := os.Stat(auditDBPath); os.IsNotExist(err) {
-				fmt.Println("no history yet — run `xdlc-agent daemon` first")
+				fmt.Println("no history yet — run `xdlc daemon` first")
 				return nil
 			}
 
@@ -865,7 +858,8 @@ func initCmd() *cobra.Command {
 }
 
 const starterConfig = `# yaml-language-server: $schema=./schema/config.schema.json
-# See config.example.yaml for commented keys (api_token_env, fleet, oidc, …).
+# See config.example.yaml for commented keys (fleet, oidc, …).
+# API bearer: export XDLC_API_TOKEN (optional viewer: XDLC_API_VIEWER_TOKEN).
 repos:
   - name: example-service
     github: your-org/example-service
@@ -880,8 +874,6 @@ repos:
 
 server:
   addr: ":8080"
-  # api_token_env: XDL_API_TOKEN
-  # api_viewer_token_env: XDL_API_VIEWER_TOKEN
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
   argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
   alertmanager_webhook_secret_env: ALERTMANAGER_WEBHOOK_SECRET

@@ -17,7 +17,7 @@ func TestNewSubprocessRunnerProviderDefaults(t *testing.T) {
 	}{
 		{ProviderClaude, "claude", []string{"-p", promptPlaceholder, "--output-format", "json"}},
 		{ProviderCodex, "codex", []string{"exec", promptPlaceholder}},
-		{ProviderCursor, "cursor-agent", []string{"-p", promptPlaceholder}},
+		{ProviderCursor, "cursor-agent", []string{"-p", "--trust", promptPlaceholder}},
 		{"some-unknown-future-provider", "claude", []string{"-p", promptPlaceholder, "--output-format", "json"}},
 	}
 

@@ -1,7 +1,7 @@
 # xdlc-agent
 
 [![ci](https://github.com/xdlc-labs/xdlc-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/xdlc-labs/xdlc-agent/actions/workflows/ci.yml)
-[![release](https://img.shields.io/github/v/release/xdlc-labs/xdlc-agent?include_prereleases)](https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.1)
+[![release](https://img.shields.io/github/v/release/xdlc-labs/xdlc-agent?include_prereleases)](https://github.com/xdlc-labs/xdlc-agent/releases)
 [![release workflow](https://github.com/xdlc-labs/xdlc-agent/actions/workflows/release.yml/badge.svg)](https://github.com/xdlc-labs/xdlc-agent/actions/workflows/release.yml)
 [![Go](https://img.shields.io/github/go-mod/go-version/xdlc-labs/xdlc-agent)](go.mod)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -84,8 +84,10 @@ agent:
 ```sh
 export GITHUB_TOKEN=...              # or GitHub App (preferred)
 export GITHUB_WEBHOOK_SECRET=...
-export XDL_API_TOKEN=...             # console / API
+export XDLC_API_TOKEN=...             # console / API
 export ANTHROPIC_API_KEY=...         # if provider: claude
+# export OPENAI_API_KEY=...          # if provider: codex
+# export CURSOR_API_KEY=...          # if provider: cursor
 ```
 
 **3. Run**  -  Docker (console already embedded):
@@ -93,8 +95,9 @@ export ANTHROPIC_API_KEY=...         # if provider: claude
 ```sh
 docker run --rm -p 8080:8080 \
   -v "$PWD/config.yaml:/etc/xdlc-agent/config.yaml:ro" \
-  -e GITHUB_TOKEN -e GITHUB_WEBHOOK_SECRET -e XDL_API_TOKEN -e ANTHROPIC_API_KEY \
-  ghcr.io/xdlc-labs/xdlc-agent:0.0.1-beta.1 \
+  -e GITHUB_TOKEN -e GITHUB_WEBHOOK_SECRET -e XDLC_API_TOKEN \
+  -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CURSOR_API_KEY \
+  ghcr.io/xdlc-labs/xdlc-agent:0.0.1-beta.2 \
   daemon --config /etc/xdlc-agent/config.yaml
 ```
 
@@ -104,19 +107,36 @@ Open http://127.0.0.1:8080/ · point GitHub `workflow_run` webhooks at `/webhook
 
 ```sh
 helm install xdlc-agent deploy/helm/xdlc-agent \
-  --set image.tag=0.0.1-beta.1 \
+  --set image.tag=0.0.1-beta.2 \
   --set existingSecret=xdlc-agent-secrets \
   --set-file config=config.yaml
 ```
 
-From source: `go build -o bin/xdlc-agent ./cmd/xdlc-agent` then `./bin/xdlc-agent daemon --config config.yaml`.
+From source: `go build -o bin/xdlc ./cmd/xdlc-agent` then `./bin/xdlc daemon --config config.yaml`.
 
 Sanity-check the machine first:
 
 ```sh
-export XDL_API_TOKEN=dev-token   # required for /api/*
-./bin/xdlc-agent doctor --config config.yaml --skip-network
+export XDLC_API_TOKEN=dev-token   # required for /api/*
+./bin/xdlc doctor --config config.yaml --skip-network
 ```
+
+Zero-infra loop (no Kind / Argo / Prom / GitHub):
+
+```sh
+./bin/xdlc demo --provider fake
+```
+
+---
+
+## What's new since beta.1
+
+- CLI binary is **`xdlc`** (repo / image / Helm stay `xdlc-agent`)
+- `xdlc doctor` and `xdlc demo` for local sanity + zero-infra Fix→Promote→Revert
+- Console Settings: browser-local coding-agent provider + API key (Manual Fix only)
+- Typed contracts: OpenAPI + config schema · [API reference](docs/api-reference.md)
+
+Full list: [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 ---
 
@@ -157,6 +177,7 @@ make test
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
 - [docs/SECURITY.md](docs/SECURITY.md)
 - [docs/CODE_OF_CONDUCT.md](docs/CODE_OF_CONDUCT.md)
+- [docs/api-reference.md](docs/api-reference.md)
 - [docs/CHANGELOG.md](docs/CHANGELOG.md)
 
 ## License

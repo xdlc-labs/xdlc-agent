@@ -1,13 +1,13 @@
 # Architecture
 
-**xdlc** is the product; **`xdlc-agent`** is the daemon binary that
-runs the loop.
+**xdlc** is the product; **`xdlc`** is the CLI/daemon binary.
+Repo, GHCR image, and Helm chart stay **`xdlc-agent`**.
 
 ![One loop, three gates, light theme: xdlc-agent → GitHub → DEV → promote → PRODUCTION](assets/architecture.jpg)
 
 ## The loop
 
-`xdlc-agent daemon` runs one process: an HTTP server for GitHub
+`xdlc daemon` runs one process: an HTTP server for GitHub
 `workflow_run`, ArgoCD notification, and Alertmanager webhooks, plus
 dashboard JSON under `/api/*` (reads for the console; operator
 Fix/Promote/Revert writes),
@@ -28,7 +28,7 @@ with `escalate=*` evidence, and dispatches the Action:
   refused by git itself if not FF-able.
 
 Every dispatch, pass or fail, is appended to `BACKLOG.md`
-(human-auditable) and `internal/store` (queryable, `xdlc-agent history`).
+(human-auditable) and `internal/store` (queryable, `xdlc history`).
 
 ### Fleet policy
 
@@ -133,7 +133,7 @@ what this does and doesn't protect against.
 ## Container image
 
 `deploy/Dockerfile` bundles `git`, `kubectl`, `argocd`, and the
-Claude Code and Codex CLIs on top of the `xdlc-agent` binary (Cursor
+Claude Code and Codex CLIs on top of the `xdlc` binary (Cursor
 CLI isn't npm-installable, see the Dockerfile's comment for how to add
 it). Every one of those is a real `exec.Command` call somewhere in this
 codebase (dispatch, repos, gitops, k8sprobe, subagent), so a

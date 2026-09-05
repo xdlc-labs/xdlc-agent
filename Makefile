@@ -16,4 +16,4 @@ validate:
 	go run ./cmd/xdlc-agent validate --config config.example.yaml --gitops-dir ""
 
 build:
-	go build -o bin/xdlc-agent ./cmd/xdlc-agent
+	go build -o bin/xdlc ./cmd/xdlc-agent

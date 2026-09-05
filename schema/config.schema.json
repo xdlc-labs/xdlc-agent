@@ -134,8 +134,6 @@
       "additionalProperties": false,
       "properties": {
         "addr": { "type": "string" },
-        "api_token_env": { "type": "string" },
-        "api_viewer_token_env": { "type": "string" },
         "github_webhook_secret_env": { "type": "string" },
         "argocd_webhook_secret_env": { "type": "string" },
         "alertmanager_webhook_secret_env": { "type": "string" },

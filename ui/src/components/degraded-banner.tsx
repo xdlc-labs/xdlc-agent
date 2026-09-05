@@ -74,7 +74,7 @@ export function DegradedBanner() {
     body = "Set the operator bearer token to talk to /api/*.";
   } else if (is503) {
     title = "API token not configured on daemon";
-    body = "Export XDL_API_TOKEN (or your api_token_env) and restart the daemon.";
+    body = "Export XDLC_API_TOKEN and restart the daemon.";
   }
 
   return (
@@ -99,7 +99,7 @@ export function DegradedBanner() {
               type="password"
               value={tokenInput}
               onChange={(e) => setTokenInput(e.target.value)}
-              placeholder="XDL_API_TOKEN"
+              placeholder="XDLC_API_TOKEN"
               className="border border-border bg-card px-2 py-1 font-mono text-[12px]"
             />
             <button

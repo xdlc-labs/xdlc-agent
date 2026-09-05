@@ -1,15 +1,16 @@
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { getToken } from "@/lib/auth";
 import { eventsURL } from "@/lib/api";
 
 /**
  * Subscribe to GET /api/events SSE and invalidate console queries (issue #6).
  * Keeps slow refetchInterval as a safety net.
+ *
+ * Takes queryClient explicitly so root can call this before wrapping
+ * children in QueryClientProvider (useQueryClient would throw there).
  */
-export function useLiveEvents() {
-  const queryClient = useQueryClient();
-
+export function useLiveEvents(queryClient: QueryClient) {
   useEffect(() => {
     let es: EventSource | null = null;
     let stopped = false;

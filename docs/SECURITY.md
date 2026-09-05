@@ -6,6 +6,6 @@ Report privately via [GitHub security advisories](https://github.com/xdlc-labs/x
 
 ## Trust model (short)
 
-`xdlc-agent daemon` is privileged by design: it can push to repos, open PRs, and call your coding-agent CLI. Run it in a locked-down namespace, prefer a GitHub App with least privilege, and never put long-lived secrets in `config.yaml` (use env refs — see `config.example.yaml`).
+`xdlc daemon` is privileged by design: it can push to repos, open PRs, and call your coding-agent CLI. Run it in a locked-down namespace, prefer a GitHub App with least privilege, and never put long-lived secrets in `config.yaml` (use env refs — see `config.example.yaml`).
 
 Subagents inherit a tight env allowlist; treat CI logs and branch names as untrusted input (prompt framing already marks them UNTRUSTED).

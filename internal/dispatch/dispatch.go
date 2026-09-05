@@ -223,7 +223,14 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 	if provider == "" {
 		provider = string(subagent.ProviderClaude)
 	}
-	if d.Route == "cheapest" && len(d.Providers) > 0 {
+	if s.OperatorAgentProvider != "" {
+		provider = s.OperatorAgentProvider
+		if d.NewRunner != nil {
+			runner = d.NewRunner(provider)
+		} else {
+			runner = subagent.NewSubprocessRunner(subagent.Provider(provider), "", nil, 0, nil)
+		}
+	} else if d.Route == "cheapest" && len(d.Providers) > 0 {
 		var stats map[string]ProviderStats
 		if d.ProviderStats != nil {
 			stats = d.ProviderStats()
@@ -238,6 +245,13 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) error 
 	}
 
 	authEnv := d.Repos.AuthEnv()
+	// Console-supplied key: inject once, clear from Signal so it cannot
+	// reach audit/backlog if a later path dumps the struct.
+	if key := s.OperatorAgentKey; key != "" {
+		s.OperatorAgentKey = ""
+		envName := subagent.APIKeyEnvName(subagent.Provider(provider))
+		authEnv = append(append([]string{}, authEnv...), envName+"="+key)
+	}
 	lessons := ""
 	if d.Lessons != nil {
 		lessons = d.Lessons.ForRepo(s.Repo, 5)

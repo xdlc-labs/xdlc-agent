@@ -93,7 +93,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
-  useLiveEvents();
+  useLiveEvents(queryClient);
 
   return (
     <QueryClientProvider client={queryClient}>

@@ -3,7 +3,7 @@ version: 2
 builds:
   - id: xdlc-agent
     main: ./cmd/xdlc-agent
-    binary: xdlc-agent
+    binary: xdlc
     env:
       - CGO_ENABLED=0
     goos: [linux, darwin]

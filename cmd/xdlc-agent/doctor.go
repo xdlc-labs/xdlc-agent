@@ -28,7 +28,7 @@ func doctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check PATH binaries, tokens, and optional gate reachability",
-		Long: `Diagnose a local xdlc-agent install before daemon start.
+		Long: `Diagnose a local xdlc install before daemon start.
 
 Checks git / agent CLI on PATH, token env presence, config validation,
 and (unless --skip-network) optional Prometheus / reachability probes.
@@ -127,11 +127,7 @@ Exit 1 when any required check fails.`,
 			hasPAT := os.Getenv("GITHUB_TOKEN") != ""
 			check("GitHub auth env", hasApp || hasPAT, "GITHUB_TOKEN or GitHub App (GITHUB_APP_ID / config github.app_id)")
 
-			apiEnv := cfg.Server.APITokenEnv
-			if apiEnv == "" {
-				apiEnv = "XDL_API_TOKEN"
-			}
-			check(apiEnv+" set", os.Getenv(apiEnv) != "", "required for /api/* console")
+			check("XDLC_API_TOKEN set", os.Getenv("XDLC_API_TOKEN") != "", "required for /api/* console")
 
 			if cfg.Server.RequireWebhookSecret {
 				for _, envName := range []string{
