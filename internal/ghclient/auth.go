@@ -19,8 +19,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xdlc-labs/xdlc-agent/internal/config"
 	"github.com/google/go-github/v90/github"
+	"github.com/xdlc-labs/xdlc-agent/internal/config"
 	"golang.org/x/oauth2"
 )
 

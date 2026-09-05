@@ -130,10 +130,20 @@ export function AppSidebar() {
         >
           {theme === "dark" ? "light" : "dark"}
         </button>
-        <a href="#" className="font-mono text-[11px] text-muted-foreground hover:text-primary">
+        <a
+          href="https://github.com/xdlc-labs/xdlc-agent/blob/main/docs/architecture.md"
+          target="_blank"
+          rel="noreferrer"
+          className="font-mono text-[11px] text-muted-foreground hover:text-primary"
+        >
           {t("header.docs")}
         </a>
-        <a href="#" className="font-mono text-[11px] text-muted-foreground hover:text-primary">
+        <a
+          href="https://github.com/xdlc-labs/xdlc-agent"
+          target="_blank"
+          rel="noreferrer"
+          className="font-mono text-[11px] text-muted-foreground hover:text-primary"
+        >
           {t("header.github")}
         </a>
       </div>

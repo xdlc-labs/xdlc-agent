@@ -43,8 +43,8 @@ type Dispatcher struct {
 	// CreatePR opens a PR when FindPR finds none after a pr-mode Fix.
 	// Optional — if nil and no PR exists, Fix only logs a warning.
 	CreatePR func(ctx context.Context, ownerRepo, head, base, title, body string) (*PRRef, error)
-	Log     *slog.Logger
-	Metrics *otel.Metrics // optional
+	Log      *slog.Logger
+	Metrics  *otel.Metrics // optional
 	// FixMode is "direct" (or empty) vs "pr" — passed to subagent.FixPrompt.
 	FixMode string
 	// Provider routing (v2): Route "cheapest" picks among Providers.

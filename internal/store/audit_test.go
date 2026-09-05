@@ -73,11 +73,11 @@ func TestAppendUniqueKeysUnderConcurrency(t *testing.T) {
 	const n = 50
 	errCh := make(chan error, n)
 	for i := 0; i < n; i++ {
-		go func(i int) {
+		go func() {
 			errCh <- s.Append(Record{
 				At: time.Now().UTC(), Repo: "svc", Action: "fix", Status: StatusOK,
 			})
-		}(i)
+		}()
 	}
 	for i := 0; i < n; i++ {
 		if err := <-errCh; err != nil {
