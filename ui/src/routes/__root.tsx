@@ -9,6 +9,7 @@ import {
 
 import { AppSidebar, AppTopBar } from "@/components/app-header";
 import { DegradedBanner } from "@/components/degraded-banner";
+import { useLiveEvents } from "@/lib/live-events";
 
 function NotFoundComponent() {
   return (
@@ -92,6 +93,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  useLiveEvents();
 
   return (
     <QueryClientProvider client={queryClient}>

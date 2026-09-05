@@ -19,6 +19,7 @@ import (
 
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
+	"github.com/xdlc-labs/xdlc-agent/internal/promote"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
 	"github.com/xdlc-labs/xdlc-agent/internal/store"
 )
@@ -48,6 +49,8 @@ type Server struct {
 	// is "owner/name"; number is the PR number. nil → snapshot-only
 	// evidence from the audit store (legacy 2.8 behavior).
 	PRStatus func(ctx context.Context, githubRepo string, number int) (PRLiveStatus, error)
+	// RepoDir returns the local clone path for a short repo name (issue #8 tags).
+	RepoDir func(name string) string
 }
 
 // PRLiveStatus is the live GitHub view of a Fix PR (issue #14).
@@ -67,8 +70,10 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	mux.Handle("GET /api/history", s.requireAuth(http.HandlerFunc(s.handleHistory)))
 	mux.Handle("GET /api/backlog", s.requireAuth(http.HandlerFunc(s.handleBacklog)))
 	mux.Handle("GET /api/repos", s.requireAuth(http.HandlerFunc(s.handleRepos)))
+	mux.Handle("GET /api/repos/{id}", s.requireAuth(http.HandlerFunc(s.handleRepo)))
 	mux.Handle("GET /api/prs", s.requireAuth(http.HandlerFunc(s.handlePRs)))
 	mux.Handle("GET /api/kpis", s.requireAuth(http.HandlerFunc(s.handleKPIs)))
+	mux.Handle("GET /api/events", s.requireAuth(http.HandlerFunc(s.handleEvents)))
 	mux.Handle("POST /api/actions/fix", s.requireOperator(http.HandlerFunc(s.handleActionFix)))
 	mux.Handle("POST /api/actions/promote", s.requireOperator(http.HandlerFunc(s.handleActionPromote)))
 	mux.Handle("POST /api/actions/revert", s.requireOperator(http.HandlerFunc(s.handleActionRevert)))
@@ -90,6 +95,10 @@ func tokenMatch(got, want string) bool {
 // matches. Bearer tokens are checked first (cheap, no cookie parsing).
 func (s *Server) authenticate(r *http.Request) (role string, ok bool) {
 	got := bearerToken(r)
+	if got == "" {
+		// EventSource cannot set Authorization; allow ?access_token= for SSE (#6).
+		got = r.URL.Query().Get("access_token")
+	}
 	if tokenMatch(got, s.Token) {
 		return "operator", true
 	}
@@ -261,19 +270,16 @@ func (s *Server) handleBacklog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	records, err := s.Audit.All()
+	var records []store.Record
+	var err error
+	if repo := r.URL.Query().Get("repo"); repo != "" {
+		records, err = s.Audit.Since(repo, time.Time{})
+	} else {
+		records, err = s.Audit.All()
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	if repo := r.URL.Query().Get("repo"); repo != "" {
-		filtered := records[:0:0]
-		for _, rec := range records {
-			if rec.Repo == repo {
-				filtered = append(filtered, rec)
-			}
-		}
-		records = filtered
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].At.After(records[j].At) })
 	limit := 100
@@ -300,6 +306,110 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].At.After(records[j].At) })
 	writeJSON(w, map[string]any{"repos": s.buildRepos(records)})
+}
+
+// handleRepo is the per-repo drill-down (issue #8): repo row + timeline.
+func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "repo id required", http.StatusBadRequest)
+		return
+	}
+	found := false
+	for _, repo := range s.Cfg.Repos {
+		if repo.Name == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "unknown repo", http.StatusNotFound)
+		return
+	}
+	records, err := s.Audit.Since(id, time.Time{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].At.After(records[j].At) })
+	repos := s.buildRepos(records)
+	var repo map[string]any
+	for _, row := range repos {
+		if row["id"] == id {
+			repo = row
+			break
+		}
+	}
+	if repo == nil {
+		// No audit yet — still return config-backed row from full build.
+		all, _ := s.Audit.All()
+		for _, row := range s.buildRepos(all) {
+			if row["id"] == id {
+				repo = row
+				break
+			}
+		}
+	}
+	limit := 50
+	if len(records) > limit {
+		records = records[:limit]
+	}
+	events := make([]map[string]any, 0, len(records))
+	for _, rec := range records {
+		events = append(events, recordToEvent(rec))
+	}
+	writeJSON(w, map[string]any{"repo": repo, "timeline": events})
+}
+
+// handleEvents streams audit appends as text/event-stream (issue #6).
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	var after uint64
+	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
+		if n, err := strconv.ParseUint(raw, 10, 64); err == nil {
+			after = n
+		}
+	}
+	for _, rec := range s.Audit.ReplaySinceSeq(after) {
+		writeSSE(w, rec)
+		flusher.Flush()
+	}
+
+	ch, unsub := s.Audit.Subscribe()
+	defer unsub()
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case rec, ok := <-ch:
+			if !ok {
+				return
+			}
+			if rec.Seq <= after {
+				continue
+			}
+			writeSSE(w, rec)
+			flusher.Flush()
+			after = rec.Seq
+		}
+	}
+}
+
+func writeSSE(w http.ResponseWriter, rec store.Record) {
+	payload, err := json.Marshal(recordToEvent(rec))
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", rec.Seq, payload)
 }
 
 // handlePRs is the Fix-PR work queue: every fix_mode: pr
@@ -480,14 +590,29 @@ func recordToEvent(r store.Record) map[string]any {
 		"ok":       ok,
 		"evidence": ev,
 		"url":      url,
+		"chain_id": r.ChainID,
+		"seq":      r.Seq,
 	}
 }
 
 func (s *Server) buildRepos(records []store.Record) []map[string]any {
 	latest := map[string]store.Record{}
+	lastPromote := map[string]string{}
+	lastRevert := map[string]string{}
 	for _, r := range records {
 		if _, ok := latest[r.Repo]; !ok {
 			latest[r.Repo] = r
+		}
+		ts := r.At.UTC().Format("2006-01-02 15:04:05Z")
+		if r.Action == "promote" {
+			if _, ok := lastPromote[r.Repo]; !ok {
+				lastPromote[r.Repo] = ts
+			}
+		}
+		if r.Action == "revert" {
+			if _, ok := lastRevert[r.Repo]; !ok {
+				lastRevert[r.Repo] = ts
+			}
 		}
 	}
 	out := make([]map[string]any, 0, len(s.Cfg.Repos))
@@ -513,6 +638,23 @@ func (s *Server) buildRepos(records []store.Record) []map[string]any {
 		if app == "" {
 			app = s.Cfg.Gates.DevSmoke.ArgoCDApp
 		}
+		devTag, prodTag := "—", "—"
+		if s.RepoDir != nil {
+			dir := s.RepoDir(repo.Name)
+			if t, err := promote.ReadDevTag(dir, repo.Name); err == nil && t != "" {
+				devTag = t
+			}
+			if t, err := promote.ReadProdTag(dir, repo.Name); err == nil && t != "" {
+				prodTag = t
+			}
+		}
+		lp, lr := "—", "—"
+		if v, ok := lastPromote[repo.Name]; ok {
+			lp = v
+		}
+		if v, ok := lastRevert[repo.Name]; ok {
+			lr = v
+		}
 		out = append(out, map[string]any{
 			"id":             repo.Name,
 			"name":           repo.GitHub,
@@ -521,14 +663,13 @@ func (s *Server) buildRepos(records []store.Record) []map[string]any {
 			"lastGateStatus": lastGateStatus,
 			"lastAction":     lastAction,
 			"lastActionAt":   lastActionAt,
-			// ponytail: image tags live in gitops yaml; wire later if UI needs them
-			"devTag":      "—",
-			"prodTag":     "—",
-			"health":      health,
-			"cloneStatus": "repos/" + repo.Name,
-			"lastPromote": "—",
-			"lastRevert":  "—",
-			"argocdApp":   app,
+			"devTag":         devTag,
+			"prodTag":        prodTag,
+			"health":         health,
+			"cloneStatus":    "repos/" + repo.Name,
+			"lastPromote":    lp,
+			"lastRevert":     lr,
+			"argocdApp":      app,
 			"sloQueries": []map[string]string{
 				{"label": "p95", "query": s.Cfg.Gates.ProdHealth.P95Query},
 				{"label": "error rate", "query": s.Cfg.Gates.ProdHealth.ErrorRateQuery},

@@ -111,3 +111,46 @@ func TestActionsSinceSkipsFailed(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestSinceFiltersByRepo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	now := time.Now().UTC()
+	for i := 0; i < 20; i++ {
+		_ = s.Append(Record{At: now, Repo: "noise", Action: "fix", Status: StatusOK})
+	}
+	_ = s.Append(Record{At: now, Repo: "target", Action: "promote", Status: StatusOK})
+	got, err := s.Since("target", now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Repo != "target" || got[0].Action != "promote" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestSubscribeReceivesAppend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	ch, unsub := s.Subscribe()
+	defer unsub()
+	go func() {
+		_ = s.Append(Record{At: time.Now().UTC(), Repo: "svc", Action: "fix", Status: StatusOK})
+	}()
+	select {
+	case r := <-ch:
+		if r.Repo != "svc" || r.Seq == 0 {
+			t.Fatalf("%+v", r)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for SSE fan-out")
+	}
+}

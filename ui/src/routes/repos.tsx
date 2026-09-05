@@ -1,9 +1,7 @@
-import { useCallback, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { fetchOverview, type Repo } from "@/lib/api";
+import { fetchOverview } from "@/lib/api";
 import { PageHeader, StatusTag, ActionTag } from "@/components/status";
-import { Dialog } from "@/components/dialog";
 import { EmptyState, QueryError, Skeleton } from "@/components/query-state";
 
 export const Route = createFileRoute("/repos")({
@@ -20,18 +18,17 @@ const healthTone = {
 } as const;
 
 function Repos() {
+  const navigate = useNavigate();
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ["overview"],
     queryFn: fetchOverview,
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
   });
   const repos = data?.repos ?? [];
-  const [open, setOpen] = useState<Repo | null>(null);
-  const close = useCallback(() => setOpen(null), []);
 
   return (
     <div>
-      <PageHeader title="repos" sub="Services the daemon watches. Select a row for clone state and SLO queries." />
+      <PageHeader title="repos" sub="Services the daemon watches. Open a row for timeline drill-down." />
 
       {isPending ? <Skeleton rows={5} /> : null}
       {isError ? (
@@ -44,7 +41,7 @@ function Repos() {
         <EmptyState>No repos in config — check config.yaml.</EmptyState>
       ) : null}
       {!isPending && !isError && repos.length > 0 ? (
-      <div className="overflow-x-auto px-6 py-6">
+        <div className="overflow-x-auto px-6 py-6">
           <table className="w-full min-w-[900px] border border-border bg-card text-left">
             <thead>
               <tr className="border-b border-border font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -62,18 +59,27 @@ function Repos() {
                 <tr
                   key={r.id}
                   tabIndex={0}
-                  role="button"
-                  aria-label={`Open details for ${r.name}`}
-                  onClick={() => setOpen(r)}
+                  role="link"
+                  aria-label={`Open timeline for ${r.name}`}
+                  onClick={() => void navigate({ to: "/repos/$id", params: { id: r.id } })}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      setOpen(r);
+                      void navigate({ to: "/repos/$id", params: { id: r.id } });
                     }
                   }}
                   className="cursor-pointer border-b border-border last:border-0 hover:bg-surface focus-visible:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
                 >
-                  <td className="px-4 py-3 text-foreground">{r.name}</td>
+                  <td className="px-4 py-3 text-foreground">
+                    <Link
+                      to="/repos/$id"
+                      params={{ id: r.id }}
+                      className="text-primary hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {r.name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3 text-muted-foreground">{r.branch}</td>
                   <td className="px-4 py-3">
                     <span className="mr-2 text-muted-foreground">{r.lastGate}</span>
@@ -92,38 +98,8 @@ function Repos() {
               ))}
             </tbody>
           </table>
-      </div>
-      ) : null}
-
-      <Dialog open={open !== null} onClose={close} title={open?.name ?? ""} variant="drawer">
-        <dl className="space-y-3 px-5 py-4 font-mono text-[11px]">
-          {[
-            ["clone status", open?.cloneStatus],
-            ["argocd apps", open?.argocdApp],
-            ["last promote", open?.lastPromote],
-            ["last revert", open?.lastRevert],
-            ["dev / prod tag", open ? `${open.devTag} / ${open.prodTag}` : undefined],
-          ].map(([k, v]) => (
-            <div key={k}>
-              <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">{k}</dt>
-              <dd className="mt-0.5 text-foreground">{v}</dd>
-            </div>
-          ))}
-        </dl>
-        <div className="border-t border-border px-5 py-4">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            SLO queries
-          </div>
-          {open?.sloQueries?.map((q) => (
-            <div key={q.label} className="mb-3">
-              <div className="font-mono text-[11px] text-primary">{q.label}</div>
-              <pre className="mt-1 whitespace-pre-wrap break-all border border-border bg-surface p-2 font-mono text-[11px] text-muted-foreground">
-                {q.query}
-              </pre>
-            </div>
-          ))}
         </div>
-      </Dialog>
+      ) : null}
     </div>
   );
 }

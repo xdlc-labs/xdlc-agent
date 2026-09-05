@@ -39,6 +39,8 @@ export interface Event {
   ok: boolean;
   evidence: string;
   url?: string;
+  chain_id?: string;
+  seq?: number;
 }
 
 export interface Gate {
@@ -160,6 +162,15 @@ export async function fetchOverview(): Promise<Overview> {
 export async function fetchHistory(limit = 200): Promise<Event[]> {
   const data = await getJSON<{ events: Event[] }>(`/api/history?limit=${limit}`);
   return data.events ?? [];
+}
+
+export async function fetchRepo(id: string): Promise<{ repo: Repo; timeline: Event[] }> {
+  return getJSON<{ repo: Repo; timeline: Event[] }>(`/api/repos/${encodeURIComponent(id)}`);
+}
+
+/** Absolute SSE URL for /api/events (issue #6). */
+export function eventsURL(): string {
+  return "/api/events";
 }
 
 export async function fetchBacklog(): Promise<string> {

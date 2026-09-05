@@ -4,10 +4,12 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/otel"
@@ -17,7 +19,10 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const bucket = "history"
+const (
+	bucket     = "history"
+	bucketRepo = "by_repo"
+)
 
 // Status values for Record.Status.
 const (
@@ -40,6 +45,8 @@ type Record struct {
 	AgentProvider string         `json:"agent_provider,omitempty"`
 	ChainID       string         `json:"chain_id,omitempty"`
 	Evidence      map[string]any `json:"evidence"`
+	// Seq is the bbolt sequence id (set on Append / Since reads). Used as SSE id.
+	Seq uint64 `json:"seq,omitempty"`
 }
 
 // Succeeded reports whether the dispatch completed without error.
@@ -57,7 +64,14 @@ type AuditStore struct {
 	// observability/prometheus/rules/prod-health.yaml alerts on. Optional;
 	// callers set it after Open (see cmd/xdlc-agent/main.go).
 	Metrics *otel.Metrics
+
+	hubMu   sync.Mutex
+	subs    map[chan Record]struct{}
+	recent  []Record // ring for SSE Last-Event-ID replay
+	recentN int
 }
+
+const recentCap = 256
 
 // Open opens (creating if needed) the audit store at path for reading
 // and writing — takes bbolt's exclusive file lock, so only one process
@@ -68,14 +82,48 @@ func Open(path string) (*AuditStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
+	s := &AuditStore{db: db, subs: map[chan Record]struct{}{}, recentN: recentCap}
 	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(bucket))
-		return err
+		if _, err := tx.CreateBucketIfNotExists([]byte(bucket)); err != nil {
+			return err
+		}
+		if _, err := tx.CreateBucketIfNotExists([]byte(bucketRepo)); err != nil {
+			return err
+		}
+		return rebuildRepoIndex(tx)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("store: init bucket: %w", err)
+		_ = db.Close()
+		return nil, fmt.Errorf("store: init: %w", err)
 	}
-	return &AuditStore{db: db}, nil
+	return s, nil
+}
+
+// rebuildRepoIndex fills by_repo from history when empty (upgrade path).
+func rebuildRepoIndex(tx *bolt.Tx) error {
+	rb := tx.Bucket([]byte(bucketRepo))
+	if rb.Stats().KeyN > 0 {
+		return nil
+	}
+	hb := tx.Bucket([]byte(bucket))
+	return hb.ForEach(func(k, v []byte) error {
+		var r Record
+		if err := json.Unmarshal(v, &r); err != nil {
+			return err
+		}
+		if r.Repo == "" || len(k) != 8 {
+			return nil
+		}
+		return rb.Put(repoKey(r.Repo, binary.BigEndian.Uint64(k)), v)
+	})
+}
+
+func repoKey(repo string, seq uint64) []byte {
+	k := make([]byte, len(repo)+1+8)
+	copy(k, repo)
+	k[len(repo)] = 0
+	binary.BigEndian.PutUint64(k[len(repo)+1:], seq)
+	return k
 }
 
 // OpenReadOnly opens the store for reads only, using bbolt's shared
@@ -88,7 +136,7 @@ func OpenReadOnly(path string) (*AuditStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s read-only: %w", path, err)
 	}
-	return &AuditStore{db: db}, nil
+	return &AuditStore{db: db, subs: map[chan Record]struct{}{}, recentN: recentCap}, nil
 }
 
 // Close releases the store's file lock.
@@ -96,23 +144,42 @@ func (s *AuditStore) Close() error { return s.db.Close() }
 
 // Append writes one Record. Keys are bbolt NextSequence values (8-byte
 // big-endian) so concurrent per-repo workers cannot collide the way
-// RFC3339Nano timestamps can on a coarse clock.
+// RFC3339Nano timestamps can on a coarse clock. Also indexes by repo
+// (issue #16) and fans out to SSE subscribers (issue #6).
 func (s *AuditStore) Append(r Record) error {
+	var seq uint64
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucket))
 		id, err := b.NextSequence()
 		if err != nil {
 			return err
 		}
+		seq = id
+		r.Seq = id
 		key := make([]byte, 8)
 		binary.BigEndian.PutUint64(key, id)
 		val, err := json.Marshal(r)
 		if err != nil {
 			return err
 		}
-		return b.Put(key, val)
+		if err := b.Put(key, val); err != nil {
+			return err
+		}
+		rb := tx.Bucket([]byte(bucketRepo))
+		if rb == nil {
+			var cerr error
+			rb, cerr = tx.CreateBucketIfNotExists([]byte(bucketRepo))
+			if cerr != nil {
+				return cerr
+			}
+		}
+		return rb.Put(repoKey(r.Repo, id), val)
 	})
 	s.countError("append", err)
+	if err == nil {
+		r.Seq = seq
+		s.publish(r)
+	}
 	return err
 }
 
@@ -126,12 +193,61 @@ func (s *AuditStore) All() ([]Record, error) {
 			if err := json.Unmarshal(v, &r); err != nil {
 				return err
 			}
+			if len(k) == 8 {
+				r.Seq = binary.BigEndian.Uint64(k)
+			}
 			out = append(out, r)
 			return nil
 		})
 	})
 	s.countError("all", err)
 	return out, err
+}
+
+// Since returns records for repo with At >= since, chronological by seq.
+// Uses the by_repo secondary index (issue #16) — sub-linear in other repos.
+func (s *AuditStore) Since(repo string, since time.Time) ([]Record, error) {
+	var out []Record
+	var usedIndex bool
+	prefix := append([]byte(repo), 0)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		rb := tx.Bucket([]byte(bucketRepo))
+		if rb == nil {
+			return nil
+		}
+		usedIndex = true
+		c := rb.Cursor()
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			var r Record
+			if err := json.Unmarshal(v, &r); err != nil {
+				return err
+			}
+			if r.At.Before(since) {
+				continue
+			}
+			if len(k) >= 8 {
+				r.Seq = binary.BigEndian.Uint64(k[len(k)-8:])
+			}
+			out = append(out, r)
+		}
+		return nil
+	})
+	if err != nil {
+		s.countError("since", err)
+		return nil, err
+	}
+	if !usedIndex {
+		all, aerr := s.All()
+		if aerr != nil {
+			return nil, aerr
+		}
+		for _, r := range all {
+			if r.Repo == repo && !r.At.Before(since) {
+				out = append(out, r)
+			}
+		}
+	}
+	return out, nil
 }
 
 // countError increments StoreErrors (labeled by op) when err is non-nil
@@ -146,18 +262,64 @@ func (s *AuditStore) countError(op string, err error) {
 // ActionsSince returns chronological successful action strings for repo
 // with At >= since. Failed dispatches are skipped so flap detection
 // does not treat a crashed Fix as a completed cycle.
-// ponytail: scans All(); add a secondary index if audit volume hurts flap checks.
 func (s *AuditStore) ActionsSince(repo string, since time.Time) ([]string, error) {
-	all, err := s.All()
+	recs, err := s.Since(repo, since)
 	if err != nil {
 		return nil, err
 	}
 	var out []string
-	for _, r := range all {
-		if r.Repo != repo || r.At.Before(since) || !r.Succeeded() {
+	for _, r := range recs {
+		if !r.Succeeded() {
 			continue
 		}
 		out = append(out, r.Action)
 	}
 	return out, nil
+}
+
+// Subscribe returns a channel of new Records and an unsubscribe func (issue #6).
+func (s *AuditStore) Subscribe() (<-chan Record, func()) {
+	ch := make(chan Record, 16)
+	s.hubMu.Lock()
+	if s.subs == nil {
+		s.subs = map[chan Record]struct{}{}
+	}
+	s.subs[ch] = struct{}{}
+	s.hubMu.Unlock()
+	unsub := func() {
+		s.hubMu.Lock()
+		delete(s.subs, ch)
+		s.hubMu.Unlock()
+		close(ch)
+	}
+	return ch, unsub
+}
+
+// ReplaySinceSeq returns buffered recent records with Seq > after (SSE reconnect).
+func (s *AuditStore) ReplaySinceSeq(after uint64) []Record {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	var out []Record
+	for _, r := range s.recent {
+		if r.Seq > after {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (s *AuditStore) publish(r Record) {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	s.recent = append(s.recent, r)
+	if len(s.recent) > s.recentN && s.recentN > 0 {
+		s.recent = s.recent[len(s.recent)-s.recentN:]
+	}
+	for ch := range s.subs {
+		select {
+		case ch <- r:
+		default:
+			// slow subscriber — drop
+		}
+	}
 }

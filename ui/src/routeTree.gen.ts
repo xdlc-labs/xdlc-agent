@@ -15,6 +15,7 @@ import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as GatesRouteImport } from './routes/gates'
 import { Route as ReposRouteImport } from './routes/repos'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ReposIdRouteImport } from './routes/repos.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -46,22 +47,29 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReposIdRoute = ReposIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ReposRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/actions': typeof ActionsRoute
   '/activity': typeof ActivityRoute
   '/gates': typeof GatesRoute
-  '/repos': typeof ReposRoute
+  '/repos': typeof ReposRouteWithChildren
   '/settings': typeof SettingsRoute
+  '/repos/$id': typeof ReposIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/actions': typeof ActionsRoute
   '/activity': typeof ActivityRoute
   '/gates': typeof GatesRoute
-  '/repos': typeof ReposRoute
+  '/repos': typeof ReposRouteWithChildren
   '/settings': typeof SettingsRoute
+  '/repos/$id': typeof ReposIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -69,14 +77,29 @@ export interface FileRoutesById {
   '/actions': typeof ActionsRoute
   '/activity': typeof ActivityRoute
   '/gates': typeof GatesRoute
-  '/repos': typeof ReposRoute
+  '/repos': typeof ReposRouteWithChildren
   '/settings': typeof SettingsRoute
+  '/repos/$id': typeof ReposIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/actions' | '/activity' | '/gates' | '/repos' | '/settings'
+  fullPaths:
+    | '/'
+    | '/actions'
+    | '/activity'
+    | '/gates'
+    | '/repos'
+    | '/settings'
+    | '/repos/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/actions' | '/activity' | '/gates' | '/repos' | '/settings'
+  to:
+    | '/'
+    | '/actions'
+    | '/activity'
+    | '/gates'
+    | '/repos'
+    | '/settings'
+    | '/repos/$id'
   id:
     | '__root__'
     | '/'
@@ -85,6 +108,7 @@ export interface FileRouteTypes {
     | '/gates'
     | '/repos'
     | '/settings'
+    | '/repos/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -92,7 +116,7 @@ export interface RootRouteChildren {
   ActionsRoute: typeof ActionsRoute
   ActivityRoute: typeof ActivityRoute
   GatesRoute: typeof GatesRoute
-  ReposRoute: typeof ReposRoute
+  ReposRoute: typeof ReposRouteWithChildren
   SettingsRoute: typeof SettingsRoute
 }
 
@@ -140,15 +164,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/repos/$id': {
+      id: '/repos/$id'
+      path: '/$id'
+      fullPath: '/repos/$id'
+      preLoaderRoute: typeof ReposIdRouteImport
+      parentRoute: typeof ReposRoute
+    }
   }
 }
+
+interface ReposRouteChildren {
+  ReposIdRoute: typeof ReposIdRoute
+}
+
+const ReposRouteChildren: ReposRouteChildren = {
+  ReposIdRoute: ReposIdRoute,
+}
+
+const ReposRouteWithChildren = ReposRoute._addFileChildren(ReposRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ActionsRoute: ActionsRoute,
   ActivityRoute: ActivityRoute,
   GatesRoute: GatesRoute,
-  ReposRoute: ReposRoute,
+  ReposRoute: ReposRouteWithChildren,
   SettingsRoute: SettingsRoute,
 }
 export const routeTree = rootRouteImport

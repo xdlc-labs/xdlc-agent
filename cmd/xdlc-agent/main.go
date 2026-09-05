@@ -398,6 +398,7 @@ func daemonCmd() *cobra.Command {
 						Title: pr.Title, CI: pr.CI, Reviewer: pr.Reviewer,
 					}, nil
 				},
+				RepoDir: repoMgr.Dir,
 			}
 			if cfg.Server.OIDC.Enabled() {
 				oidcAuth, err := setupOIDC(cmd.Context(), cfg.Server.OIDC)

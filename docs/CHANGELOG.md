@@ -21,6 +21,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - LESSONS.md inject into FixPrompt across runs (#19)
 - Prod-health poller: bounded parallel Checks (default 8) + slow-tick warn (#10)
 - Fleet `patient_zero`: enqueue Fix on upstream when leaf suppressed root_cause (#4)
+- Store `Since(repo,t)` via `by_repo` index; flap path no longer scans All (#16)
+- Console `/repos/$id` timeline + real dev/prod tags / last promote/revert (#8)
+- `GET /api/events` SSE fan-out on audit Append; console live invalidate (#6)
 
 ### Changed
 

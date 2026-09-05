@@ -20,19 +20,27 @@ var tagLine = regexp.MustCompile(`(?m)^(\s*tag:\s*)(["']?)([^"'\n]+)(["']?)\s*$`
 // ReadProdTag returns image.tag from gitops/values/prod/<service>.yaml
 // in repoDir. Empty string + nil if the file is missing (no gitops/).
 func ReadProdTag(repoDir, service string) (string, error) {
-	prodPath := filepath.Join(repoDir, "gitops", "values", "prod", service+".yaml")
-	prodRaw, err := os.ReadFile(prodPath) //nolint:gosec // path under agent-owned repo clone
+	return readTag(filepath.Join(repoDir, "gitops", "values", "prod", service+".yaml"))
+}
+
+// ReadDevTag returns image.tag from gitops/values/dev/<service>.yaml.
+func ReadDevTag(repoDir, service string) (string, error) {
+	return readTag(filepath.Join(repoDir, "gitops", "values", "dev", service+".yaml"))
+}
+
+func readTag(path string) (string, error) {
+	raw, err := os.ReadFile(path) //nolint:gosec // path under agent-owned repo clone
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
-		return "", fmt.Errorf("promote: read prod values: %w", err)
+		return "", fmt.Errorf("promote: read values: %w", err)
 	}
-	prodTag := tagLine.FindSubmatch(prodRaw)
-	if prodTag == nil {
-		return "", fmt.Errorf("promote: no tag: line in %s", prodPath)
+	m := tagLine.FindSubmatch(raw)
+	if m == nil {
+		return "", fmt.Errorf("promote: no tag: line in %s", path)
 	}
-	return string(prodTag[3]), nil
+	return string(m[3]), nil
 }
 
 // CarryProdTag copies image.tag from gitops/values/dev/<service>.yaml
