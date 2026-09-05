@@ -3,7 +3,7 @@ version: "2"
 # golint is deprecated/archived by the Go team — this project uses
 # golangci-lint instead (bundles staticcheck, govet, revive as golint's
 # actual successor, gosec, and more), kept current via CI pinning the
-# same version golangci-lint-action installs. `make lint` / CONTRIBUTING.md
+# same version golangci-lint-action installs. `make lint` / docs/CONTRIBUTING.md
 # run this locally with the same config CI enforces.
 run:
   relative-path-mode: gomod

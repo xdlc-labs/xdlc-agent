@@ -3,7 +3,7 @@
 **xdlc** is the product; **`xdlc-agent`** is the daemon binary that
 runs the loop.
 
-![One loop, three gates, light theme: xdlc-agent → GitHub → DEV → promote → PRODUCTION](assets/architecture.png)
+![One loop, three gates, light theme: xdlc-agent → GitHub → DEV → promote → PRODUCTION](assets/architecture.jpg)
 
 ## The loop
 
@@ -80,7 +80,7 @@ than a typed API response. `agent.binary` overrides the default binary
 name (point it at a wrapper script if you need custom flags); `agent.args`
 overrides the whole argv shape, one element must be the literal string
 `{{prompt}}`. Adding a new provider is a `providerDefaults` entry in
-`internal/subagent/runner.go`, see CONTRIBUTING.md.
+`internal/subagent/runner.go`, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 A `mode: sdk` alternative (`internal/subagent`, unimplemented) would talk
 to a provider's API directly with a hand-rolled tool loop: more control,
@@ -124,7 +124,7 @@ passed via `GIT_CONFIG_*` environment variables on the git subprocess
 common `https://token@github.com/...` URL embedding, which persists into
 `.git/config` on disk and gets echoed back verbatim in git's own error
 messages. `promote.FastForward` and `dispatch.Dispatcher.Revert` take
-the same env and apply it to their own git calls; see `SECURITY.md` for
+the same env and apply it to their own git calls; see [SECURITY.md](SECURITY.md) for
 what this does and doesn't protect against.
 
 ## Container image
