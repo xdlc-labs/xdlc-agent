@@ -25,6 +25,7 @@ transcripts) live in `xdlc-enterprise/strategy/XIRP-PLAN.md`, not here.
 | "Describe the goal" when starting a session | Optional `instructions` on Manual Fix (console dialog + `POST /api/actions/fix`), trusted-block placement, length-only in audit | [rules-and-skills.md](docs/rules-and-skills.md) |
 | Gemini as a supported agent | `gemini` provider (`GEMINI_API_KEY`, `-p --yolo`), doctor + console + demo; opt-in in the image via `--build-arg GEMINI_CLI_VERSION` | [fix-modes.md](docs/fix-modes.md) |
 | Import repos from a parent folder | `xdlc init --scan <dir>` seeds `repos:` from local checkouts with a GitHub origin | [configuration.md](docs/configuration.md) |
+| Worktree per task | `agent.worktree` (on by default): each Fix runs in its own `git worktree` on an `xdlc/<session id>` branch under `repos/.worktrees/`; the per-repo Fix cap is gone, the agent commits and xdlc pushes, failed runs keep their worktree for `keep_failed` | [fix-modes.md](docs/fix-modes.md) |
 
 ---
 
@@ -32,45 +33,13 @@ transcripts) live in `xdlc-enterprise/strategy/XIRP-PLAN.md`, not here.
 
 Ordered by value ÷ effort.
 
-### 1. Worktree per Fix (M, high)
-
-**Xirp:** "Create a separate Git worktree for each task so agents can work in parallel
-without changing the same checkout."
-
-**Today:** `internal/repos.Manager.EnsureCloned` keeps one clone per repo and runs
-`fetch` + `reset --hard origin/<branch>` when dirty. That is why the dispatcher caps at
-one Fix per repo (`repoFixSem`), and why a Fix that times out mid-edit leaves a dirty tree
-the next operation wipes.
-
-**Change:**
-
-- `repos.Manager.Worktree(ctx, repo, id) (dir, branch string, cleanup func(), err error)`
-  - path `repos/<name>/.xdlc-wt/<session id>`, branch `xdlc/<session id>`
-  - `git worktree add -b …` off `origin/<branch>` after the normal fetch; the base clone is
-    never checked out into by an agent again
-  - on failure keep the worktree for `agent.worktree.keep_failed` (default 24h) so an
-    operator can inspect the half-fix, then prune
-- `dispatch.fixInner` runs the agent in the worktree; the orchestrator pushes afterwards,
-  which also removes the last reason the agent needs credentials for the tracked branch.
-- Drop the per-repo Fix semaphore; keep `max_concurrent_fixes` as the global cap.
-- Promote / Revert stay on the base clone (they only move refs).
-
-The session id already names the run, so a worktree and its recording share one name.
-
-**Files:** `internal/repos/manager.go`, `internal/dispatch/dispatch.go`,
-`internal/subagent/prompt.go`, `internal/config/config.go`, `schema/config.schema.json`,
-`docs/architecture.md`, `docs/fix-modes.md`.
-
-**Done when:** two signals for one repo run Fixes concurrently in separate directories in
-`loop_test`; a killed Fix leaves the base clone clean; `git worktree list` is empty after a
-successful Fix.
-
-### 2. Feed past sessions into the next prompt (S, high)
+### 1. Feed past sessions into the next prompt (S, high)
 
 **Xirp:** an uploaded transcript "gives future sessions access to prior context through MCP".
 
-**Today:** `LESSONS.md` keeps one 200-character line per outcome. The sessions on disk are
-richer and unused by the agent.
+**Today:** `LESSONS.md` keeps one 200-character line per outcome, now carrying the agent's
+own verdict summary rather than just the symptom. The sessions on disk are still richer than
+that line and remain unused by the agent.
 
 **Change:** `FixPrompt` gains a `priorSessions` block after `lessons`: for the last 2–3
 sessions on this repo with the same `source`, the first ~40 lines of `diff.patch` plus
@@ -79,7 +48,7 @@ status. Cap 8 KB, trusted block. Optionally a `summary.md` written by a cheap se
 
 **Measure before keeping:** Fix success rate on the demo repo, before and after.
 
-### 3. Live Fix states (S, high)
+### 2. Live Fix states (S, high)
 
 **Xirp:** sessions show Working / Idle / Waiting / Finished-or-failed in a minimap.
 
@@ -97,7 +66,7 @@ status. Cap 8 KB, trusted block. Optionally a `summary.md` written by a cheap se
   opt-in (`claude -p --output-format json` prints nothing until it exits). Wire it together
   with a switch to `stream-json`, not before.
 
-### 4. Console view of a session (S, medium)
+### 3. Console view of a session (S, medium)
 
 The recordings exist but are CLI-only. Add operator-token endpoints
 (`GET /api/sessions`, `/{id}`, `/{id}/diff`, `/{id}/prompt`) and expand a `/repos/$id`
@@ -106,7 +75,7 @@ timeline row into a panel with meta, diff (reuse `doc-code.tsx`) and output tail
 Serving unscrubbed prompts over HTTP is a real exposure step, unlike writing them to a
 0600 file: gate it on the operator role and say so in `docs/SECURITY.md`.
 
-### 5. Context on demand: `xdlc mcp` (L, high)
+### 4. Context on demand: `xdlc mcp` (L, high)
 
 **Xirp:** "The agent loads detail only when needed. This avoids placing every Workspace
 document in the initial prompt."
@@ -123,10 +92,10 @@ Passed to the CLI via its own MCP config flag. The prompt then keeps only conclu
 Every tool call is appended to the session recording, so "what did it look at" stays
 answerable.
 
-### 6. Grid view of live Fixes (M, low)
+### 5. Grid view of live Fixes (M, low)
 
 **Xirp:** `Cmd+G` grid of live terminals. A read-only `/fixes` route, one card per in-flight
-Fix, output tail over SSE. Needs item 3 first.
+Fix, output tail over SSE. Needs item 2 first.
 
 ---
 
@@ -137,9 +106,10 @@ assume a human at a keyboard; xdlc runs unattended.
 
 ## Sequencing
 
-1. Item 1 first: worktrees make items 2 and 6 meaningful and remove the per-repo Fix cap.
-2. Item 2 next; it is small and reuses what already lands on disk.
-3. Item 3 only alongside the switch to a streaming provider output format.
-4. Item 5 after item 2, since `prior_sessions` is one of its tools.
+1. Item 1 first; it is small and reuses what already lands on disk. Worktrees have shipped,
+   so a prior session's diff now describes an isolated run rather than a shared clone.
+2. Item 2 only alongside the switch to a streaming provider output format.
+3. Item 4 after item 1, since `prior_sessions` is one of its tools.
+4. Item 5 needs item 2 first.
 5. Docs to touch each time: `architecture.md`, `fix-modes.md`, `sessions.md`,
    `configuration.md`, `api-reference.md`, `CHANGELOG.md`.

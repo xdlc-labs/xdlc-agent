@@ -104,18 +104,29 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	disp.Sessions = sessions
+	// Same default as the daemon, so the demo exercises the path a real
+	// install takes: the agent commits in a worktree, xdlc pushes.
+	disp.SetWorktree(true, 0)
 	// ponytail: in-process CI = go test; no GH Actions
-	disp.Reverify = func(ctx context.Context, s orchestrator.Signal) error {
+	disp.Reverify = func(ctx context.Context, s orchestrator.Signal) (map[string]any, error) {
 		if s.Source != orchestrator.SourceCI {
-			return nil
+			return nil, nil
+		}
+		// The Fix landed on origin, not in this clone — the agent worked
+		// in a worktree. Pull the pushed commit down before testing it,
+		// which is what a real CI run does when it checks the branch out.
+		if err := mgr.EnsureCloned(ctx, s.Repo); err != nil {
+			return nil, fmt.Errorf("demo reverify: sync clone: %w", err)
 		}
 		cmd := exec.CommandContext(ctx, "go", "test", "./...")
 		cmd.Dir = mgr.Dir(s.Repo)
 		outb, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("go test: %w: %s", err, outb)
+			// The test output is the freshest failure there is here, so
+			// hand it back as evidence for a retry attempt to read.
+			return map[string]any{"logs": string(outb)}, fmt.Errorf("go test: %w: %s", err, outb)
 		}
-		return nil
+		return nil, nil
 	}
 
 	// ponytail: no Argo/Prom — closures stand in; Signals drive the loop

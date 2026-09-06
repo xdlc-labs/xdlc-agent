@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
 	"github.com/xdlc-labs/xdlc-agent/internal/ghclient"
@@ -40,6 +41,40 @@ type Manager struct {
 	root   string // base dir clones live under when Repo.Dir is unset
 	repos  map[string]config.Repo
 	tokens ghclient.TokenProvider // App or PAT; refreshed per git op when App
+
+	// baseMu serializes the git commands that mutate a repo's shared
+	// clone — EnsureCloned's fetch/checkout/reset, and worktree
+	// add/remove, which write the clone's .git/worktrees registry.
+	//
+	// Two Fixes for one repo now run at the same time (see Worktree), and
+	// git does not tolerate two of these running in one repository at
+	// once: they collide on .git/index.lock and on remote-tracking ref
+	// locks. This lock is deliberately narrow — it covers only those
+	// short bookkeeping commands, never the coding agent's run, so the
+	// concurrency worktrees exist to provide is preserved.
+	baseMu   sync.Mutex
+	baseLock map[string]*sync.Mutex
+
+	// live marks worktree directories belonging to a Fix that is still
+	// running, so PruneWorktrees cannot sweep one out from under it.
+	liveMu sync.Mutex
+	live   map[string]struct{}
+}
+
+// lockRepo serializes shared-clone git operations for one repo.
+func (m *Manager) lockRepo(repo string) func() {
+	m.baseMu.Lock()
+	if m.baseLock == nil {
+		m.baseLock = map[string]*sync.Mutex{}
+	}
+	mu, ok := m.baseLock[repo]
+	if !ok {
+		mu = &sync.Mutex{}
+		m.baseLock[repo] = mu
+	}
+	m.baseMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
 }
 
 // NewManager returns a Manager for cfgRepos, cloning under root by
@@ -50,7 +85,13 @@ func NewManager(root string, cfgRepos []config.Repo, tokens ghclient.TokenProvid
 	if tokens == nil {
 		tokens = ghclient.EmptyToken{}
 	}
-	m := &Manager{root: root, tokens: tokens, repos: make(map[string]config.Repo, len(cfgRepos))}
+	m := &Manager{
+		root:     root,
+		tokens:   tokens,
+		repos:    make(map[string]config.Repo, len(cfgRepos)),
+		baseLock: map[string]*sync.Mutex{},
+		live:     map[string]struct{}{},
+	}
 	for _, r := range cfgRepos {
 		m.repos[r.Name] = r
 	}
@@ -217,6 +258,7 @@ func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 	if !ok {
 		return fmt.Errorf("repos: unknown repo %q", repo)
 	}
+	defer m.lockRepo(repo)()
 	dir := m.Dir(repo)
 	branch := m.Branch(repo)
 	env := m.AuthEnv()

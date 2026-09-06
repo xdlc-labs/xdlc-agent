@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xdlc-labs/xdlc-agent/internal/backlog"
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
@@ -920,20 +921,11 @@ func mapHealth(r store.Record) string {
 	return "healthy"
 }
 
+// evidenceString renders an Activity row's evidence. It delegates to the
+// BACKLOG.md formatter so the console and the audit file never disagree
+// about how a value is shown (free text is quoted, keys are sorted).
 func evidenceString(ev map[string]any) string {
-	if len(ev) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(ev))
-	for k := range ev {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%v", k, ev[k]))
-	}
-	return strings.Join(parts, " ")
+	return backlog.FormatEvidence(ev)
 }
 
 func formatUptime(d time.Duration) string {

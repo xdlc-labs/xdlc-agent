@@ -22,7 +22,12 @@ with `escalate=*` evidence, and dispatches the Action:
 
 - `fix`: run a per-repo coding-agent subagent (`internal/subagent`) with
   the failure evidence, expecting it to commit+push a fix or leave a
-  note in `BACKLOG.md` if it can't.
+  note in `BACKLOG.md` if it can't. The agent closes with a one-line
+  JSON verdict (`xdlc_outcome`) saying which of those it did, because
+  the CLI exits 0 either way; with `agent.fix_reverify` and
+  `agent.fix_attempts` a Fix whose gate stays red sends the agent back
+  in with what it already tried and the freshest logs
+  ([Fix modes](fix-modes.md)).
 - `revert`: `git revert HEAD` on the prod branch (`main` by default) and
   push; the dev branch is realigned only when it still pointed at the
   pre-revert prod tip.
@@ -119,8 +124,10 @@ untrusted evidence block ([Rules and skills](rules-and-skills.md)).
 
 `internal/session` writes the other side: one directory per Fix holding the
 exact prompt, the agent's stdout, the diff between the pre-Fix commit and
-whatever the agent committed, and a `meta.json` carrying status, provider and
-cost. The audit store answers *whether* a Fix ran; this answers *what it did*
+whatever the agent committed, and a `meta.json` carrying status, provider,
+cost, and the agent's own verdict. A Fix that went round the retry ladder
+keeps each try (`prompt-2.txt`, `output-2.txt`) rather than overwriting the
+record of what was already attempted. The audit store answers *whether* a Fix ran; this answers *what it did*
 ([Fix sessions](sessions.md)). Recording is best-effort — a recorder failure
 logs a warning and never fails a Fix — and the session id is written into the
 audit record so the console's Activity row and the directory line up.
@@ -136,6 +143,34 @@ and the tree is clean; if dirty or diverged, `fetch` + `checkout` +
 `reset --hard origin/<branch>`. That reset is deliberate when needed:
 without it a stale local clone would drift from origin. Anything in these
 directories is agent-owned and disposable; don't hand-edit them.
+
+No agent edits that shared clone. With `agent.worktree` on (the default)
+each Fix gets its own `git worktree` under `repos/.worktrees/<repo>/<session
+id>`, on branch `xdlc/<session id>`, created from the clone's
+`origin/<branch>`. That is what makes two Fixes for one repo safe to run
+at once, and why a Fix killed mid-edit can no longer leave the shared
+clone dirty for the next operation to silently reset.
+
+The branch is created with no upstream, so the agent has nothing to push
+to: it commits, and `repos.Manager.Push` sends the branch to the tracked
+branch (or the PR branch) afterwards, non-force, so a target that moved
+under the run is refused rather than overwritten. Worktrees sit beside the
+clones rather than inside one — nested, they would read as untracked
+content and make `EnsureCloned` treat the clone as dirty every pass.
+Successful Fixes drop their worktree at once; failed ones keep it for
+`agent.worktree.keep_failed` so an operator can read the half-finished
+work, and the sweep runs at daemon start and before each new Fix on that
+repo. A worktree whose Fix is still running is never swept, however old
+its directory looks. `Promote` and `Revert` stay on the shared clone:
+they only move refs.
+
+Overlapping Fixes made one more thing necessary. `EnsureCloned` and
+`worktree add`/`remove` all write the shared clone's `.git`, and git
+refuses to run two of those in one repository at once — they collide on
+`index.lock` and on remote-tracking ref locks. `Manager` therefore holds a
+per-repo mutex across exactly those commands. It deliberately does not
+cover the agent's run, which is the part that takes minutes and the whole
+reason worktrees exist.
 
 ## Git authentication
 

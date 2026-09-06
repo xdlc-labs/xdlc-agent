@@ -12,6 +12,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Console status chip is **connecting** until overview 200, **token rejected** on 401 (was green “online” over a skeleton). Settings Save verifies `GET /api/whoami`.
 - Manual Fix / Promote / Revert audit **source** is `daemon`, not `github-actions` / Argo / Prometheus. Decide() mapping is unchanged.
 - `xdlc doctor --skip-network` warns (does not fail) when every repo has a local `dir:` and GitHub auth is unset.
+- A Fix's recorded `total_cost_usd` / token counts are now the sum of every agent run it took, not just the last one. Previously an `agent.fix_plan` Fix reported only its patch pass, hiding the diagnose pass it also paid for.
+- Evidence values containing spaces (an agent summary, a fleet escalation reason) are quoted in `BACKLOG.md` and the console Activity row, so a free-text value no longer reads as the start of the next `key=`. Both now use one formatter.
 
 ### Changed
 
@@ -21,6 +23,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Worktree per Fix** (`agent.worktree`, on by default): every Fix runs in its own `git worktree` on an `xdlc/<session id>` branch instead of the repo's shared clone. Two Fixes for one repo now run concurrently (the per-repo cap is gone; `max_concurrent_fixes` still applies), and a Fix killed mid-edit no longer leaves the shared clone dirty. The agent commits and xdlc pushes, so writing to a shared branch is no longer something the coding agent does; the push is non-force and fails loudly if the branch moved. Failed runs keep their worktree for `agent.worktree.keep_failed` (24h). Shared-clone git commands (`EnsureCloned`, worktree add/remove) are serialized per repo so overlapping Fixes cannot collide on git's index and ref locks, and a worktree belonging to a running Fix is never swept. Set `agent.worktree.enabled: false` for the old behavior ([Fix modes](fix-modes.md))
+- Fix **verdict**: each Fix prompt asks the coding agent to close with one JSON line (`xdlc_outcome`: `fixed` / `gave_up` / `needs_human`, plus a one-line summary). A `gave_up` / `needs_human` run now fails the Fix with `escalate=agent_gave_up` / `agent_needs_human` instead of being recorded as clean because the CLI exited 0. The summary reaches the Activity row (`agent_outcome`, `agent_summary`), `meta.json` and `LESSONS.md`. An agent that prints no verdict behaves exactly as before ([Fix modes](fix-modes.md))
+- `agent.fix_attempts` (default 1): when `fix_reverify` is on and the gate is still red, re-run the agent with what the last attempt reported doing, why the re-check failed, and freshly fetched logs from the run that is failing now. Stops early on a `gave_up` / `needs_human` verdict. Per-attempt session artifacts (`prompt-2.txt`, `output-2.txt`), `xdlc sessions show --attempt N`, and `xdlc_agent_fix_retries_total` ([Fix modes](fix-modes.md))
 - Fix **sessions**: every Fix records prompt, agent output and diff under `sessions/`; `xdlc sessions ls|show|prune`; `session_id` in audit + `BACKLOG.md`; `agent.sessions.*` config ([Fix sessions](sessions.md))
 - Rule sources widened: `CLAUDE.md`, `.xdlc/rules.md` and daemon-wide `agent.rules_file` join `AGENTS.md` / `.xdlc/skills/*.md`; per-file 8 KB cap instead of one tail chop; duplicates dropped; `xdlc doctor` lists what each repo contributes ([Rules and skills](rules-and-skills.md))
 - Operator instructions on Manual Fix: optional free text in the console dialog and `POST /api/actions/fix` (`instructions`, ≤ 4096 bytes); trusted block placement, length-only in audit

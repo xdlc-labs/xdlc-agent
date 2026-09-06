@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -59,6 +61,14 @@ func (s *Store) Record(repo, action string, evidence map[string]any) error {
 	return errors.Join(writeErr, closeErr)
 }
 
+// FormatEvidence renders an evidence map as sorted, space-separated
+// key=value pairs. Exported because the ops console shows the same map
+// on an Activity row: one formatter means the line an operator reads in
+// the browser matches the line in BACKLOG.md character for character.
+func FormatEvidence(evidence map[string]any) string {
+	return strings.TrimSpace(formatEvidence(evidence))
+}
+
 func formatEvidence(evidence map[string]any) string {
 	if len(evidence) == 0 {
 		return ""
@@ -71,7 +81,20 @@ func formatEvidence(evidence map[string]any) string {
 
 	out := ""
 	for _, k := range keys {
-		out += fmt.Sprintf("%s=%v ", k, evidence[k])
+		out += fmt.Sprintf("%s=%s ", k, evidenceValue(evidence[k]))
 	}
 	return out
+}
+
+// evidenceValue renders one evidence value for a single-line, space-
+// separated key=value entry. Free-text values (an agent's own summary of
+// what it changed, a fleet escalation reason) contain spaces, which would
+// otherwise read as the start of the next key. Quoting them keeps a
+// BACKLOG line splittable and readable by eye.
+func evidenceValue(v any) string {
+	text := fmt.Sprintf("%v", v)
+	if !strings.ContainsAny(text, " \t\n\r\"") {
+		return text
+	}
+	return strconv.Quote(strings.Join(strings.Fields(text), " "))
 }

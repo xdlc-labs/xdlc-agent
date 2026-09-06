@@ -287,6 +287,17 @@ type AgentConfig struct {
 	FixReverifyAttempts int `yaml:"fix_reverify_attempts"`
 	// FixReverifyInterval between polls (0 → 15s).
 	FixReverifyInterval time.Duration `yaml:"fix_reverify_interval"`
+	// FixAttempts caps how many times the coding agent runs for one
+	// failing signal. 1 (the default) is single-shot. Higher values turn
+	// Fix into a loop: after each attempt the gate is re-checked, and a
+	// still-red gate sends the agent back in knowing what it already
+	// tried, what it reported doing, and the freshest failure output.
+	//
+	// Requires FixReverify — without a gate re-check nothing can tell
+	// attempt 1 that it failed, so the ladder is clamped back to 1 with
+	// a warning. Every attempt costs another agent run; 2 is a sensible
+	// ceiling for most repos.
+	FixAttempts int `yaml:"fix_attempts"`
 	// CIRerunBeforeFix, when true (default), tries GitHub
 	// rerun-failed-jobs once per run_url before invoking the Fix agent.
 	// Set false to skip the ladder.
@@ -304,6 +315,34 @@ type AgentConfig struct {
 	// Sessions configures on-disk recording of what each Fix agent was
 	// told and what it did. See docs/sessions.md.
 	Sessions SessionsConfig `yaml:"sessions"`
+	// Worktree configures per-Fix git worktrees. See docs/fix-modes.md.
+	Worktree WorktreeConfig `yaml:"worktree"`
+}
+
+// WorktreeConfig controls whether each Fix gets its own git worktree
+// instead of sharing the repo's single clone.
+//
+// Sharing one clone forced two compromises: only one Fix per repo could
+// run at a time, and a Fix killed mid-edit left a dirty tree the next
+// operation silently hard-reset. A worktree per Fix removes both, at the
+// cost of moving the push out of the coding agent and into the daemon —
+// two worktrees cannot both have the tracked branch checked out, so the
+// agent commits on a scratch branch and xdlc pushes it.
+type WorktreeConfig struct {
+	// Enabled turns per-Fix worktrees on. Nil means on: pointer so an
+	// operator can write `enabled: false` and be distinguished from
+	// someone who never mentioned worktrees at all.
+	Enabled *bool `yaml:"enabled"`
+	// KeepFailed is how long a failed Fix's worktree survives so an
+	// operator can inspect the half-finished work. 0 → 24h. Successful
+	// Fixes have their worktree removed immediately.
+	KeepFailed time.Duration `yaml:"keep_failed"`
+}
+
+// WorktreeEnabled reports whether Fixes should run in per-Fix worktrees.
+// Absent config means yes.
+func (a AgentConfig) WorktreeEnabled() bool {
+	return a.Worktree.Enabled == nil || *a.Worktree.Enabled
 }
 
 // SessionsConfig controls the per-Fix session recorder — the prompt,

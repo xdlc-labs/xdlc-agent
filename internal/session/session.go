@@ -45,6 +45,21 @@ const (
 	FileDiff   = "diff.patch"
 )
 
+// AttemptFile returns the artifact name for one attempt of a Fix that
+// went round the reverify ladder more than once. Attempt 1 keeps the
+// bare name, so single-attempt sessions — still the common case — look
+// exactly as they always have to `xdlc sessions show` and to anyone
+// grepping the directory; attempt 2 writes prompt-2.txt / output-2.txt
+// alongside, rather than overwriting the record of what was already
+// tried.
+func AttemptFile(name string, attempt int) string {
+	if attempt <= 1 {
+		return name
+	}
+	ext := filepath.Ext(name)
+	return fmt.Sprintf("%s-%d%s", strings.TrimSuffix(name, ext), attempt, ext)
+}
+
 // Meta is the session summary written to meta.json.
 type Meta struct {
 	ID         string         `json:"id"`
@@ -65,6 +80,16 @@ type Meta struct {
 	Changed    int            `json:"changed_files,omitempty"`
 	PRURL      string         `json:"pr_url,omitempty"`
 	Cost       map[string]any `json:"cost,omitempty"`
+	// Attempts is how many Fix agent runs this session took. Absent (0)
+	// or 1 means the single-shot path; >1 means the reverify ladder
+	// re-ran the agent, and prompt-2.txt / output-2.txt exist.
+	Attempts int `json:"attempts,omitempty"`
+	// Outcome is the agent's own last verdict — "fixed", "gave_up" or
+	// "needs_human". Empty when the agent emitted no verdict line.
+	Outcome string `json:"outcome,omitempty"`
+	// Summary is the agent's one-line description of what it did, from
+	// that same verdict.
+	Summary string `json:"summary,omitempty"`
 }
 
 // Store writes and reads session directories under Root.
@@ -219,6 +244,17 @@ func (sess *Session) SetPR(url string) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	sess.meta.PRURL = url
+}
+
+// SetVerdict records the agent's own last self-report and how many
+// agent runs the Fix took. Call before Finish.
+func (sess *Session) SetVerdict(outcome, summary string, attempts int) {
+	if sess == nil {
+		return
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	sess.meta.Outcome, sess.meta.Summary, sess.meta.Attempts = outcome, summary, attempts
 }
 
 // Finish stamps the end time and rewrites meta.json.

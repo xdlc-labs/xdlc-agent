@@ -122,6 +122,15 @@
         "route": { "type": "string" },
         "route_min_success": { "type": "number" },
         "extra_env_keys": { "type": "array", "items": { "type": "string" } },
+        "fix_attempts": { "type": "integer", "minimum": 1 },
+        "worktree": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "keep_failed": { "type": "string" }
+          }
+        },
         "fix_reverify": { "type": "boolean" },
         "fix_reverify_attempts": { "type": "integer" },
         "fix_reverify_interval": { "type": "string" },

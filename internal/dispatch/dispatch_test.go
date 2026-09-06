@@ -350,8 +350,8 @@ func TestFixReverifyFailDoesNotReportOK(t *testing.T) {
 	mgr := testManager(t, workDir)
 	runner := &fakeRunner{}
 	d := New(mgr, runner, silentLogger())
-	d.Reverify = func(_ context.Context, _ orchestrator.Signal) error {
-		return errors.New("still red")
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) (map[string]any, error) {
+		return nil, errors.New("still red")
 	}
 	sig := orchestrator.Signal{
 		Repo:     "svc",
@@ -376,7 +376,7 @@ func TestFixReverifyPass(t *testing.T) {
 	mgr := testManager(t, workDir)
 	runner := &fakeRunner{}
 	d := New(mgr, runner, silentLogger())
-	d.Reverify = func(_ context.Context, _ orchestrator.Signal) error { return nil }
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) (map[string]any, error) { return nil, nil }
 	sig := orchestrator.Signal{
 		Repo:     "svc",
 		Source:   orchestrator.SourceCI,
@@ -881,5 +881,605 @@ func TestFixUsesGlobalRulesFile(t *testing.T) {
 	}
 	if !strings.Contains(runner.gotPrompt, "never touch generated files") {
 		t.Fatalf("global rules file missing from prompt:\n%s", runner.gotPrompt)
+	}
+}
+
+// scriptedRunner returns a canned output per call and records the
+// prompts it saw, so a test can assert what attempt 2 was told.
+type scriptedRunner struct {
+	outs    []string
+	errs    []error
+	prompts []string
+}
+
+func (r *scriptedRunner) Run(ctx context.Context, dir, prompt string, _ []string) (string, error) {
+	i := len(r.prompts)
+	r.prompts = append(r.prompts, prompt)
+	writeCommitT(ctx, dir, "app.txt", "attempt\n", "fix from subagent")
+	_, _ = exec.CommandContext(ctx, "git", "-C", dir, "push", "origin", "develop").CombinedOutput()
+	var out string
+	if i < len(r.outs) {
+		out = r.outs[i]
+	}
+	var err error
+	if i < len(r.errs) {
+		err = r.errs[i]
+	}
+	return out, err
+}
+
+func (r *scriptedRunner) calls() int { return len(r.prompts) }
+
+func fixSignal() orchestrator.Signal {
+	return orchestrator.Signal{
+		Repo:     "svc",
+		Source:   orchestrator.SourceCI,
+		Kind:     orchestrator.KindFail,
+		Evidence: map[string]any{},
+	}
+}
+
+// The whole point of the ladder: a first attempt that does not turn the
+// gate green sends the agent back in, and the Fix reports ok when the
+// second attempt lands.
+func TestFixRetriesUntilGateGreen(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &scriptedRunner{outs: []string{
+		`{"xdlc_outcome":"fixed","summary":"bumped the pinned version"}`,
+		`{"xdlc_outcome":"fixed","summary":"regenerated the lockfile too"}`,
+	}}
+	d := New(mgr, runner, silentLogger())
+	d.FixAttempts = 3
+	checks := 0
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) (map[string]any, error) {
+		checks++
+		if checks == 1 {
+			return map[string]any{"run_url": "https://gh/run/2", "conclusion": "failure"},
+				errors.New("gate ci still fail after 6 attempts")
+		}
+		return nil, nil
+	}
+
+	sig := fixSignal()
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if runner.calls() != 2 {
+		t.Fatalf("agent ran %d times, want 2", runner.calls())
+	}
+	if sig.Evidence["reverify"] != "pass" {
+		t.Fatalf("reverify = %v, want pass", sig.Evidence["reverify"])
+	}
+	if sig.Evidence["fix_attempts"] != 2 {
+		t.Fatalf("fix_attempts = %v, want 2", sig.Evidence["fix_attempts"])
+	}
+	if got := sig.Evidence["agent_summary"]; got != "regenerated the lockfile too" {
+		t.Fatalf("agent_summary = %v, want the last attempt's", got)
+	}
+
+	// Attempt 2 must be told what attempt 1 did and that it failed.
+	second := runner.prompts[1]
+	for _, want := range []string{
+		"Fix attempt 2 of 3",
+		"bumped the pinned version",
+		"gate ci still fail after 6 attempts",
+	} {
+		if !strings.Contains(second, want) {
+			t.Fatalf("retry prompt missing %q:\n%s", want, second)
+		}
+	}
+	if strings.Contains(runner.prompts[0], "Fix attempt") {
+		t.Fatal("first prompt must not claim to be a retry")
+	}
+}
+
+// A retry must read the run that is red now, not the one that opened the
+// Fix minutes ago.
+func TestFixRetryRefreshesLogsFromNewRun(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &scriptedRunner{}
+	d := New(mgr, runner, silentLogger())
+	d.FixAttempts = 2
+	var fetched []string
+	d.FetchLogs = func(_ context.Context, runURL string) (string, error) {
+		fetched = append(fetched, runURL)
+		return "log for " + runURL, nil
+	}
+	first := true
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) (map[string]any, error) {
+		if first {
+			first = false
+			return map[string]any{"run_url": "https://gh/run/2"}, errors.New("still red")
+		}
+		return nil, nil
+	}
+
+	sig := fixSignal()
+	sig.Evidence["run_url"] = "https://gh/run/1"
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if len(fetched) != 2 || fetched[0] != "https://gh/run/1" || fetched[1] != "https://gh/run/2" {
+		t.Fatalf("log fetches = %v, want run/1 then run/2", fetched)
+	}
+	if !strings.Contains(runner.prompts[1], "log for https://gh/run/2") {
+		t.Fatalf("retry prompt missing fresh logs:\n%s", runner.prompts[1])
+	}
+	// The original signal's evidence must not be rewritten by the retry;
+	// audit records the run that triggered the Fix.
+	if sig.Evidence["run_url"] != "https://gh/run/1" {
+		t.Fatalf("signal run_url mutated to %v", sig.Evidence["run_url"])
+	}
+}
+
+func TestFixStopsAtAttemptCeiling(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &scriptedRunner{}
+	d := New(mgr, runner, silentLogger())
+	d.FixAttempts = 2
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) (map[string]any, error) {
+		return nil, errors.New("still red")
+	}
+
+	sig := fixSignal()
+	err := d.Fix(context.Background(), sig)
+	if err == nil {
+		t.Fatal("Fix must fail when the gate never goes green")
+	}
+	if runner.calls() != 2 {
+		t.Fatalf("agent ran %d times, want the 2-attempt ceiling", runner.calls())
+	}
+	if sig.Evidence["escalate"] != "reverify_failed" {
+		t.Fatalf("escalate = %v, want reverify_failed", sig.Evidence["escalate"])
+	}
+}
+
+// An agent that says it is blocked has already answered; re-running it
+// against the same red gate only spends tokens to hear it again.
+func TestFixGaveUpVerdictStopsLadderAndFails(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &scriptedRunner{outs: []string{
+		`{"xdlc_outcome":"gave_up","summary":"the break is in the upstream image"}`,
+	}}
+	d := New(mgr, runner, silentLogger())
+	d.FixAttempts = 3
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) (map[string]any, error) {
+		t.Fatal("reverify must not run after the agent gave up")
+		return nil, nil
+	}
+
+	sig := fixSignal()
+	err := d.Fix(context.Background(), sig)
+	if err == nil {
+		t.Fatal("a gave_up verdict must not be recorded as a clean Fix")
+	}
+	if runner.calls() != 1 {
+		t.Fatalf("agent ran %d times, want 1", runner.calls())
+	}
+	if sig.Evidence["escalate"] != "agent_gave_up" {
+		t.Fatalf("escalate = %v, want agent_gave_up", sig.Evidence["escalate"])
+	}
+	if sig.Evidence["agent_outcome"] != "gave_up" {
+		t.Fatalf("agent_outcome = %v", sig.Evidence["agent_outcome"])
+	}
+	if !strings.Contains(err.Error(), "the break is in the upstream image") {
+		t.Fatalf("error should carry the agent's reason: %v", err)
+	}
+}
+
+// An agent that emits no verdict must behave exactly as before the
+// verdict existed: exit 0 plus a green gate is a successful Fix.
+func TestFixWithoutVerdictKeepsOldBehavior(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &scriptedRunner{outs: []string{"I edited two files and pushed."}}
+	d := New(mgr, runner, silentLogger())
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) (map[string]any, error) { return nil, nil }
+
+	sig := fixSignal()
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if _, ok := sig.Evidence["agent_outcome"]; ok {
+		t.Fatal("no verdict line must leave no agent_outcome in evidence")
+	}
+	if _, ok := sig.Evidence["escalate"]; ok {
+		t.Fatal("no verdict line must not escalate")
+	}
+}
+
+// Retries need a gate re-check to know the previous attempt failed.
+// Without one the ladder would re-run a Fix that already reported ok.
+func TestFixAttemptsClampedWithoutReverify(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &scriptedRunner{}
+	d := New(mgr, runner, silentLogger())
+	d.FixAttempts = 3
+
+	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if runner.calls() != 1 {
+		t.Fatalf("agent ran %d times, want 1 with no Reverify", runner.calls())
+	}
+}
+
+// Each attempt keeps its own record; attempt 1 stays at the historical
+// filenames so existing tooling is unaffected.
+func TestFixSessionRecordsEachAttempt(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &scriptedRunner{outs: []string{
+		`{"xdlc_outcome":"fixed","summary":"first try"}`,
+		`{"xdlc_outcome":"fixed","summary":"second try"}`,
+	}}
+	d := New(mgr, runner, silentLogger())
+	d.FixAttempts = 2
+	store, err := session.Open(t.TempDir(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Sessions = store
+	first := true
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) (map[string]any, error) {
+		if first {
+			first = false
+			return nil, errors.New("still red")
+		}
+		return nil, nil
+	}
+
+	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	metas, err := store.List("svc", 0)
+	if err != nil || len(metas) != 1 {
+		t.Fatalf("List: %v (%d sessions)", err, len(metas))
+	}
+	m := metas[0]
+	if m.Attempts != 2 {
+		t.Fatalf("meta.Attempts = %d, want 2", m.Attempts)
+	}
+	if m.Outcome != "fixed" || m.Summary != "second try" {
+		t.Fatalf("meta verdict = %q/%q", m.Outcome, m.Summary)
+	}
+	dir, err := store.Path(m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"prompt.txt", "output.txt", "prompt-2.txt", "output-2.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("missing session artifact %s: %v", name, err)
+		}
+	}
+}
+
+type fakeLessons struct {
+	recorded []string
+	give     string
+}
+
+func (l *fakeLessons) Record(repo, source, outcome, symptom string) error {
+	l.recorded = append(l.recorded, outcome+"|"+symptom)
+	return nil
+}
+
+func (l *fakeLessons) ForRepo(repo string, k int) string { return l.give }
+
+// The lesson a Fix leaves behind is what the *next* Fix on this repo is
+// shown. "ci reported fail" on every row taught it nothing; the agent's
+// own summary is the part worth carrying forward.
+func TestFixLessonCarriesAgentSummary(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &scriptedRunner{outs: []string{
+		`{"xdlc_outcome":"fixed","summary":"the seed data drifted from the fixture"}`,
+	}}
+	d := New(mgr, runner, silentLogger())
+	les := &fakeLessons{}
+	d.Lessons = les
+
+	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if len(les.recorded) != 1 {
+		t.Fatalf("recorded %d lessons, want 1", len(les.recorded))
+	}
+	got := les.recorded[0]
+	for _, want := range []string{"ok|", "ci reported fail", "agent=fixed", "the seed data drifted from the fixture"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("lesson %q missing %q", got, want)
+		}
+	}
+}
+
+func TestFixLessonOnFailureCarriesReason(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &scriptedRunner{outs: []string{
+		`{"xdlc_outcome":"needs_human","summary":"the migration needs a DBA to sign off"}`,
+	}}
+	d := New(mgr, runner, silentLogger())
+	les := &fakeLessons{}
+	d.Lessons = les
+
+	if err := d.Fix(context.Background(), fixSignal()); err == nil {
+		t.Fatal("needs_human must fail the Fix")
+	}
+	got := les.recorded[0]
+	for _, want := range []string{"error|", "agent=needs_human", "the migration needs a DBA to sign off"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("lesson %q missing %q", got, want)
+		}
+	}
+}
+
+// Past lessons must still reach the prompt — the retry work moved that
+// wiring, so pin it.
+func TestFixPromptStillCarriesPastLessons(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	runner := &scriptedRunner{}
+	d := New(mgr, runner, silentLogger())
+	d.Lessons = &fakeLessons{give: "- outcome=error symptom=the flake is in the seed data"}
+
+	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if !strings.Contains(runner.prompts[0], "the flake is in the seed data") {
+		t.Fatalf("prompt missing past lessons:\n%s", runner.prompts[0])
+	}
+}
+
+// A Fix that took two attempts was billed for two attempts. Reporting
+// only the last one would understate what the ladder costs.
+func TestFixCostSumsAcrossAttempts(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	const costJSON = `{"total_cost_usd":0.25,"duration_ms":1000,"usage":{"input_tokens":10,"output_tokens":20}}`
+	runner := &scriptedRunner{outs: []string{costJSON, costJSON}}
+	d := New(mgr, runner, silentLogger())
+	d.FixAttempts = 2
+	first := true
+	d.Reverify = func(_ context.Context, _ orchestrator.Signal) (map[string]any, error) {
+		if first {
+			first = false
+			return nil, errors.New("still red")
+		}
+		return nil, nil
+	}
+
+	sig := fixSignal()
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if got := sig.Evidence["total_cost_usd"]; got != 0.50 {
+		t.Fatalf("total_cost_usd = %v, want 0.50 across two attempts", got)
+	}
+	if got := sig.Evidence["output_tokens"]; got != int64(40) {
+		t.Fatalf("output_tokens = %v (%T), want 40", got, got)
+	}
+}
+
+// worktreeManager roots worktrees in a scratch dir instead of the
+// package default, so a test's worktrees land under t.TempDir().
+func worktreeManager(t *testing.T, workDir string) *repos.Manager {
+	t.Helper()
+	return repos.NewManager(t.TempDir(), []config.Repo{
+		{Name: "svc", GitHub: "org/svc", Dir: workDir, Branch: "develop"},
+	}, nil)
+}
+
+// committingRunner commits in whatever directory it is handed and never
+// pushes — the contract a worktree-mode agent is given.
+type committingRunner struct {
+	mu      sync.Mutex
+	dirs    []string
+	content string
+	out     string
+	hold    chan struct{} // when non-nil, block until closed
+}
+
+func (r *committingRunner) Run(ctx context.Context, dir, prompt string, _ []string) (string, error) {
+	r.mu.Lock()
+	r.dirs = append(r.dirs, dir)
+	r.mu.Unlock()
+	if r.hold != nil {
+		<-r.hold
+	}
+	body := r.content
+	if body == "" {
+		body = "fixed\n"
+	}
+	_ = os.WriteFile(filepath.Join(dir, "app.txt"), []byte(body), 0o600)
+	_ = exec.CommandContext(ctx, "git", "-C", dir, "config", "user.email", "t@e.c").Run()
+	_ = exec.CommandContext(ctx, "git", "-C", dir, "config", "user.name", "t").Run()
+	_ = exec.CommandContext(ctx, "git", "-C", dir, "add", ".").Run()
+	_ = exec.CommandContext(ctx, "git", "-C", dir, "commit", "-m", "fix from agent").Run()
+	return r.out, nil
+}
+
+func (r *committingRunner) seenDirs() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.dirs...)
+}
+
+func TestWorktreeFixPushesAndCleansUp(t *testing.T) {
+	bareDir, workDir := setupOrigin(t)
+	mgr := worktreeManager(t, workDir)
+	runner := &committingRunner{}
+	d := New(mgr, runner, silentLogger())
+	d.SetWorktree(true, 0)
+
+	sig := fixSignal()
+	if err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+
+	// The agent must have run somewhere other than the shared clone.
+	dirs := runner.seenDirs()
+	if len(dirs) != 1 || dirs[0] == workDir {
+		t.Fatalf("agent ran in %v, want a worktree outside %s", dirs, workDir)
+	}
+	// The daemon pushed on the agent's behalf.
+	got := runGit(t, bareDir, "show", "develop:app.txt")
+	if strings.TrimSpace(got) != "fixed" {
+		t.Fatalf("origin develop app.txt = %q, want fixed", got)
+	}
+	// A successful Fix leaves nothing behind.
+	if _, err := os.Stat(dirs[0]); !os.IsNotExist(err) {
+		t.Fatalf("worktree survived a successful Fix: %v", err)
+	}
+	if out := runGit(t, workDir, "worktree", "list"); strings.Contains(out, "xdlc") {
+		t.Fatalf("worktree still registered: %s", out)
+	}
+	// And the shared clone was never touched by the agent.
+	if out := runGit(t, workDir, "status", "--porcelain"); strings.TrimSpace(out) != "" {
+		t.Fatalf("shared clone dirty: %q", out)
+	}
+}
+
+// The whole point of the plan item: two signals for one repo run their
+// Fixes concurrently, in separate directories.
+func TestWorktreeFixesForOneRepoRunConcurrently(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := worktreeManager(t, workDir)
+	hold := make(chan struct{})
+	runner := &committingRunner{hold: hold}
+	d := New(mgr, runner, silentLogger())
+	d.SetWorktree(true, 0)
+	d.SetFixConcurrency(2)
+
+	done := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { done <- d.Fix(context.Background(), fixSignal()) }()
+	}
+
+	// Both agents must be inside Run at once. If the per-repo cap were
+	// still in force the second would never start and this would time out.
+	deadline := time.After(10 * time.Second)
+	for len(runner.seenDirs()) < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("only %d Fix(es) started; expected 2 concurrent", len(runner.seenDirs()))
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	close(hold)
+
+	var failures int
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				failures++
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("Fix did not return")
+		}
+	}
+	dirs := runner.seenDirs()
+	if dirs[0] == dirs[1] {
+		t.Fatalf("both Fixes shared directory %s", dirs[0])
+	}
+	// Both raced to push the same branch; git lets exactly one win, and
+	// the loser must fail loudly rather than force over it.
+	if failures != 1 {
+		t.Fatalf("%d of 2 concurrent Fixes failed, want exactly 1 (the losing push)", failures)
+	}
+}
+
+// A failed Fix keeps its worktree so an operator can see the half-done
+// work, and the shared clone still stays clean.
+func TestWorktreeKeptOnFailedFix(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := worktreeManager(t, workDir)
+	runner := &committingRunner{
+		out: `{"xdlc_outcome":"gave_up","summary":"upstream image is broken"}`,
+	}
+	d := New(mgr, runner, silentLogger())
+	d.SetWorktree(true, time.Hour)
+
+	if err := d.Fix(context.Background(), fixSignal()); err == nil {
+		t.Fatal("gave_up must fail the Fix")
+	}
+	dirs := runner.seenDirs()
+	if _, err := os.Stat(dirs[0]); err != nil {
+		t.Fatalf("failed Fix's worktree was removed: %v", err)
+	}
+	if out := runGit(t, workDir, "status", "--porcelain"); strings.TrimSpace(out) != "" {
+		t.Fatalf("shared clone dirty after failed Fix: %q", out)
+	}
+}
+
+// An agent that changes nothing must not push, and must not be reported
+// as having landed something.
+func TestWorktreeNoCommitsNoPush(t *testing.T) {
+	bareDir, workDir := setupOrigin(t)
+	mgr := worktreeManager(t, workDir)
+	before := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "develop"))
+	d := New(mgr, &noopRunner{}, silentLogger())
+	d.SetWorktree(true, 0)
+
+	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	after := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "develop"))
+	if before != after {
+		t.Fatalf("develop moved from %s to %s with no agent commits", before, after)
+	}
+}
+
+type noopRunner struct{}
+
+func (noopRunner) Run(context.Context, string, string, []string) (string, error) {
+	return "nothing to do", nil
+}
+
+// In worktree mode the agent must be told to commit and not push, since
+// it is on a scratch branch with no upstream.
+func TestWorktreePromptTellsAgentNotToPush(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := worktreeManager(t, workDir)
+	runner := &promptCapturingRunner{}
+	d := New(mgr, runner, silentLogger())
+	d.SetWorktree(true, 0)
+
+	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if !strings.Contains(runner.prompt, "Do NOT push") {
+		t.Fatalf("worktree prompt must forbid pushing:\n%s", runner.prompt)
+	}
+}
+
+type promptCapturingRunner struct{ prompt string }
+
+func (r *promptCapturingRunner) Run(_ context.Context, _, prompt string, _ []string) (string, error) {
+	r.prompt = prompt
+	return "", nil
+}
+
+// With worktrees off, nothing about the old shared-clone path changes.
+func TestWorktreeDisabledUsesSharedClone(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := worktreeManager(t, workDir)
+	runner := &promptCapturingRunner{}
+	d := New(mgr, runner, silentLogger())
+
+	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if strings.Contains(runner.prompt, "Do NOT push") {
+		t.Fatal("shared-clone mode must still ask the agent to push")
+	}
+	if _, err := os.Stat(filepath.Join(mgr.WorktreeRoot())); !os.IsNotExist(err) {
+		t.Fatal("worktree root created while worktrees are disabled")
 	}
 }

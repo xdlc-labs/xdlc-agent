@@ -293,3 +293,29 @@ func TestRoleNamespace(t *testing.T) {
 		t.Fatalf("explicit namespace vs default role-namespace should mismatch, got %v", got)
 	}
 }
+
+func TestFixAttemptsNeedsReverify(t *testing.T) {
+	cfg := &config.Config{
+		Repos: []config.Repo{{Name: "svc", GitHub: "o/svc"}},
+	}
+	cfg.Agent.FixAttempts = 3
+
+	issues := Config(cfg)
+	if !hasIssueContaining(issues, "fix_reverify is off") {
+		t.Fatalf("expected a fix_attempts/fix_reverify issue, got %v", issues)
+	}
+
+	cfg.Agent.FixReverify = true
+	if issues := Config(cfg); hasIssueContaining(issues, "fix_reverify is off") {
+		t.Fatalf("issue should clear once fix_reverify is on: %v", issues)
+	}
+}
+
+func hasIssueContaining(issues []Issue, want string) bool {
+	for _, i := range issues {
+		if strings.Contains(i.Message, want) {
+			return true
+		}
+	}
+	return false
+}

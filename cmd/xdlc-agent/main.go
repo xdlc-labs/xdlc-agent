@@ -183,6 +183,12 @@ func daemonCmd() *cobra.Command {
 			}
 			disp.SetFixConcurrency(fixN)
 			disp.FixBudget = cfg.Agent.FixBudget
+			disp.FixAttempts = cfg.Agent.FixAttempts
+			disp.SetWorktree(cfg.Agent.WorktreeEnabled(), cfg.Agent.Worktree.KeepFailed)
+			if disp.Worktree {
+				log.Info("per-fix worktrees enabled",
+					"root", repoMgr.WorktreeRoot(), "keep_failed", cfg.Agent.Worktree.KeepFailed)
+			}
 			gh := ghclient.NewFromProvider(tokens)
 			disp.FetchLogs = gh.FetchFailedJobLogs
 			disp.FindPR = func(ctx context.Context, ownerRepo, branch string) (*dispatch.PRRef, error) {
@@ -211,7 +217,7 @@ func daemonCmd() *cobra.Command {
 				if interval <= 0 {
 					interval = 15 * time.Second
 				}
-				disp.Reverify = func(ctx context.Context, s orchestrator.Signal) error {
+				disp.Reverify = func(ctx context.Context, s orchestrator.Signal) (map[string]any, error) {
 					return reverifyGate(ctx, s, repoMgr, ciGate, smokeGates, attempts, interval, log)
 				}
 			}
@@ -310,6 +316,16 @@ func daemonCmd() *cobra.Command {
 					defer func() { <-sem }()
 					if err := repoMgr.EnsureCloned(ctx, name); err != nil {
 						log.Warn("pre-clone failed", "repo", name, "error", err)
+					}
+					// A daemon killed mid-Fix leaves its worktree behind.
+					// Sweep the ones already past the keep window now,
+					// rather than waiting for this repo's next failure.
+					if disp.Worktree {
+						if n, perr := repoMgr.PruneWorktrees(ctx, name, cfg.Agent.Worktree.KeepFailed); perr != nil {
+							log.Warn("worktree prune failed", "repo", name, "error", perr)
+						} else if n > 0 {
+							log.Info("pruned stale fix worktrees at startup", "repo", name, "count", n)
+						}
 					}
 				}(r.Name)
 			}
@@ -711,7 +727,10 @@ func isLoopbackListenAddr(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// reverifyGate polls the gate that triggered Fix until green or budget exhausted (#2).
+// reverifyGate polls the gate that triggered Fix until green or budget
+// exhausted (#2). On failure it also returns the last Result's evidence
+// — for CI that is the run_url of the run that is red *now*, which is
+// what a retry attempt needs to fetch fresh logs from.
 func reverifyGate(
 	ctx context.Context,
 	s orchestrator.Signal,
@@ -721,7 +740,7 @@ func reverifyGate(
 	attempts int,
 	interval time.Duration,
 	log *slog.Logger,
-) error {
+) (map[string]any, error) {
 	var g gate.Gate
 	checkRepo := s.Repo
 	switch s.Source {
@@ -736,10 +755,10 @@ func reverifyGate(
 		}
 	default:
 		log.Info("fix reverify skipped for source", "source", s.Source, "repo", s.Repo)
-		return nil
+		return nil, nil
 	}
 	if g == nil {
-		return fmt.Errorf("no gate for source %s", s.Source)
+		return nil, fmt.Errorf("no gate for source %s", s.Source)
 	}
 	var last gate.Result
 	for i := 0; i < attempts; i++ {
@@ -749,7 +768,7 @@ func reverifyGate(
 		} else {
 			last = res
 			if res.Status == gate.StatusPass {
-				return nil
+				return nil, nil
 			}
 		}
 		if i+1 == attempts {
@@ -757,11 +776,11 @@ func reverifyGate(
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return last.Evidence, ctx.Err()
 		case <-time.After(interval):
 		}
 	}
-	return fmt.Errorf("gate %s still %s after %d attempts", g.Name(), last.Status, attempts)
+	return last.Evidence, fmt.Errorf("gate %s still %s after %d attempts", g.Name(), last.Status, attempts)
 }
 
 func hasGate(r config.Repo, name string) bool {

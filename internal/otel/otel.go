@@ -48,6 +48,11 @@ type Metrics struct {
 	FixQueueDepth metric.Int64UpDownCounter
 	// FixQueueWait is time spent blocked acquiring a Fix slot (#9).
 	FixQueueWait metric.Float64Histogram
+	// FixRetries counts extra Fix agent runs triggered because the gate
+	// re-check was still red (agent.fix_attempts). A rising rate means
+	// first attempts are not landing; compare against
+	// xdlc_agent_dispatch_duration_seconds{action="fix",status="error"}.
+	FixRetries metric.Int64Counter
 
 	handler http.Handler // Prometheus scrape; set by Setup
 }
@@ -170,6 +175,11 @@ func buildInstruments(meter metric.Meter) (Metrics, error) {
 	if err != nil {
 		return Metrics{}, err
 	}
+	fixRetries, err := meter.Int64Counter("xdlc_agent_fix_retries_total",
+		metric.WithDescription("Extra Fix agent runs after a failed gate re-check"))
+	if err != nil {
+		return Metrics{}, err
+	}
 	return Metrics{
 		Webhooks:          webhooks,
 		GateChecks:        gates,
@@ -181,6 +191,7 @@ func buildInstruments(meter metric.Meter) (Metrics, error) {
 		StoreErrors:       storeErrors,
 		FixQueueDepth:     fixDepth,
 		FixQueueWait:      fixWait,
+		FixRetries:        fixRetries,
 	}, nil
 }
 

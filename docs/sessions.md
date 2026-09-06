@@ -10,10 +10,12 @@ One directory per Fix, under `sessions/` by default:
 
 ```
 sessions/20260905T010514Z-example-service/
-  meta.json      repo, signal, provider, status, duration, base/head SHA, cost
+  meta.json      repo, signal, provider, status, outcome, attempts, duration, base/head SHA, cost
   prompt.txt     the full prompt: rules, past lessons, failure evidence, instruction
   plan.txt       diagnose-pass plan (only when agent.fix_plan is on)
   output.txt     everything the agent CLI printed
+  prompt-2.txt   attempt 2's prompt (only when agent.fix_attempts sent the agent back in)
+  output-2.txt   attempt 2's output
   diff.patch     committed changes since the Fix started, plus anything left uncommitted
 ```
 
@@ -42,7 +44,8 @@ $EDITOR "$(xdlc sessions show 20260905T010514Z-example-service --path)"
 
 - **Reviewing an automated Fix.** Read `diff.patch` before you trust the push, without cloning anything.
 - **A Fix that did the wrong thing.** `prompt.txt` shows whether the agent was given bad evidence or good evidence and reasoned badly. Those have different remedies: better gate output versus better rules.
-- **A Fix that did nothing.** `output.txt` usually says why in plain language, where the log line only kept the first 2000 characters.
+- **A Fix that did nothing.** `output.txt` usually says why in plain language, where the log line only kept the first 2000 characters. `meta.json`'s `outcome` and `summary` carry the agent's own one-line verdict ([Fix modes](fix-modes.md)).
+- **A Fix that took more than one try.** `attempts` above 1 means the gate re-check was still red and the agent was sent back in. Compare `prompt.txt` against `prompt-2.txt` to see what it was told the second time, and `output.txt` against `output-2.txt` for what it did differently. `xdlc sessions show <id> --output --attempt 2` prints one directly.
 - **Tuning rules.** The prompt shows exactly which of your `AGENTS.md` / `CLAUDE.md` rules survived truncation. See [Rules and skills](rules-and-skills.md).
 
 ## Configuration

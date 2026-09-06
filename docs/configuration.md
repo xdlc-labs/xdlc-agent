@@ -68,8 +68,12 @@ agent:
   # max_concurrent_fixes: 2
   # fix_budget: 5m
   # fix_reverify: true
+  # fix_attempts: 2
   # ci_rerun_before_fix: true
   # fix_plan: true
+  # worktree:
+  #   enabled: false
+  #   keep_failed: 24h
   # rules_file: /etc/xdlc/rules.md   # applied to every repo
   # sessions:
   #   enabled: true
@@ -81,6 +85,10 @@ agent:
 | Key | Default | What it does |
 |-----|---------|--------------|
 | `timeout` | `10m` in examples | Kill the coding-agent subprocess after this. Too short (e.g. 1m) for a real Cursor Manual Fix. |
+| `fix_reverify` | `false` | Re-check the failing gate after the agent exits, and only then record the Fix as ok. [Fix modes](fix-modes.md) |
+| `fix_attempts` | `1` | Max agent runs per failing signal. Above 1 the agent is sent back in when the re-check is still red. Requires `fix_reverify`. [Fix modes](fix-modes.md) |
+| `worktree.enabled` | `true` | Run each Fix in its own git worktree instead of the repo's shared clone. Lets two Fixes for one repo run at once, and keeps a crashed Fix out of the shared clone. [Fix modes](fix-modes.md) |
+| `worktree.keep_failed` | `24h` | How long a failed Fix's worktree stays on disk for inspection. Successful ones are removed at once. |
 | `rules_file` | none | Instructions file added to every Fix prompt, after the repo's own rules. [Rules and skills](rules-and-skills.md) |
 | `sessions.enabled` | `true` | Record each Fix's prompt, output and diff to disk. [Fix sessions](sessions.md) |
 | `sessions.dir` | `sessions` | Where those directories go. Mount it in containers to survive restarts. |

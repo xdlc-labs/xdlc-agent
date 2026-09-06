@@ -75,11 +75,12 @@ review an automated Fix instead of re-reading truncated logs.`,
 				return nil
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(w, "ID\tSTARTED\tREPO\tSOURCE\tPROVIDER\tSTATUS\tFILES\tCOST")
+			_, _ = fmt.Fprintln(w, "ID\tSTARTED\tREPO\tSOURCE\tPROVIDER\tSTATUS\tOUTCOME\tTRIES\tFILES\tCOST")
 			for _, m := range metas {
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
 					m.ID, m.StartedAt.Format(time.RFC3339), m.Repo, m.Source,
-					m.Provider, orDash(m.Status), m.Changed, costString(m.Cost))
+					m.Provider, orDash(m.Status), orDash(m.Outcome), attemptsString(m.Attempts),
+					m.Changed, costString(m.Cost))
 			}
 			return w.Flush()
 		},
@@ -88,6 +89,7 @@ review an automated Fix instead of re-reading truncated logs.`,
 	lsCmd.Flags().IntVar(&limit, "limit", 20, "max rows (0 = all)")
 
 	var showPrompt, showOutput, showDiff, showPlan, showPath bool
+	var attempt int
 	showCmd := &cobra.Command{
 		Use:   "show <id>",
 		Short: "Show one session's metadata or a single artifact",
@@ -112,9 +114,9 @@ review an automated Fix instead of re-reading truncated logs.`,
 				on   bool
 				file string
 			}{
-				{showPrompt, session.FilePrompt},
+				{showPrompt, session.AttemptFile(session.FilePrompt, attempt)},
 				{showPlan, session.FilePlan},
-				{showOutput, session.FileOutput},
+				{showOutput, session.AttemptFile(session.FileOutput, attempt)},
 				{showDiff, session.FileDiff},
 			} {
 				if !want.on {
@@ -156,6 +158,11 @@ review an automated Fix instead of re-reading truncated logs.`,
 				row("duration", (time.Duration(m.DurationMS) * time.Millisecond).String())
 			}
 			row("status", m.Status)
+			row("outcome", m.Outcome)
+			row("summary", m.Summary)
+			if m.Attempts > 1 {
+				row("attempts", fmt.Sprint(m.Attempts))
+			}
 			row("error", m.Error)
 			row("branch", m.Branch)
 			row("base_sha", shortSHA(m.BaseSHA))
@@ -168,7 +175,11 @@ review an automated Fix instead of re-reading truncated logs.`,
 			if err := w.Flush(); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(out, "\nartifacts: --prompt --plan --output --diff (or --path)\n")
+			_, _ = fmt.Fprintf(out, "\nartifacts: --prompt --plan --output --diff (or --path)")
+			if m.Attempts > 1 {
+				_, _ = fmt.Fprintf(out, "; --attempt 1..%d for each try", m.Attempts)
+			}
+			_, _ = fmt.Fprintln(out)
 			return nil
 		},
 	}
@@ -177,6 +188,7 @@ review an automated Fix instead of re-reading truncated logs.`,
 	showCmd.Flags().BoolVar(&showOutput, "output", false, "print the agent's stdout")
 	showCmd.Flags().BoolVar(&showDiff, "diff", false, "print the patch the agent produced")
 	showCmd.Flags().BoolVar(&showPath, "path", false, "print the session directory path")
+	showCmd.Flags().IntVar(&attempt, "attempt", 1, "which Fix attempt's --prompt/--output to print (see TRIES)")
 
 	pruneCmd := &cobra.Command{
 		Use:   "prune",
@@ -230,4 +242,13 @@ func costString(cost map[string]any) string {
 		return fmt.Sprintf("%v out-tok", v)
 	}
 	return "—"
+}
+
+// attemptsString renders the Fix attempt count for `sessions ls`. Older
+// sessions predate the field and record 0, which means one attempt.
+func attemptsString(n int) string {
+	if n <= 1 {
+		return "1"
+	}
+	return fmt.Sprint(n)
 }

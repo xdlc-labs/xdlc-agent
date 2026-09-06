@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/xdlc-labs/xdlc-agent/internal/subagent"
 )
 
 // fakeRunner "fixes" the broken Add by committing the correct body and
@@ -24,9 +26,13 @@ func (f *fakeRunner) Run(ctx context.Context, dir, _ string, _ []string) (string
 	if out, err := exec.CommandContext(ctx, "git", "-C", dir, "commit", "-m", "fix: Add returns a+b").CombinedOutput(); err != nil { //nolint:gosec // G204: fixed git args
 		return string(out), fmt.Errorf("fake runner: git commit: %w: %s", err, out)
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "push", "origin", "develop").CombinedOutput() //nolint:gosec // G204: fixed git args
-	if err != nil {
-		return string(out), fmt.Errorf("fake runner: git push: %w: %s", err, out)
-	}
-	return string(out), nil
+	// No push: the demo runs with per-Fix worktrees on, like a real
+	// install, so the agent's job ends at the commit and xdlc pushes the
+	// scratch branch where it belongs.
+	//
+	// Close with the verdict line a real coding agent is asked for, so
+	// `xdlc demo` shows the same OUTCOME / SUMMARY an operator will see
+	// in a live Fix instead of the empty compatibility path.
+	return fmt.Sprintf(`{"%s": "%s", "summary": "Add returned a-b; corrected it to a+b"}`,
+		subagent.VerdictKey, subagent.OutcomeFixed), nil
 }

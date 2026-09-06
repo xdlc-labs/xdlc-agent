@@ -58,3 +58,39 @@ func TestMergeCost(t *testing.T) {
 	}
 	MergeCost(nil, sampleClaudeJSON) // must not panic
 }
+
+func TestAddCostSumsAcrossRuns(t *testing.T) {
+	ev := map[string]any{}
+	AddCost(ev, sampleClaudeJSON)
+	first := ev["total_cost_usd"]
+	AddCost(ev, sampleClaudeJSON)
+
+	got, ok := ev["total_cost_usd"].(float64)
+	if !ok {
+		t.Fatalf("total_cost_usd = %T, want float64", ev["total_cost_usd"])
+	}
+	want, _ := first.(float64)
+	if got != want*2 {
+		t.Fatalf("total_cost_usd = %v after two runs, want %v", got, want*2)
+	}
+	// Token counts must stay integral so the audit row does not turn
+	// counts into floats.
+	if _, ok := ev["input_tokens"].(int64); !ok {
+		t.Fatalf("input_tokens = %T (%v), want int64", ev["input_tokens"], ev["input_tokens"])
+	}
+}
+
+func TestAddCostFirstRunMatchesMerge(t *testing.T) {
+	added, merged := map[string]any{}, map[string]any{}
+	AddCost(added, sampleClaudeJSON)
+	MergeCost(merged, sampleClaudeJSON)
+	if len(added) != len(merged) {
+		t.Fatalf("key sets differ: %v vs %v", added, merged)
+	}
+	for k, v := range merged {
+		if added[k] != v {
+			t.Fatalf("key %s: added %v, merged %v", k, added[k], v)
+		}
+	}
+	AddCost(nil, sampleClaudeJSON) // must not panic
+}

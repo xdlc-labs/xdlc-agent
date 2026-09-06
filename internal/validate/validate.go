@@ -62,6 +62,20 @@ func Config(cfg *config.Config) []Issue {
 		issues = append(issues, Issue{Message: fmt.Sprintf("agent.fix_mode %q unknown; use \"direct\", \"pr\", or omit", cfg.Agent.FixMode)})
 	}
 
+	// A retry ladder needs a gate re-check to learn that the previous
+	// attempt failed. Without one the daemon clamps back to a single
+	// attempt, so say that here rather than at 3am in a log line.
+	if cfg.Agent.FixAttempts > 1 && !cfg.Agent.FixReverify {
+		issues = append(issues, Issue{Message: fmt.Sprintf(
+			"agent.fix_attempts is %d but agent.fix_reverify is off; "+
+				"without a gate re-check nothing can tell an attempt failed, so only one will run",
+			cfg.Agent.FixAttempts)})
+	}
+	if cfg.Agent.FixAttempts < 0 {
+		issues = append(issues, Issue{Message: fmt.Sprintf(
+			"agent.fix_attempts %d is negative; use 1 (single shot) or higher", cfg.Agent.FixAttempts)})
+	}
+
 	if cfg.Server.OIDC.Enabled() {
 		// Static checks only — authn.New (network-dependent: discovery +
 		// JWKS) does the rest at daemon startup and fails closed there.

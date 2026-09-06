@@ -42,8 +42,12 @@ agent:
   # fix_budget: 5m              # soft Fix deadline; 0 = unlimited (#9)
   # fix_mode: direct # or pr
   # fix_reverify: true          # require gate green after Fix (#2)
+  # fix_attempts: 2             # re-run the agent when the gate is still red; needs fix_reverify
   # ci_rerun_before_fix: true  # flake ladder before agent (#3); default on
   # fix_plan: true              # diagnose then patch (#23); default off
+  # worktree:                   # per-Fix git worktree; on by default
+  #   enabled: false            # set false to share one clone per repo (old behavior)
+  #   keep_failed: 24h          # how long a failed Fix's worktree stays for inspection
   # extra_env_keys: [HTTPS_PROXY]
   # rules_file: /etc/xdlc/rules.md  # instructions added to every Fix prompt
   # sessions:                       # prompt / output / diff per Fix (docs/sessions.md)
