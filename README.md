@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://xdlc-labs.github.io/documentation/images/brand/wordmark.png" width="360" alt="xdlc-labs">
+  <img src="https://xdlc.dev/images/brand/wordmark.png" width="360" alt="xdlc-labs">
 </p>
 
 <p align="center">
@@ -41,7 +41,7 @@ export PATH="$HOME/.local/bin:$PATH"   # if needed
 xdlc demo --provider fake
 ```
 
-Pin a release: `XDLC_VERSION=v0.0.1-beta.4`. More options: **[Install](https://xdlc-labs.github.io/documentation/xdlc-agent/install/)**.
+Pin a release: `XDLC_VERSION=v0.0.1-beta.4`. More options: **[Install](https://xdlc.dev/agent/docs)**.
 
 Then a real daemon:
 
@@ -54,7 +54,7 @@ xdlc doctor --config config.yaml --skip-network
 xdlc daemon --config config.yaml
 ```
 
-Open http://127.0.0.1:8080/ → **Settings** → paste the same `XDLC_API_TOKEN`. Full walkthrough: **[Getting started](https://xdlc-labs.github.io/documentation/xdlc-agent/getting-started/)**.
+Open http://127.0.0.1:8080/ → **Settings** → paste the same `XDLC_API_TOKEN`. Full walkthrough: **[Getting started](https://xdlc.dev/agent/docs/getting-started)**.
 
 **Docker** (console embedded; tag must exist on GHCR):
 
@@ -78,26 +78,26 @@ helm install xdlc-agent deploy/helm/xdlc-agent \
 
 ## How it works
 
-Same diagram as the [architecture](https://xdlc-labs.github.io/documentation/xdlc-agent/architecture/) page: one loop, three gates.
+Same diagram as the [architecture](https://xdlc.dev/agent/docs/architecture) page: one loop, three gates.
 
-![One loop, three gates: xdlc-agent → GitHub → DEV → promote → PRODUCTION](https://xdlc-labs.github.io/documentation/images/architecture.jpg)
+![One loop, three gates: xdlc-agent → GitHub → DEV → promote → PRODUCTION](https://xdlc.dev/images/architecture.jpg)
 
 1. GitHub reports a failed `workflow_run` (or you enable DEV smoke / prod health later).
 2. The daemon validates the webhook and asks policy what to do.
 3. **Fix** runs your agent CLI with the failing logs and repo conventions (`AGENTS.md` / `CLAUDE.md`).
 4. Evidence lands in the console, the audit store, and `xdlc sessions show`.
 
-The default install is **CI Fix** only. GitOps promote and prod revert are opt-in. See [Optional profiles](https://xdlc-labs.github.io/documentation/xdlc-agent/production-loop/).
+The default install is **CI Fix** only. GitOps promote and prod revert are opt-in. See [Optional profiles](https://xdlc.dev/agent/docs/production-loop).
 
 ## Ops console
 
 Embedded at `/` when the daemon runs.
 
-![Console overview](https://xdlc-labs.github.io/documentation/images/screenshots/console-overview.jpg)
+![Console overview](https://xdlc.dev/images/screenshots/console-overview.jpg)
 
-![Repos](https://xdlc-labs.github.io/documentation/images/screenshots/console-repos.jpg)
+![Repos](https://xdlc.dev/images/screenshots/console-repos.jpg)
 
-![Manual Fix / Promote / Revert](https://xdlc-labs.github.io/documentation/images/screenshots/console-actions.jpg)
+![Manual Fix / Promote / Revert](https://xdlc.dev/images/screenshots/console-actions.jpg)
 
 ## Why xdlc?
 
@@ -112,13 +112,13 @@ Embedded at `/` when the daemon runs.
 
 ## Docs
 
-Guides (same order as the docs sidebar): **[xdlc-labs.github.io/documentation](https://xdlc-labs.github.io/documentation/)**.
+Guides (same order as the docs sidebar): **[xdlc.dev](https://xdlc.dev/docs)**.
 
-Start: [Install](https://xdlc-labs.github.io/documentation/xdlc-agent/install/) · [Getting started](https://xdlc-labs.github.io/documentation/xdlc-agent/getting-started/) · [API tokens](https://xdlc-labs.github.io/documentation/xdlc-agent/api-tokens/)
+Start: [Install](https://xdlc.dev/agent/docs) · [Getting started](https://xdlc.dev/agent/docs/getting-started) · [API tokens](https://xdlc.dev/agent/docs/api-tokens)
 
-CI Fix: [GitHub webhooks](https://xdlc-labs.github.io/documentation/xdlc-agent/github-webhooks/) · [Fix modes](https://xdlc-labs.github.io/documentation/xdlc-agent/fix-modes/) · [Rules and skills](https://xdlc-labs.github.io/documentation/xdlc-agent/rules-and-skills/) · [Fix sessions](https://xdlc-labs.github.io/documentation/xdlc-agent/sessions/) · [Deployment](https://xdlc-labs.github.io/documentation/xdlc-agent/deployment/) · [Operations](https://xdlc-labs.github.io/documentation/xdlc-agent/operations/)
+CI Fix: [GitHub webhooks](https://xdlc.dev/agent/docs/github-webhooks) · [Fix modes](https://xdlc.dev/agent/docs/fix-modes) · [Rules and skills](https://xdlc.dev/agent/docs/rules-and-skills) · [Fix sessions](https://xdlc.dev/agent/docs/sessions) · [Deployment](https://xdlc.dev/agent/docs/deployment) · [Operations](https://xdlc.dev/agent/docs/operations)
 
-Optional: [Profiles](https://xdlc-labs.github.io/documentation/xdlc-agent/production-loop/) · [GitOps](https://xdlc-labs.github.io/documentation/xdlc-agent/gitops-argo/) · [Prod health](https://xdlc-labs.github.io/documentation/xdlc-agent/prod-health/)
+Optional: [Profiles](https://xdlc.dev/agent/docs/production-loop) · [GitOps](https://xdlc.dev/agent/docs/gitops-argo) · [Prod health](https://xdlc.dev/agent/docs/prod-health)
 
 ## Related
 

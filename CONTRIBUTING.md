@@ -16,7 +16,7 @@ cd ui && bun install && bun run lint && bun run test && bun run build
 
 Do not run bare `go test ./...` after `bun install` — `ui/node_modules` can ship Go files. Use `make test`.
 
-Docs: [Getting started](https://xdlc-labs.github.io/documentation/xdlc-agent/getting-started/) (CI Fix) · [Optional profiles](https://xdlc-labs.github.io/documentation/xdlc-agent/production-loop/). Console **Docs** links out to that site.
+Docs: [Getting started](https://xdlc.dev/agent/docs/getting-started) (CI Fix) · [Optional profiles](https://xdlc.dev/agent/docs/production-loop). Console **Docs** links out to that site.
 
 
 ```sh

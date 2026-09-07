@@ -1,7 +1,7 @@
 # Docs
 
-Guides: **[xdlc-labs.github.io/documentation](https://xdlc-labs.github.io/documentation/)**.
+Guides: **[xdlc.dev](https://xdlc.dev/docs)**.
 
-Start with [Install](https://xdlc-labs.github.io/documentation/xdlc-agent/install/) and [Getting started](https://xdlc-labs.github.io/documentation/xdlc-agent/getting-started/).
+Start with [Install](https://xdlc.dev/agent/docs) and [Getting started](https://xdlc.dev/agent/docs/getting-started).
 
 This repository keeps [CONTRIBUTING](../CONTRIBUTING.md), [SECURITY](../SECURITY.md), [CODE_OF_CONDUCT](../CODE_OF_CONDUCT.md), and [CHANGELOG](../CHANGELOG.md) next to the code.
