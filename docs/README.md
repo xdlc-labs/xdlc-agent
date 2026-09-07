@@ -1,10 +1,7 @@
 # Docs
 
-Guides live on the org docs site:
+Guides: **[xdlc-labs.github.io/documentation](https://xdlc-labs.github.io/documentation/)**.
 
-**https://xdlc-labs.github.io/documentation/**
+Start with [Install](https://xdlc-labs.github.io/documentation/xdlc-agent/install/) and [Getting started](https://xdlc-labs.github.io/documentation/xdlc-agent/getting-started/).
 
-- [xdlc-agent](https://xdlc-labs.github.io/documentation/xdlc-agent/install/)
-- [Airlock](https://xdlc-labs.github.io/documentation/airlock/guide/)
-
-This repository keeps governance files next to the code: [CONTRIBUTING](../CONTRIBUTING.md), [SECURITY](../SECURITY.md), [CODE_OF_CONDUCT](../CODE_OF_CONDUCT.md), [CHANGELOG](../CHANGELOG.md).
+This repository keeps [CONTRIBUTING](../CONTRIBUTING.md), [SECURITY](../SECURITY.md), [CODE_OF_CONDUCT](../CODE_OF_CONDUCT.md), and [CHANGELOG](../CHANGELOG.md) next to the code.

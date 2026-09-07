@@ -120,12 +120,9 @@ CI Fix: [GitHub webhooks](https://xdlc-labs.github.io/documentation/xdlc-agent/g
 
 Optional: [Profiles](https://xdlc-labs.github.io/documentation/xdlc-agent/production-loop/) · [GitOps](https://xdlc-labs.github.io/documentation/xdlc-agent/gitops-argo/) · [Prod health](https://xdlc-labs.github.io/documentation/xdlc-agent/prod-health/)
 
-## In this org
+## Related
 
-- [Airlock](https://github.com/xdlc-labs/airlock) — CI release gate for prompts, skills, MCP, and models
-- [documentation](https://github.com/xdlc-labs/documentation) — hosted guides
-- [example-service](https://github.com/xdlc-labs/example-service) — public demo HTTP service
-- [fixtures](https://github.com/xdlc-labs/fixtures) — scratch PRs with planted breaks
+Shipping prompts, skills, MCP, or model pins? [Airlock](https://github.com/xdlc-labs/airlock) is a CI gate for those changes.
 
 ## Contribute
 
