@@ -1,9 +1,10 @@
 {
-  "base": "c1f8a4890af374c0",
+  "base": "2ae796f250217f95",
   "head": "working-93b02d54c8fc",
   "reasons": [
     "added skill (needs review): skill-repo-write"
   ],
   "decided_by": "ankit",
-  "ts": "2026-09-07T03:03:07.16615Z"
+  "note": "repo-write skill on PR 30",
+  "ts": "2026-09-07T03:13:21.199163Z"
 }
