@@ -263,3 +263,64 @@ func TestEnsureClonedSkipsFetchWhenSynced(t *testing.T) {
 		t.Errorf("FETCH_HEAD mtime changed (%v → %v); expected skip-fetch no-op", before.ModTime(), after.ModTime())
 	}
 }
+
+// TestEnsureClonedFetchesWhenTrackingRefStale is the snackytalky
+// regression: HEAD equals the local origin/<branch> tracking ref, so the
+// old skip-fetch path thought the clone was current, while origin had
+// moved. A Fix then edited the previous (green) commit.
+func TestEnsureClonedFetchesWhenTrackingRefStale(t *testing.T) {
+	root := t.TempDir()
+	bareDir := filepath.Join(root, "origin.git")
+	seedDir := filepath.Join(root, "seed")
+	workDir := filepath.Join(root, "work")
+
+	gitCmdTest(t, root, "init", "--bare", bareDir)
+	gitCmdTest(t, root, "clone", bareDir, seedDir)
+	gitCmdTest(t, seedDir, "config", "user.email", "test@example.com")
+	gitCmdTest(t, seedDir, "config", "user.name", "test")
+	gitCmdTest(t, seedDir, "checkout", "-b", "develop")
+	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmdTest(t, seedDir, "add", ".")
+	gitCmdTest(t, seedDir, "commit", "-m", "v1")
+	gitCmdTest(t, seedDir, "push", "origin", "develop")
+	gitCmdTest(t, bareDir, "symbolic-ref", "HEAD", "refs/heads/develop")
+	gitCmdTest(t, root, "clone", "--branch", "develop", bareDir, workDir)
+
+	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmdTest(t, seedDir, "add", ".")
+	gitCmdTest(t, seedDir, "commit", "-m", "v2")
+	gitCmdTest(t, seedDir, "push", "origin", "develop")
+
+	local := strings.TrimSpace(gitCmdTest(t, workDir, "rev-parse", "HEAD"))
+	tracking := strings.TrimSpace(gitCmdTest(t, workDir, "rev-parse", "origin/develop"))
+	if local != tracking {
+		t.Fatalf("precondition: HEAD %s != origin/develop %s", local, tracking)
+	}
+	want := strings.TrimSpace(gitCmdTest(t, bareDir, "rev-parse", "develop"))
+	if local == want {
+		t.Fatal("precondition: clone already has origin's new tip")
+	}
+
+	mgr := NewManager("unused-root", []config.Repo{
+		{Name: "svc", GitHub: "org/svc", Dir: workDir, Branch: "develop"},
+	}, nil)
+	if err := mgr.EnsureCloned(context.Background(), "svc"); err != nil {
+		t.Fatalf("EnsureCloned: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(workDir, "app.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != "v2" {
+		t.Errorf("app.txt = %q after EnsureCloned, want v2 (origin moved, tracking ref was stale)", got)
+	}
+	head := strings.TrimSpace(gitCmdTest(t, workDir, "rev-parse", "HEAD"))
+	if head != want {
+		t.Errorf("HEAD %s != origin develop %s", head, want)
+	}
+}

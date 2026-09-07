@@ -249,10 +249,13 @@ func AuthEnv(token string) []string {
 
 // EnsureCloned makes dir a clean checkout of repo's branch: clones it if
 // the directory doesn't exist, or fetches + hard-resets it to
-// origin/<branch> if it does. When HEAD already matches origin/<branch>
-// and the working tree is clean, the network fetch is skipped (issue #17).
-// The hard reset still runs when dirty or diverged — a plain `git fetch`
-// alone would leave the working tree on a stale commit.
+// origin/<branch> if it does. When HEAD already matches the remote tip
+// (ls-remote, not the local origin/<branch> tracking ref) and the
+// working tree is clean, the fetch is skipped (issue #17). Comparing
+// only the tracking ref would skip a Fix onto a stale commit after a
+// push the clone has not fetched yet. The hard reset still runs when
+// dirty or diverged: a plain `git fetch` alone would leave the working
+// tree on a stale commit.
 func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 	r, ok := m.repos[repo]
 	if !ok {
@@ -264,7 +267,7 @@ func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 	env := m.AuthEnv()
 
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-		if synced, _ := localMatchesOrigin(ctx, dir, branch); synced {
+		if m.localMatchesRemote(ctx, repo, dir, branch) {
 			return nil
 		}
 		if err := runGit(ctx, dir, env, "fetch", "origin", branch); err != nil {
@@ -283,26 +286,28 @@ func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 	return runGit(ctx, "", env, "clone", "--depth", "1", "--single-branch", "--branch", branch, url, dir)
 }
 
-// localMatchesOrigin is true when HEAD is on branch, equals
-// origin/<branch>, and the working tree is clean — no network needed.
-func localMatchesOrigin(ctx context.Context, dir, branch string) (bool, error) {
+// localMatchesRemote is true when HEAD is on branch, the tree is clean,
+// and HEAD equals the remote tip from ls-remote. A matching local
+// origin/<branch> tracking ref is not enough: that ref is only as fresh
+// as the last fetch.
+func (m *Manager) localMatchesRemote(ctx context.Context, repo, dir, branch string) bool {
 	cur, err := gitOutput(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil || cur != branch {
-		return false, err
-	}
-	head, err := gitOutput(ctx, dir, "rev-parse", "HEAD")
-	if err != nil {
-		return false, err
-	}
-	origin, err := gitOutput(ctx, dir, "rev-parse", "origin/"+branch)
-	if err != nil || head != origin {
-		return false, err
+		return false
 	}
 	status, err := gitOutput(ctx, dir, "status", "--porcelain")
 	if err != nil || status != "" {
-		return false, err
+		return false
 	}
-	return true, nil
+	head, err := gitOutput(ctx, dir, "rev-parse", "HEAD")
+	if err != nil {
+		return false
+	}
+	remote, err := m.RemoteSHA(ctx, repo)
+	if err != nil || head != remote {
+		return false
+	}
+	return true
 }
 
 func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
