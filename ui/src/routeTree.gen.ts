@@ -16,8 +16,6 @@ import { Route as DocsRouteImport } from './routes/docs'
 import { Route as GatesRouteImport } from './routes/gates'
 import { Route as ReposRouteImport } from './routes/repos'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as DocsIndexRouteImport } from './routes/docs.index'
-import { Route as DocsSlugRouteImport } from './routes/docs.$slug'
 import { Route as ReposIndexRouteImport } from './routes/repos.index'
 import { Route as ReposIdRouteImport } from './routes/repos.$id'
 
@@ -56,16 +54,6 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DocsIndexRoute = DocsIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => DocsRoute,
-} as any)
-const DocsSlugRoute = DocsSlugRouteImport.update({
-  id: '/$slug',
-  path: '/$slug',
-  getParentRoute: () => DocsRoute,
-} as any)
 const ReposIndexRoute = ReposIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -81,24 +69,21 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/actions': typeof ActionsRoute
   '/activity': typeof ActivityRoute
-  '/docs': typeof DocsRouteWithChildren
+  '/docs': typeof DocsRoute
   '/gates': typeof GatesRoute
   '/repos': typeof ReposRouteWithChildren
   '/settings': typeof SettingsRoute
-  '/docs/$slug': typeof DocsSlugRoute
   '/repos/$id': typeof ReposIdRoute
-  '/docs/': typeof DocsIndexRoute
   '/repos/': typeof ReposIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/actions': typeof ActionsRoute
   '/activity': typeof ActivityRoute
+  '/docs': typeof DocsRoute
   '/gates': typeof GatesRoute
   '/settings': typeof SettingsRoute
-  '/docs/$slug': typeof DocsSlugRoute
   '/repos/$id': typeof ReposIdRoute
-  '/docs': typeof DocsIndexRoute
   '/repos': typeof ReposIndexRoute
 }
 export interface FileRoutesById {
@@ -106,13 +91,11 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/actions': typeof ActionsRoute
   '/activity': typeof ActivityRoute
-  '/docs': typeof DocsRouteWithChildren
+  '/docs': typeof DocsRoute
   '/gates': typeof GatesRoute
   '/repos': typeof ReposRouteWithChildren
   '/settings': typeof SettingsRoute
-  '/docs/$slug': typeof DocsSlugRoute
   '/repos/$id': typeof ReposIdRoute
-  '/docs/': typeof DocsIndexRoute
   '/repos/': typeof ReposIndexRoute
 }
 export interface FileRouteTypes {
@@ -125,20 +108,17 @@ export interface FileRouteTypes {
     | '/gates'
     | '/repos'
     | '/settings'
-    | '/docs/$slug'
     | '/repos/$id'
-    | '/docs/'
     | '/repos/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/actions'
     | '/activity'
+    | '/docs'
     | '/gates'
     | '/settings'
-    | '/docs/$slug'
     | '/repos/$id'
-    | '/docs'
     | '/repos'
   id:
     | '__root__'
@@ -149,9 +129,7 @@ export interface FileRouteTypes {
     | '/gates'
     | '/repos'
     | '/settings'
-    | '/docs/$slug'
     | '/repos/$id'
-    | '/docs/'
     | '/repos/'
   fileRoutesById: FileRoutesById
 }
@@ -159,7 +137,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ActionsRoute: typeof ActionsRoute
   ActivityRoute: typeof ActivityRoute
-  DocsRoute: typeof DocsRouteWithChildren
+  DocsRoute: typeof DocsRoute
   GatesRoute: typeof GatesRoute
   ReposRoute: typeof ReposRouteWithChildren
   SettingsRoute: typeof SettingsRoute
@@ -216,20 +194,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/docs/': {
-      id: '/docs/'
-      path: '/'
-      fullPath: '/docs/'
-      preLoaderRoute: typeof DocsIndexRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/docs/$slug': {
-      id: '/docs/$slug'
-      path: '/$slug'
-      fullPath: '/docs/$slug'
-      preLoaderRoute: typeof DocsSlugRouteImport
-      parentRoute: typeof DocsRoute
-    }
     '/repos/': {
       id: '/repos/'
       path: '/'
@@ -247,18 +211,6 @@ declare module '@tanstack/react-router' {
   }
 }
 
-interface DocsRouteChildren {
-  DocsSlugRoute: typeof DocsSlugRoute
-  DocsIndexRoute: typeof DocsIndexRoute
-}
-
-const DocsRouteChildren: DocsRouteChildren = {
-  DocsSlugRoute: DocsSlugRoute,
-  DocsIndexRoute: DocsIndexRoute,
-}
-
-const DocsRouteWithChildren = DocsRoute._addFileChildren(DocsRouteChildren)
-
 interface ReposRouteChildren {
   ReposIdRoute: typeof ReposIdRoute
   ReposIndexRoute: typeof ReposIndexRoute
@@ -275,7 +227,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ActionsRoute: ActionsRoute,
   ActivityRoute: ActivityRoute,
-  DocsRoute: DocsRouteWithChildren,
+  DocsRoute: DocsRoute,
   GatesRoute: GatesRoute,
   ReposRoute: ReposRouteWithChildren,
   SettingsRoute: SettingsRoute,

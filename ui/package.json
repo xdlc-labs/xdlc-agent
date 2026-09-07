@@ -4,13 +4,12 @@
   "sideEffects": false,
   "type": "module",
   "scripts": {
-    "sync-docs": "node scripts/sync-docs.mjs",
-    "dev": "bun run sync-docs && vite dev",
-    "build": "bun run sync-docs && vite build",
+    "dev": "vite dev",
+    "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "bun run sync-docs && vitest run"
+    "test": "vitest run"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.1",

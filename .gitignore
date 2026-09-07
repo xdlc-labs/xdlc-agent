@@ -24,6 +24,7 @@ config.yaml
 *.swp
 *~
 .claude/
+.cursor/
 
 # UI (ui/.gitignore also covers these; listed for root clarity)
 ui/node_modules/

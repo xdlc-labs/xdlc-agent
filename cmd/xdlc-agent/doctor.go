@@ -145,7 +145,7 @@ Exit 1 when any required check fails.`,
 				srcs := subagent.RuleSources(dir, cfg.Agent.RulesFile)
 				if len(srcs) == 0 {
 					check("agent rules ("+r.Name+")", true,
-						"none found in "+dir+" — Fix runs with no repo conventions (see docs/rules-and-skills.md)")
+						"none found in "+dir+" — Fix runs with no repo conventions (see https://xdlc-labs.github.io/documentation/xdlc-agent/rules-and-skills/)")
 					continue
 				}
 				var names []string

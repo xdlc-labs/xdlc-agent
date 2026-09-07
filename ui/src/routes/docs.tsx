@@ -1,94 +1,78 @@
-import { Link, Outlet, createFileRoute, useRouterState } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/status";
-import { DOCS_NAV } from "@/lib/docs-nav";
 
 export const Route = createFileRoute("/docs")({
   head: () => ({
     meta: [{ title: "Docs | xdlc-agent" }],
   }),
-  component: DocsLayout,
+  component: DocsLanding,
 });
 
-function DocsLayout() {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+const DOCS = "https://xdlc-labs.github.io/documentation";
 
+const groups: { label: string; items: { href: string; title: string; blurb: string }[] }[] = [
+  {
+    label: "Start",
+    items: [
+      { href: `${DOCS}/xdlc-agent/install/`, title: "Install", blurb: "curl-install, Docker, or source" },
+      { href: `${DOCS}/xdlc-agent/getting-started/`, title: "Getting started", blurb: "Demo or a local CI Fix daemon" },
+      { href: `${DOCS}/xdlc-agent/api-tokens/`, title: "API tokens", blurb: "Create XDLC_API_TOKEN" },
+    ],
+  },
+  {
+    label: "CI Fix",
+    items: [
+      { href: `${DOCS}/xdlc-agent/github-webhooks/`, title: "GitHub", blurb: "workflow_run → Fix" },
+      { href: `${DOCS}/xdlc-agent/fix-modes/`, title: "Fix modes", blurb: "Direct push vs pull request" },
+      { href: `${DOCS}/xdlc-agent/sessions/`, title: "Fix sessions", blurb: "Prompt, output, and diff" },
+    ],
+  },
+  {
+    label: "Optional",
+    items: [
+      { href: `${DOCS}/xdlc-agent/production-loop/`, title: "Profiles", blurb: "ci, gitops, full" },
+      { href: `${DOCS}/xdlc-agent/gitops-argo/`, title: "GitOps", blurb: "DEV smoke → Promote" },
+      { href: `${DOCS}/xdlc-agent/prod-health/`, title: "Prod health", blurb: "SLO breach → Revert" },
+    ],
+  },
+];
+
+function DocsLanding() {
   return (
     <div>
-      <PageHeader title="docs" sub="Start with CI Fix. GitOps and prod revert are optional." />
-      <div className="flex flex-col lg:flex-row">
-        <aside className="lg:sticky lg:top-12 lg:max-h-[calc(100vh-3rem)] lg:w-52 lg:shrink-0 lg:overflow-y-auto lg:border-r lg:border-border/60">
-          {/* Mobile: horizontal section chips */}
-          <div className="flex gap-1 overflow-x-auto border-b border-border/60 px-4 py-3 lg:hidden">
-            {DOCS_NAV.flatMap((g) => g.items).map((item) => {
-              const active = pathname === `/docs/${item.slug}`;
-              return (
-                <Link
-                  key={item.slug}
-                  to="/docs/$slug"
-                  params={{ slug: item.slug }}
-                  className={`shrink-0 rounded border px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider ${
-                    active
-                      ? "border-primary/50 bg-primary/15 text-primary"
-                      : "border-border text-muted-foreground"
-                  }`}
-                >
-                  {item.title}
-                </Link>
-              );
-            })}
-          </div>
-
-          <nav aria-label="Docs" className="hidden flex-col gap-5 px-3 py-5 lg:flex">
-            {DOCS_NAV.map((group) => {
-              const body = (
-                <ul className="flex flex-col">
-                  {group.items.map((item) => (
-                    <li key={item.slug}>
-                      <Link
-                        to="/docs/$slug"
-                        params={{ slug: item.slug }}
-                        activeProps={{ className: "text-primary border-primary bg-primary/10" }}
-                        inactiveProps={{
-                          className:
-                            "border-transparent text-muted-foreground hover:border-border/80 hover:text-foreground",
-                        }}
-                        className="block border-l-2 py-1.5 pl-3 font-mono text-[11px] tracking-wide transition-colors"
-                      >
-                        {item.title}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              );
-
-              if (group.collapsed) {
-                return (
-                  <details key={group.id} className="group/more">
-                    <summary className="cursor-pointer list-none px-1 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="text-primary/70 group-open/more:rotate-90 transition-transform">›</span>
-                        {group.label}
-                      </span>
-                    </summary>
-                    <div className="mt-2">{body}</div>
-                  </details>
-                );
-              }
-
-              return (
-                <div key={group.id}>
-                  <div className="mb-2 px-1 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                    {group.label}
-                  </div>
-                  {body}
-                </div>
-              );
-            })}
-          </nav>
-        </aside>
-
-        <div className="min-w-0 flex-1 px-5 py-5 sm:px-8 sm:py-6">
-          <Outlet />
+      <PageHeader title="docs" sub="Guides are hosted with the rest of the org. This console links out." />
+      <div className="max-w-3xl px-5 py-6 sm:px-8">
+        <a
+          href={`${DOCS}/`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex rounded border border-primary/50 bg-primary/10 px-3 py-2 font-mono text-[12px] text-primary hover:bg-primary/20"
+        >
+          Open docs site →
+        </a>
+        <div className="mt-8 flex flex-col gap-8">
+          {groups.map((g) => (
+            <section key={g.label}>
+              <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                {g.label}
+              </h2>
+              <ul className="flex flex-col gap-2">
+                {g.items.map((item) => (
+                  <li key={item.href}>
+                    <a
+                      href={item.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block rounded border border-border bg-surface/40 px-4 py-3 hover:border-primary/40"
+                    >
+                      <div className="font-mono text-[12px] text-foreground">{item.title}</div>
+                      <div className="mt-1 text-[12px] text-muted-foreground">{item.blurb}</div>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
         </div>
       </div>
     </div>
