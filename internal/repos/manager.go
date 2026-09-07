@@ -85,6 +85,13 @@ func NewManager(root string, cfgRepos []config.Repo, tokens ghclient.TokenProvid
 	if tokens == nil {
 		tokens = ghclient.EmptyToken{}
 	}
+	// git worktree add resolves a relative path against the clone, not
+	// the daemon cwd. Default root is "repos", so a relative worktree
+	// path lands inside the clone and the agent chdir misses it
+	// (fork/exec ENOENT). Absolute root keeps worktrees beside clones.
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
 	m := &Manager{
 		root:     root,
 		tokens:   tokens,

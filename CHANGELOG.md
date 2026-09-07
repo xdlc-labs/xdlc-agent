@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Per-Fix worktree paths are absolute. `git worktree add` of a relative `repos/.worktrees/...` path was resolved against the clone, so the checkout landed inside the repo and the agent `chdir` missed it (`fork/exec ... no such file or directory`).
+
 ## [0.0.1-beta.3] - 2026-09-07
 
 ### Fixed

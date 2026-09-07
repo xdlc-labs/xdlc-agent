@@ -333,3 +333,38 @@ func TestConcurrentEnsureClonedAndWorktreeAreSerialized(t *testing.T) {
 		}
 	}
 }
+
+// TestWorktreeNotNestedWhenRootIsRelative is the Ubuntu daemon
+// regression: NewManager("repos") plus git -C clone worktree add of a
+// relative path created the checkout inside the clone, then the agent
+// chdir'd to the (empty) path beside it and got fork/exec ENOENT.
+func TestWorktreeNotNestedWhenRootIsRelative(t *testing.T) {
+	_, _, workDir := worktreeFixture(t)
+
+	cwd := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+
+	mgr := NewManager("repos", []config.Repo{
+		{Name: "svc", GitHub: "org/svc", Dir: workDir, Branch: "develop"},
+	}, nil)
+	w, err := mgr.Worktree(context.Background(), "svc", "rel-root")
+	if err != nil {
+		t.Fatalf("Worktree: %v", err)
+	}
+	if !filepath.IsAbs(w.Dir) {
+		t.Fatalf("worktree dir %q is relative; git would nest it in the clone", w.Dir)
+	}
+	if strings.HasPrefix(w.Dir, workDir+string(filepath.Separator)) {
+		t.Fatalf("worktree %s nested inside clone %s", w.Dir, workDir)
+	}
+	if _, err := os.Stat(filepath.Join(w.Dir, "app.txt")); err != nil {
+		t.Fatalf("agent chdir target missing: %v", err)
+	}
+}

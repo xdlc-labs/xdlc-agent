@@ -92,6 +92,9 @@ func (m *Manager) Worktree(ctx context.Context, repo, id string) (*Worktree, err
 	base := m.Dir(repo)
 	target := m.Branch(repo)
 	dir := m.worktreeDir(repo, id)
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
 	branch := worktreeBranchPrefix + safeSegment(id)
 
 	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
