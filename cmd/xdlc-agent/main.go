@@ -886,7 +886,7 @@ func initCmd() *cobra.Command {
 
 Default --profile is ci: one repo, GitHub workflow_run → Fix. That is
 the install. Pass gitops or full only when you already have Argo / Prom
-and want DEV smoke → Promote or prod Revert (https://xdlc-labs.github.io/documentation/xdlc-agent/production-loop/).
+and want DEV smoke → Promote or prod Revert (https://xdlc.dev/agent/docs/production-loop).
 
 With --scan, every Git checkout directly under DIR that has a GitHub
 "origin" remote becomes a repos: entry. Cluster keys (argocd_app,

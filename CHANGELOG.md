@@ -38,22 +38,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Worktree per Fix** (`agent.worktree`, on by default): every Fix runs in its own `git worktree` on an `xdlc/<session id>` branch instead of the repo's shared clone. Two Fixes for one repo now run concurrently (the per-repo cap is gone; `max_concurrent_fixes` still applies), and a Fix killed mid-edit no longer leaves the shared clone dirty. The agent commits and xdlc pushes, so writing to a shared branch is no longer something the coding agent does; the push is non-force and fails loudly if the branch moved. Failed runs keep their worktree for `agent.worktree.keep_failed` (24h). Shared-clone git commands (`EnsureCloned`, worktree add/remove) are serialized per repo so overlapping Fixes cannot collide on git's index and ref locks, and a worktree belonging to a running Fix is never swept. Set `agent.worktree.enabled: false` for the old behavior ([Fix modes](https://xdlc-labs.github.io/documentation/xdlc-agent/fix-modes/))
-- Fix **verdict**: each Fix prompt asks the coding agent to close with one JSON line (`xdlc_outcome`: `fixed` / `gave_up` / `needs_human`, plus a one-line summary). A `gave_up` / `needs_human` run now fails the Fix with `escalate=agent_gave_up` / `agent_needs_human` instead of being recorded as clean because the CLI exited 0. The summary reaches the Activity row (`agent_outcome`, `agent_summary`), `meta.json` and `LESSONS.md`. An agent that prints no verdict behaves exactly as before ([Fix modes](https://xdlc-labs.github.io/documentation/xdlc-agent/fix-modes/))
-- `agent.fix_attempts` (default 1): when `fix_reverify` is on and the gate is still red, re-run the agent with what the last attempt reported doing, why the re-check failed, and freshly fetched logs from the run that is failing now. Stops early on a `gave_up` / `needs_human` verdict. Per-attempt session artifacts (`prompt-2.txt`, `output-2.txt`), `xdlc sessions show --attempt N`, and `xdlc_agent_fix_retries_total` ([Fix modes](https://xdlc-labs.github.io/documentation/xdlc-agent/fix-modes/))
-- Fix **sessions**: every Fix records prompt, agent output and diff under `sessions/`; `xdlc sessions ls|show|prune`; `session_id` in audit + `BACKLOG.md`; `agent.sessions.*` config ([Fix sessions](https://xdlc-labs.github.io/documentation/xdlc-agent/sessions/))
-- Rule sources widened: `CLAUDE.md`, `.xdlc/rules.md` and daemon-wide `agent.rules_file` join `AGENTS.md` / `.xdlc/skills/*.md`; per-file 8 KB cap instead of one tail chop; duplicates dropped; `xdlc doctor` lists what each repo contributes ([Rules and skills](https://xdlc-labs.github.io/documentation/xdlc-agent/rules-and-skills/))
+- **Worktree per Fix** (`agent.worktree`, on by default): every Fix runs in its own `git worktree` on an `xdlc/<session id>` branch instead of the repo's shared clone. Two Fixes for one repo now run concurrently (the per-repo cap is gone; `max_concurrent_fixes` still applies), and a Fix killed mid-edit no longer leaves the shared clone dirty. The agent commits and xdlc pushes, so writing to a shared branch is no longer something the coding agent does; the push is non-force and fails loudly if the branch moved. Failed runs keep their worktree for `agent.worktree.keep_failed` (24h). Shared-clone git commands (`EnsureCloned`, worktree add/remove) are serialized per repo so overlapping Fixes cannot collide on git's index and ref locks, and a worktree belonging to a running Fix is never swept. Set `agent.worktree.enabled: false` for the old behavior ([Fix modes](https://xdlc.dev/agent/docs/fix-modes))
+- Fix **verdict**: each Fix prompt asks the coding agent to close with one JSON line (`xdlc_outcome`: `fixed` / `gave_up` / `needs_human`, plus a one-line summary). A `gave_up` / `needs_human` run now fails the Fix with `escalate=agent_gave_up` / `agent_needs_human` instead of being recorded as clean because the CLI exited 0. The summary reaches the Activity row (`agent_outcome`, `agent_summary`), `meta.json` and `LESSONS.md`. An agent that prints no verdict behaves exactly as before ([Fix modes](https://xdlc.dev/agent/docs/fix-modes))
+- `agent.fix_attempts` (default 1): when `fix_reverify` is on and the gate is still red, re-run the agent with what the last attempt reported doing, why the re-check failed, and freshly fetched logs from the run that is failing now. Stops early on a `gave_up` / `needs_human` verdict. Per-attempt session artifacts (`prompt-2.txt`, `output-2.txt`), `xdlc sessions show --attempt N`, and `xdlc_agent_fix_retries_total` ([Fix modes](https://xdlc.dev/agent/docs/fix-modes))
+- Fix **sessions**: every Fix records prompt, agent output and diff under `sessions/`; `xdlc sessions ls|show|prune`; `session_id` in audit + `BACKLOG.md`; `agent.sessions.*` config ([Fix sessions](https://xdlc.dev/agent/docs/sessions))
+- Rule sources widened: `CLAUDE.md`, `.xdlc/rules.md` and daemon-wide `agent.rules_file` join `AGENTS.md` / `.xdlc/skills/*.md`; per-file 8 KB cap instead of one tail chop; duplicates dropped; `xdlc doctor` lists what each repo contributes ([Rules and skills](https://xdlc.dev/agent/docs/rules-and-skills))
 - Operator instructions on Manual Fix: optional free text in the console dialog and `POST /api/actions/fix` (`instructions`, ≤ 4096 bytes); trusted block placement, length-only in audit
 - `gemini` coding-agent provider (`gemini` CLI, `GEMINI_API_KEY`); opt-in in the container image via `--build-arg GEMINI_CLI_VERSION`
 - `xdlc init --scan <dir>` — seed `repos:` from local Git checkouts with a GitHub origin
 - `xdlc init --profile ci|gitops|full` — CI Fix is the default scaffold; GitOps / paved road are opt-in
-- `scripts/install.sh` — curl-install `xdlc` from GitHub Releases (checksum verified); [Install](https://xdlc-labs.github.io/documentation/xdlc-agent/install/)
+- `scripts/install.sh` — curl-install `xdlc` from GitHub Releases (checksum verified); [Install](https://xdlc.dev/agent/docs)
 - `scripts/e2e-local.sh` — loopback CI → Fix → Argo Promote → Alertmanager Revert (+ unknown-app 204). Token `dev-token`, `agent.timeout: 10m`, `OTEL_SDK_DISABLED=true`. Minikube/ArgoCD is a precondition, not installed.
 - `xdlc demo` — zero-infra Fix→Promote→Revert with `--provider fake` (#5)
 - Console Settings: browser-local coding-agent provider + API key (localStorage); Manual Fix sends `X-XDLC-Agent-*` headers (never audit/disk)
 - Typed contracts: `openapi/openapi.yaml` + `schema/config.schema.json`; drift tests; `docs/api-reference.md` (#15)
 - `xdlc doctor` — PATH / token / config / optional Prometheus checks (#12)
-- Docs: [vs alternatives](https://xdlc-labs.github.io/documentation/xdlc-agent/vs-alternatives/), [why not a GitHub Action](https://xdlc-labs.github.io/documentation/xdlc-agent/why-not-github-action/) (#13)
+- Docs: [vs alternatives](https://xdlc.dev/agent/docs/vs-alternatives), [why not a GitHub Action](https://xdlc.dev/agent/docs/why-not-github-action) (#13)
 - Console: distinct loading / empty / error states (fetch throws; Skeleton + QueryError) (#7)
 - FixPrompt honors `AGENTS.md`, `.xdlc/skills/*.md`, `repos[].agent_instructions` (#21)
 - CI flake ladder: rerun-failed-jobs once per `run_url` before Fix (`ci_rerun_before_fix`, default on) (#3)
@@ -134,7 +134,7 @@ First public beta of the open-source `xdlc-agent` daemon (MIT).
   scripts, overlays; `make terraform-validate` + CI job
   (`terraform init -backend=false` + `validate`)
 - Release supply chain: SPDX SBOM (Syft) + keyless cosign (GitHub OIDC)
-  on tag push; verify notes in [docs/deployment.md](https://xdlc-labs.github.io/documentation/xdlc-agent/deployment/)
+  on tag push; verify notes in [docs/deployment.md](https://xdlc.dev/agent/docs/deployment)
 - Launch-readiness docs: upgrade, versioning, API reference, DR,
   threat model, compliance, support, capacity; GOVERNANCE
 - Pod security hardening, PDB, NetworkPolicy; AWS/GCP/Azure overlays
@@ -173,7 +173,7 @@ First public beta of the open-source `xdlc-agent` daemon (MIT).
 
 - Read-only dashboard API on the daemon: `/api/health`, `/api/overview`,
   `/api/history`, `/api/backlog`, `/api/repos` (`internal/api`)
-- Docs: [console.md](https://xdlc-labs.github.io/documentation/xdlc-agent/console/); naming table in README /
+- Docs: [console.md](https://xdlc.dev/agent/docs/console); naming table in README /
   CONTRIBUTING
 - GitHub App auth preferred over PAT: `GITHUB_APP_ID` +
   `GITHUB_APP_INSTALLATION_ID` + `GITHUB_APP_PRIVATE_KEY` (or `_FILE`);

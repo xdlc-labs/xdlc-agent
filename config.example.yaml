@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=./schema/config.schema.json
 # CI Fix profile — the default install. Copy to config.yaml and edit.
 # GitOps promote / prod revert: `xdlc init --profile gitops|full` or
-# uncomment the blocks at the bottom (https://xdlc-labs.github.io/documentation/xdlc-agent/production-loop/).
+# uncomment the blocks at the bottom (https://xdlc.dev/agent/docs/production-loop).
 
 repos:
   - name: example-service

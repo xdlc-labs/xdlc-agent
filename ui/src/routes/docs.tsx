@@ -8,31 +8,31 @@ export const Route = createFileRoute("/docs")({
   component: DocsLanding,
 });
 
-const DOCS = "https://xdlc-labs.github.io/documentation";
+const DOCS = "https://xdlc.dev";
 
 const groups: { label: string; items: { href: string; title: string; blurb: string }[] }[] = [
   {
     label: "Start",
     items: [
-      { href: `${DOCS}/xdlc-agent/install/`, title: "Install", blurb: "curl-install, Docker, or source" },
-      { href: `${DOCS}/xdlc-agent/getting-started/`, title: "Getting started", blurb: "Demo or a local CI Fix daemon" },
-      { href: `${DOCS}/xdlc-agent/api-tokens/`, title: "API tokens", blurb: "Create XDLC_API_TOKEN" },
+      { href: `${DOCS}/agent/docs`, title: "Install", blurb: "curl-install, Docker, or source" },
+      { href: `${DOCS}/agent/docs/getting-started`, title: "Getting started", blurb: "Demo or a local CI Fix daemon" },
+      { href: `${DOCS}/agent/docs/api-tokens`, title: "API tokens", blurb: "Create XDLC_API_TOKEN" },
     ],
   },
   {
     label: "CI Fix",
     items: [
-      { href: `${DOCS}/xdlc-agent/github-webhooks/`, title: "GitHub", blurb: "workflow_run → Fix" },
-      { href: `${DOCS}/xdlc-agent/fix-modes/`, title: "Fix modes", blurb: "Direct push vs pull request" },
-      { href: `${DOCS}/xdlc-agent/sessions/`, title: "Fix sessions", blurb: "Prompt, output, and diff" },
+      { href: `${DOCS}/agent/docs/github-webhooks`, title: "GitHub", blurb: "workflow_run → Fix" },
+      { href: `${DOCS}/agent/docs/fix-modes`, title: "Fix modes", blurb: "Direct push vs pull request" },
+      { href: `${DOCS}/agent/docs/sessions`, title: "Fix sessions", blurb: "Prompt, output, and diff" },
     ],
   },
   {
     label: "Optional",
     items: [
-      { href: `${DOCS}/xdlc-agent/production-loop/`, title: "Profiles", blurb: "ci, gitops, full" },
-      { href: `${DOCS}/xdlc-agent/gitops-argo/`, title: "GitOps", blurb: "DEV smoke → Promote" },
-      { href: `${DOCS}/xdlc-agent/prod-health/`, title: "Prod health", blurb: "SLO breach → Revert" },
+      { href: `${DOCS}/agent/docs/production-loop`, title: "Profiles", blurb: "ci, gitops, full" },
+      { href: `${DOCS}/agent/docs/gitops-argo`, title: "GitOps", blurb: "DEV smoke → Promote" },
+      { href: `${DOCS}/agent/docs/prod-health`, title: "Prod health", blurb: "SLO breach → Revert" },
     ],
   },
 ];
@@ -43,7 +43,7 @@ function DocsLanding() {
       <PageHeader title="docs" sub="Guides are hosted with the rest of the org. This console links out." />
       <div className="max-w-3xl px-5 py-6 sm:px-8">
         <a
-          href={`${DOCS}/`}
+          href={`${DOCS}/docs`}
           target="_blank"
           rel="noreferrer"
           className="inline-flex rounded border border-primary/50 bg-primary/10 px-3 py-2 font-mono text-[12px] text-primary hover:bg-primary/20"
