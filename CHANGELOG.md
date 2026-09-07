@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.1-beta.3] - 2026-09-07
+
 ### Fixed
 
 - OTLP metrics export only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (no in-cluster collector default; local daemon no longer logs upload failures every 15s). `GET /metrics` is unchanged.
@@ -246,6 +248,7 @@ First public beta of the open-source `xdlc-agent` daemon (MIT).
 - `claude.mode: sdk` reserved but unimplemented
 - AWS/EKS bootstrap not included (local Kind only)
 
+[0.0.1-beta.3]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.3
 [0.0.1-beta.1]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.1
 [2.0.0]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v2.0.0
 [1.0.0]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v1.0.0
