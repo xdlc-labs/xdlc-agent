@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.1-beta.4] - 2026-09-07
+
 ### Fixed
 
 - Per-Fix worktree paths are absolute, and a checkout that would land inside the clone is refused. `git worktree add` of a relative `repos/.worktrees/...` path was resolved against the clone, so the agent `chdir` missed it (`fork/exec ... no such file or directory`).
@@ -257,6 +259,7 @@ First public beta of the open-source `xdlc-agent` daemon (MIT).
 - `claude.mode: sdk` reserved but unimplemented
 - AWS/EKS bootstrap not included (local Kind only)
 
+[0.0.1-beta.4]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.4
 [0.0.1-beta.3]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.3
 [0.0.1-beta.1]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.1
 [2.0.0]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v2.0.0
