@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>xdlc</strong>
+  <img src="https://xdlc-labs.github.io/documentation/images/brand/wordmark.png" width="360" alt="xdlc-labs">
 </p>
 
 <p align="center">

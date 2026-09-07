@@ -139,12 +139,21 @@ export function AppSidebar() {
   return (
     <aside className="sticky top-0 flex h-screen w-[15.5rem] shrink-0 flex-col border-r border-border/70 bg-[#070a0c]/90 backdrop-blur-md">
       <div className="border-b border-border/70 px-5 py-6">
-        <Link to="/" className="group block">
-          <span className="brand-mark font-display text-[1.7rem] font-bold uppercase text-foreground group-hover:text-primary">
-            xdlc
-          </span>
-          <span className="mt-1.5 block font-mono text-[11px] tracking-wide text-primary">
-            xdlc-agent {daemon?.version ?? "—"}
+        <Link to="/" className="group flex items-center gap-2.5">
+          <img
+            src="/favicon.svg"
+            alt=""
+            width={32}
+            height={32}
+            className="rounded-[0.45rem] shadow-[0_0_14px_color-mix(in_srgb,var(--primary)_55%,transparent)]"
+          />
+          <span>
+            <span className="brand-mark block font-display text-[1.35rem] font-bold leading-none text-foreground group-hover:text-primary">
+              xdlc
+            </span>
+            <span className="mt-1.5 block font-mono text-[11px] tracking-wide text-primary">
+              xdlc-agent {daemon?.version ?? "—"}
+            </span>
           </span>
         </Link>
       </div>
