@@ -8,7 +8,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Per-Fix worktree paths are absolute. `git worktree add` of a relative `repos/.worktrees/...` path was resolved against the clone, so the checkout landed inside the repo and the agent `chdir` missed it (`fork/exec ... no such file or directory`).
+- Per-Fix worktree paths are absolute, and a checkout that would land inside the clone is refused. `git worktree add` of a relative `repos/.worktrees/...` path was resolved against the clone, so the agent `chdir` missed it (`fork/exec ... no such file or directory`).
+- One Fix per repo+SHA after a successful run. A flake-ladder `workflow_run` for the same commit no longer opens a second PR. A failed Fix can still retry. Manual Fix (empty SHA) is unchanged.
+
+### Added
+
+- Optional `gates.ci.workflows` allowlist (name, path, or basename such as `ci`). Empty keeps today's behavior: every `workflow_run` on the tracked branch is CI, including Deploy.
 
 ## [0.0.1-beta.3] - 2026-09-07
 

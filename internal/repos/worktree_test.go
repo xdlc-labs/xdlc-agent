@@ -368,3 +368,21 @@ func TestWorktreeNotNestedWhenRootIsRelative(t *testing.T) {
 		t.Fatalf("agent chdir target missing: %v", err)
 	}
 }
+
+func TestPathInside(t *testing.T) {
+	parent := filepath.Join(string(filepath.Separator), "home", "xdlc", "repos", "svc")
+	cases := []struct {
+		child string
+		want  bool
+	}{
+		{parent, true},
+		{filepath.Join(parent, "repos", ".worktrees", "svc", "run"), true},
+		{filepath.Join(string(filepath.Separator), "home", "xdlc", "repos", ".worktrees", "svc", "run"), false},
+		{filepath.Join(string(filepath.Separator), "tmp", "elsewhere"), false},
+	}
+	for _, c := range cases {
+		if got := pathInside(parent, c.child); got != c.want {
+			t.Errorf("pathInside(%s, %s) = %v, want %v", parent, c.child, got, c.want)
+		}
+	}
+}

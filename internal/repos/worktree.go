@@ -90,10 +90,16 @@ func (m *Manager) Worktree(ctx context.Context, repo, id string) (*Worktree, err
 		return nil, fmt.Errorf("repos: unknown repo %q", repo)
 	}
 	base := m.Dir(repo)
+	if abs, err := filepath.Abs(base); err == nil {
+		base = abs
+	}
 	target := m.Branch(repo)
 	dir := m.worktreeDir(repo, id)
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs
+	}
+	if pathInside(base, dir) {
+		return nil, fmt.Errorf("repos: worktree %s would land inside clone %s", dir, base)
 	}
 	branch := worktreeBranchPrefix + safeSegment(id)
 
@@ -124,7 +130,26 @@ func (m *Manager) Worktree(ctx context.Context, repo, id string) (*Worktree, err
 	if err != nil {
 		return nil, fmt.Errorf("repos: worktree add %s: %w", repo, err)
 	}
+	if pathInside(base, dir) {
+		m.markLive(dir, false)
+		_ = m.removeWorktreeAt(ctx, base, dir, branch)
+		return nil, fmt.Errorf("repos: worktree %s resolved inside clone %s", dir, base)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		m.markLive(dir, false)
+		_ = m.removeWorktreeAt(ctx, base, dir, branch)
+		return nil, fmt.Errorf("repos: worktree %s has no checkout: %w", dir, err)
+	}
 	return &Worktree{Dir: dir, Branch: branch, Base: base, Target: target, repo: repo}, nil
+}
+
+// pathInside reports whether child is parent or a subdirectory of it.
+func pathInside(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // markLive records (or clears) a worktree as belonging to a running Fix.

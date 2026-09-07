@@ -33,6 +33,7 @@ server:
 gates:
   ci:
     trigger: on_push
+    # workflows: [ci]  # optional. Empty = every workflow_run on the branch.
 
 agent:
   mode: subprocess

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -227,4 +228,79 @@ func TestFixCoalesceLatestWins(t *testing.T) {
 	if n := disp.fixes(); n > 3 {
 		t.Fatalf("20 CI fails coalesced to %d Fixes; want ≤3", n)
 	}
+}
+
+type scriptedFixDispatcher struct {
+	mu        sync.Mutex
+	calls     int
+	failUntil int
+}
+
+func (d *scriptedFixDispatcher) Fix(context.Context, Signal) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls++
+	if d.calls <= d.failUntil {
+		return errors.New("fix failed")
+	}
+	return nil
+}
+func (d *scriptedFixDispatcher) Revert(context.Context, Signal) error  { return nil }
+func (d *scriptedFixDispatcher) Promote(context.Context, Signal) error { return nil }
+func (d *scriptedFixDispatcher) n() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.calls
+}
+
+func TestFixOnePerRepoSHA(t *testing.T) {
+	bl, err := backlog.Open(filepath.Join(t.TempDir(), "BACKLOG.md"))
+	if err != nil {
+		t.Fatalf("backlog.Open: %v", err)
+	}
+	ctx := context.Background()
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+
+	t.Run("second delivery after success is skipped", func(t *testing.T) {
+		disp := &scriptedFixDispatcher{}
+		o := New(disp, bl, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		sig := Signal{Source: SourceCI, Repo: "svc", Kind: KindFail, SHA: sha}
+		o.handle(ctx, sig)
+		o.handle(ctx, sig)
+		if disp.n() != 1 {
+			t.Fatalf("Fix calls = %d, want 1", disp.n())
+		}
+	})
+
+	t.Run("failed Fix can retry the same SHA", func(t *testing.T) {
+		disp := &scriptedFixDispatcher{failUntil: 1}
+		o := New(disp, bl, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		sig := Signal{Source: SourceCI, Repo: "svc", Kind: KindFail, SHA: sha}
+		o.handle(ctx, sig)
+		o.handle(ctx, sig)
+		if disp.n() != 2 {
+			t.Fatalf("Fix calls = %d, want 2 (retry after error)", disp.n())
+		}
+	})
+
+	t.Run("empty SHA is never coalesced", func(t *testing.T) {
+		disp := &scriptedFixDispatcher{}
+		o := New(disp, bl, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		sig := Signal{Source: SourceCI, Repo: "svc", Kind: KindFail}
+		o.handle(ctx, sig)
+		o.handle(ctx, sig)
+		if disp.n() != 2 {
+			t.Fatalf("manual/empty SHA Fix calls = %d, want 2", disp.n())
+		}
+	})
+
+	t.Run("different SHA still Fixes", func(t *testing.T) {
+		disp := &scriptedFixDispatcher{}
+		o := New(disp, bl, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		o.handle(ctx, Signal{Source: SourceCI, Repo: "svc", Kind: KindFail, SHA: sha})
+		o.handle(ctx, Signal{Source: SourceCI, Repo: "svc", Kind: KindFail, SHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
+		if disp.n() != 2 {
+			t.Fatalf("Fix calls = %d, want 2", disp.n())
+		}
+	})
 }

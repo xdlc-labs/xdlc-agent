@@ -42,6 +42,7 @@ config: |
   gates:
     ci:
       trigger: on_push
+      # workflows: [ci]  # optional. Empty = every workflow_run on the branch.
   server:
     addr: ":8080"
     require_webhook_secret: true

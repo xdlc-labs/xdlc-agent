@@ -127,6 +127,9 @@ func (m *Manager) Dir(repo string) string {
 		return filepath.Join(m.root, repo)
 	}
 	if r.Dir != "" {
+		if abs, err := filepath.Abs(r.Dir); err == nil {
+			return abs
+		}
 		return r.Dir
 	}
 	return filepath.Join(m.root, repo)

@@ -40,7 +40,7 @@ func resolveTestRepo(name string) (string, bool) {
 // wfRun builds a workflow_run delivery body. Zero fields fall back to a
 // legitimate same-repo push run, so each case only states its deviation.
 type wfRun struct {
-	action, repo, headRepo, event, branch, sha, conclusion string
+	action, repo, headRepo, event, branch, sha, conclusion, name, path string
 }
 
 func (r wfRun) body() []byte {
@@ -50,6 +50,8 @@ func (r wfRun) body() []byte {
 		"repository": {"full_name": %q},
 		"workflow_run": {
 			"event": %q,
+			"name": %q,
+			"path": %q,
 			"conclusion": %q,
 			"head_branch": %q,
 			"head_sha": %q,
@@ -60,6 +62,8 @@ func (r wfRun) body() []byte {
 		or(r.action, "completed"),
 		repo,
 		or(r.event, "push"),
+		or(r.name, "CI"),
+		or(r.path, ".github/workflows/ci.yml"),
 		or(r.conclusion, "failure"),
 		or(r.branch, "develop"),
 		or(r.sha, testSHA),
@@ -291,6 +295,49 @@ func TestHandleGitHubNoBranchConfigured(t *testing.T) {
 	}
 	if len(ch) != 0 {
 		t.Fatal("emitted a signal with no branch configured")
+	}
+}
+
+func TestMatchCIWorkflow(t *testing.T) {
+	cases := []struct {
+		allow      []string
+		name, path string
+		want       bool
+	}{
+		{nil, "Deploy", ".github/workflows/deploy.yml", true},
+		{[]string{}, "Deploy", ".github/workflows/deploy.yml", true},
+		{[]string{"ci"}, "CI", ".github/workflows/ci.yml", true},
+		{[]string{"CI"}, "ci", ".github/workflows/ci.yml", true},
+		{[]string{"ci.yml"}, "CI", ".github/workflows/ci.yml", true},
+		{[]string{".github/workflows/ci.yml"}, "CI", ".github/workflows/ci.yml", true},
+		{[]string{"ci"}, "Deploy", ".github/workflows/deploy.yml", false},
+		{[]string{"ci", "test"}, "Test", ".github/workflows/test.yaml", true},
+	}
+	for _, c := range cases {
+		if got := matchCIWorkflow(c.allow, c.name, c.path); got != c.want {
+			t.Errorf("matchCIWorkflow(%v, %q, %q) = %v, want %v", c.allow, c.name, c.path, got, c.want)
+		}
+	}
+}
+
+func TestHandleGitHubCIWorkflowAllowlist(t *testing.T) {
+	ch := make(chan orchestrator.Signal, 1)
+	srv := githubServer(ch, nil)
+	srv.CIWorkflows = []string{"ci"}
+
+	if got := postGitHub(t, srv, wfRun{name: "CI", path: ".github/workflows/ci.yml"}.body(), "d1"); got != http.StatusAccepted {
+		t.Fatalf("CI workflow: status = %d, want 202", got)
+	}
+	if len(ch) != 1 {
+		t.Fatalf("CI workflow emitted %d signals, want 1", len(ch))
+	}
+	<-ch
+
+	if got := postGitHub(t, srv, wfRun{name: "Deploy", path: ".github/workflows/deploy.yml"}.body(), "d2"); got != http.StatusNoContent {
+		t.Fatalf("Deploy workflow: status = %d, want 204", got)
+	}
+	if len(ch) != 0 {
+		t.Fatalf("Deploy workflow emitted a CI signal: %+v", <-ch)
 	}
 }
 

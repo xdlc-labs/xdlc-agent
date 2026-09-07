@@ -194,6 +194,10 @@ type ExternalGateConfig struct {
 // CIGateConfig configures the ci gate.
 type CIGateConfig struct {
 	Trigger string `yaml:"trigger"`
+	// Workflows is an allowlist of GitHub Actions workflow names or
+	// file basenames (ci, ci.yml, .github/workflows/ci.yml). Empty means
+	// every workflow_run on the tracked branch is CI, including Deploy.
+	Workflows []string `yaml:"workflows"`
 }
 
 // DevSmokeGateConfig configures the dev-smoke gate's shared defaults —

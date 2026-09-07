@@ -358,6 +358,7 @@ func daemonCmd() *cobra.Command {
 				// CI deliveries (one resolver, shared with promote/revert).
 				BranchFor:     repoMgr.Branch,
 				DefaultBranch: repos.DefaultBranch,
+				CIWorkflows:   cfg.Gates.CI.Workflows,
 				ResolveRepo:   repoMgr.Resolve,
 				// An ArgoCD notification is a check-now trigger: the
 				// verdict comes from the real gate, pinned to the dev tip
