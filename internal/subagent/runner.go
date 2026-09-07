@@ -143,14 +143,17 @@ var providerDefaults = map[Provider]providerSpec{
 	},
 	ProviderCursor: {
 		binary: "cursor-agent",
-		// -p print/non-interactive; --trust required for temp/demo workdirs
-		args: []string{"-p", "--trust", promptPlaceholder},
+		// -p print/non-interactive. --trust skips the workspace prompt.
+		// --force (alias --yolo) auto-approves file/shell tools; --trust
+		// alone still blocks unallowlisted commands as userRejected, and
+		// a headless Fix has no TTY to answer them.
+		args: []string{"-p", "--trust", "--force", promptPlaceholder},
 	},
 	ProviderGemini: {
 		binary: "gemini",
 		// -p headless prompt; --yolo auto-approves the file/shell tool
 		// calls a Fix needs (the CLI otherwise waits on a TTY prompt that
-		// never comes). Same tradeoff as cursor's --trust.
+		// never comes). Same tradeoff as cursor's --force.
 		args: []string{"-p", promptPlaceholder, "--yolo"},
 	},
 }

@@ -18,7 +18,7 @@ func TestNewSubprocessRunnerProviderDefaults(t *testing.T) {
 	}{
 		{ProviderClaude, "claude", []string{"-p", promptPlaceholder, "--output-format", "json"}},
 		{ProviderCodex, "codex", []string{"exec", promptPlaceholder}},
-		{ProviderCursor, "cursor-agent", []string{"-p", "--trust", promptPlaceholder}},
+		{ProviderCursor, "cursor-agent", []string{"-p", "--trust", "--force", promptPlaceholder}},
 		{"some-unknown-future-provider", "claude", []string{"-p", promptPlaceholder, "--output-format", "json"}},
 	}
 
@@ -188,6 +188,21 @@ func TestExtractEnvWithExtraKeys(t *testing.T) {
 	// nil extras behaves exactly like ExtractAllowlistEnv.
 	if strings.Join(ExtractEnv(in, nil), "\n") != strings.Join(ExtractAllowlistEnv(in), "\n") {
 		t.Error("ExtractEnv(in, nil) should match ExtractAllowlistEnv(in)")
+	}
+}
+
+func TestCursorProviderDefaults(t *testing.T) {
+	r := NewSubprocessRunner(ProviderCursor, "", nil, 0, nil)
+	if r.Binary != "cursor-agent" {
+		t.Fatalf("want cursor-agent binary, got %q", r.Binary)
+	}
+	if !slices.Contains(r.Args, "--trust") {
+		t.Fatalf("want --trust in argv, got %v", r.Args)
+	}
+	// --force auto-approves tool calls; --trust only skips the workspace
+	// prompt. Without --force a headless Fix gets userRejected on shell.
+	if !slices.Contains(r.Args, "--force") {
+		t.Fatalf("want --force in argv, got %v", r.Args)
 	}
 }
 

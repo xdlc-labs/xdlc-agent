@@ -14,6 +14,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `xdlc doctor --skip-network` warns (does not fail) when every repo has a local `dir:` and GitHub auth is unset.
 - A Fix's recorded `total_cost_usd` / token counts are now the sum of every agent run it took, not just the last one. Previously an `agent.fix_plan` Fix reported only its patch pass, hiding the diagnose pass it also paid for.
 - Evidence values containing spaces (an agent summary, a fleet escalation reason) are quoted in `BACKLOG.md` and the console Activity row, so a free-text value no longer reads as the start of the next `key=`. Both now use one formatter.
+- `EnsureCloned` skip-fetch compares HEAD to `git ls-remote`, not the local `origin/<branch>` tracking ref. A clone that had not fetched since the failing push used to skip onto the previous (green) commit, so Fix never saw the break.
+- Cursor CLI defaults include `--force` (with `--trust`). `--trust` only skips the workspace prompt. Without `--force`, a headless Fix gets `userRejected` on unallowlisted shell commands and never opens a PR.
 
 ### Changed
 
@@ -58,8 +60,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Subagent: prompt on stdin (not argv); kill process group on timeout; external gates get env allowlist + same kill hygiene (#11)
-- `EnsureCloned`: skip fetch when HEAD matches `origin/<branch>` and tree clean; shallow first clone; parallel startup pre-clone (#17)
-- Cursor CLI defaults: `-p --trust` for headless/demo workdirs
+- `EnsureCloned`: skip fetch when HEAD matches the remote tip (`ls-remote`) and the tree is clean; shallow first clone; parallel startup pre-clone (#17)
+- Cursor CLI defaults: `-p --trust --force` for headless Fix (workspace trust plus auto-approved tools)
 - Actions: Manual Fix/Promote/Revert post config repo `id` (not GitHub slug)
 - Console `/repos/$id`: parent layout uses `<Outlet />` so timeline renders (was stuck on list)
 
