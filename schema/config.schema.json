@@ -62,7 +62,12 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "trigger": { "type": "string" }
+            "trigger": { "type": "string" },
+            "workflows": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "GitHub Actions workflow names or file basenames that count as CI. Empty = every workflow_run on the branch."
+            }
           }
         },
         "dev-smoke": {

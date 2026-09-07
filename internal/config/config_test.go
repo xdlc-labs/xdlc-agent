@@ -27,6 +27,7 @@ server:
 gates:
   ci:
     trigger: on_push
+    workflows: [ci]
   dev-smoke:
     trigger: on_sync
     namespace: dev
@@ -81,6 +82,9 @@ fleet:
 	}
 	if cfg.Server.WebhookRateBurst != 30 {
 		t.Errorf("webhook_rate_burst = %d, want 30", cfg.Server.WebhookRateBurst)
+	}
+	if got := cfg.Gates.CI.Workflows; len(got) != 1 || got[0] != "ci" {
+		t.Errorf("gates.ci.workflows = %v, want [ci]", got)
 	}
 	if cfg.Gates.DevSmoke.Interval != 45*time.Second {
 		t.Errorf("dev-smoke.interval = %v", cfg.Gates.DevSmoke.Interval)

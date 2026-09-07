@@ -26,6 +26,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -71,7 +72,11 @@ type Server struct {
 	// deliveries are then rejected rather than defaulted — this handler
 	// does not get to guess which branch is a repo's trunk.
 	DefaultBranch string
-	ResolveRepo   func(fullName string) (shortName string, ok bool) // org/repo -> config short name
+	// CIWorkflows is an allowlist of GitHub Actions workflow names or
+	// file basenames. Empty means every completed push workflow_run on
+	// the tracked branch is treated as CI.
+	CIWorkflows []string
+	ResolveRepo func(fullName string) (shortName string, ok bool) // org/repo -> config short name
 	// ResolveArgoApp maps ArgoCD app name -> config short repo name.
 	ResolveArgoApp func(appName string) (shortName string, ok bool)
 	// CheckSmoke runs the repo's real dev-smoke gate — ArgoCD
@@ -125,6 +130,8 @@ type workflowRunEvent struct {
 		// the run tested a commit that is actually on a branch of the
 		// repository — see handleGitHub.
 		Event          string `json:"event"`
+		Name           string `json:"name"`
+		Path           string `json:"path"`
 		Conclusion     string `json:"conclusion"`
 		HeadBranch     string `json:"head_branch"`
 		HeadSHA        string `json:"head_sha"`
@@ -234,6 +241,14 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if !matchCIWorkflow(s.CIWorkflows, evt.WorkflowRun.Name, evt.WorkflowRun.Path) {
+		s.Log.Debug("github webhook: ignoring non-CI workflow",
+			"repository", evt.Repository.FullName,
+			"workflow", evt.WorkflowRun.Name,
+			"path", evt.WorkflowRun.Path)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	kind := orchestrator.KindFail
 	if evt.WorkflowRun.Conclusion == "success" {
@@ -247,15 +262,41 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		SHA:    evt.WorkflowRun.HeadSHA,
 		At:     time.Now().UTC(),
 		Evidence: map[string]any{
-			"conclusion":  evt.WorkflowRun.Conclusion,
-			"run_url":     evt.WorkflowRun.HTMLURL,
-			"head_sha":    evt.WorkflowRun.HeadSHA,
-			"head_branch": evt.WorkflowRun.HeadBranch,
-			"run_event":   evt.WorkflowRun.Event,
+			"conclusion":    evt.WorkflowRun.Conclusion,
+			"run_url":       evt.WorkflowRun.HTMLURL,
+			"head_sha":      evt.WorkflowRun.HeadSHA,
+			"head_branch":   evt.WorkflowRun.HeadBranch,
+			"run_event":     evt.WorkflowRun.Event,
+			"workflow_name": evt.WorkflowRun.Name,
+			"workflow_path": evt.WorkflowRun.Path,
 		},
 	}
 	s.emit(sig, "github")
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// matchCIWorkflow reports whether a GitHub Actions run is in the CI
+// allowlist. Empty allow means every workflow (back-compat). A list
+// entry matches the workflow name, the path, the basename, or basename
+// without .yml/.yaml (so `ci` matches `.github/workflows/ci.yml`).
+func matchCIWorkflow(allow []string, name, path string) bool {
+	if len(allow) == 0 {
+		return true
+	}
+	base := filepath.Base(path)
+	for _, w := range allow {
+		w = strings.TrimSpace(w)
+		if w == "" {
+			continue
+		}
+		if strings.EqualFold(w, name) || strings.EqualFold(w, path) || strings.EqualFold(w, base) {
+			return true
+		}
+		if strings.EqualFold(w+".yml", base) || strings.EqualFold(w+".yaml", base) {
+			return true
+		}
+	}
+	return false
 }
 
 // argoCDNotification is the payload shape from Argo CD notifications

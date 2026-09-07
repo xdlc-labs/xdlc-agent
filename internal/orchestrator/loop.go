@@ -57,6 +57,14 @@ type Orchestrator struct {
 	reranMu sync.Mutex
 	reran   map[string]struct{}
 
+	// fixSHA is one successful Fix per repo+SHA this process lifetime.
+	// A flake-ladder rerun of the same commit used to open a second PR
+	// after the first Fix already succeeded. Empty SHA (manual Fix) is
+	// never claimed. A failed Fix clears inflight so a later delivery
+	// can retry.
+	fixSHAMu sync.Mutex
+	fixSHA   map[string]fixSHAState
+
 	// Fleet policy (optional; zero Fleet = no suppressions).
 	Fleet    FleetPolicy
 	RepoDeps map[string][]string // short name → depends_on
@@ -88,7 +96,13 @@ func New(dispatcher Dispatcher, bl *backlog.Store, log *slog.Logger) *Orchestrat
 		breach:     map[string]bool{},
 		RepoDeps:   map[string][]string{},
 		reran:      map[string]struct{}{},
+		fixSHA:     map[string]fixSHAState{},
 	}
+}
+
+type fixSHAState struct {
+	inflight bool
+	ok       bool
 }
 
 // Run blocks, processing signals until ctx is cancelled. Fan-out is by
@@ -187,8 +201,17 @@ func (o *Orchestrator) handle(ctx context.Context, s Signal) {
 			s.Evidence["rerun"] = "success"
 			err = nil
 			_ = green
+		} else if skip := o.claimFixSHA(s); skip != "" {
+			action = ActionNoop
+			if s.Evidence == nil {
+				s.Evidence = map[string]any{}
+			}
+			s.Evidence["skip_fix_sha"] = skip
+			o.Log.Info("skipping duplicate Fix for SHA",
+				"repo", s.Repo, "sha", s.SHA, "reason", skip)
 		} else {
 			err = o.Dispatcher.Fix(ctx, s)
+			o.finishFixSHA(s, err)
 		}
 	case ActionRevert:
 		err = o.Dispatcher.Revert(ctx, s)
@@ -306,4 +329,52 @@ func (o *Orchestrator) tryCIRerun(ctx context.Context, s *Signal) (green bool, s
 	}
 	o.Log.Info("ci rerun still red; invoking Fix", "repo", s.Repo, "run_url", runURL)
 	return false, false
+}
+
+func fixSHAKey(repo, sha string) string {
+	return repo + "\x00" + sha
+}
+
+// claimFixSHA returns a skip reason when this repo+SHA already has a
+// running or successful Fix. Empty SHA is never claimed (manual Fix).
+func (o *Orchestrator) claimFixSHA(s Signal) string {
+	sha := strings.TrimSpace(s.SHA)
+	if sha == "" {
+		return ""
+	}
+	key := fixSHAKey(s.Repo, sha)
+	o.fixSHAMu.Lock()
+	defer o.fixSHAMu.Unlock()
+	if o.fixSHA == nil {
+		o.fixSHA = map[string]fixSHAState{}
+	}
+	st := o.fixSHA[key]
+	if st.inflight {
+		return "inflight"
+	}
+	if st.ok {
+		return "already_fixed"
+	}
+	st.inflight = true
+	o.fixSHA[key] = st
+	return ""
+}
+
+func (o *Orchestrator) finishFixSHA(s Signal, err error) {
+	sha := strings.TrimSpace(s.SHA)
+	if sha == "" {
+		return
+	}
+	key := fixSHAKey(s.Repo, sha)
+	o.fixSHAMu.Lock()
+	defer o.fixSHAMu.Unlock()
+	if o.fixSHA == nil {
+		return
+	}
+	st := o.fixSHA[key]
+	st.inflight = false
+	if err == nil {
+		st.ok = true
+	}
+	o.fixSHA[key] = st
 }
