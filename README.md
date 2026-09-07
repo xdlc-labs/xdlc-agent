@@ -78,25 +78,16 @@ helm install xdlc-agent deploy/helm/xdlc-agent \
 
 ## How it works
 
-```mermaid
-flowchart TD
-    A["CI fail on the integration branch"] -->|workflow_run webhook| B["xdlc daemon"]
-    B --> C["Policy: Fix / Promote / Revert / noop"]
-    C -->|Fix| D["Your coding-agent CLI"]
-    D --> E["Commit + push, or BACKLOG.md"]
-    C -->|Promote| F["Fast-forward develop to main"]
-    C -->|Revert| G["git revert on main"]
-    B --> H["Console + audit DB + sessions"]
-```
+Same diagram as the [architecture](https://xdlc-labs.github.io/documentation/xdlc-agent/architecture/) page: one loop, three gates.
+
+![One loop, three gates: xdlc-agent → GitHub → DEV → promote → PRODUCTION](https://xdlc-labs.github.io/documentation/images/architecture.jpg)
 
 1. GitHub reports a failed `workflow_run` (or you enable DEV smoke / prod health later).
 2. The daemon validates the webhook and asks policy what to do.
 3. **Fix** runs your agent CLI with the failing logs and repo conventions (`AGENTS.md` / `CLAUDE.md`).
 4. Evidence lands in the console, the audit store, and `xdlc sessions show`.
 
-The default install is **CI Fix** only. GitOps promote and prod revert are opt-in profiles.
-
-![Architecture: xdlc-agent loop with CI, DEV, and PROD gates](https://xdlc-labs.github.io/documentation/images/architecture.jpg)
+The default install is **CI Fix** only. GitOps promote and prod revert are opt-in. See [Optional profiles](https://xdlc-labs.github.io/documentation/xdlc-agent/production-loop/).
 
 ## Ops console
 
@@ -121,20 +112,20 @@ Embedded at `/` when the daemon runs.
 
 ## Docs
 
-Full guides: **[xdlc-labs.github.io/documentation](https://xdlc-labs.github.io/documentation/)**.
+Guides (same order as the docs sidebar): **[xdlc-labs.github.io/documentation](https://xdlc-labs.github.io/documentation/)**.
 
-| Start | CI Fix | Optional |
-|-------|--------|----------|
-| [Install](https://xdlc-labs.github.io/documentation/xdlc-agent/install/) | [GitHub](https://xdlc-labs.github.io/documentation/xdlc-agent/github-webhooks/) | [Profiles](https://xdlc-labs.github.io/documentation/xdlc-agent/production-loop/) |
-| [Getting started](https://xdlc-labs.github.io/documentation/xdlc-agent/getting-started/) | [Fix modes](https://xdlc-labs.github.io/documentation/xdlc-agent/fix-modes/) | [GitOps](https://xdlc-labs.github.io/documentation/xdlc-agent/gitops-argo/) |
-| [API tokens](https://xdlc-labs.github.io/documentation/xdlc-agent/api-tokens/) | [Sessions](https://xdlc-labs.github.io/documentation/xdlc-agent/sessions/) | [Prod health](https://xdlc-labs.github.io/documentation/xdlc-agent/prod-health/) |
+Start: [Install](https://xdlc-labs.github.io/documentation/xdlc-agent/install/) · [Getting started](https://xdlc-labs.github.io/documentation/xdlc-agent/getting-started/) · [API tokens](https://xdlc-labs.github.io/documentation/xdlc-agent/api-tokens/)
+
+CI Fix: [GitHub webhooks](https://xdlc-labs.github.io/documentation/xdlc-agent/github-webhooks/) · [Fix modes](https://xdlc-labs.github.io/documentation/xdlc-agent/fix-modes/) · [Rules and skills](https://xdlc-labs.github.io/documentation/xdlc-agent/rules-and-skills/) · [Fix sessions](https://xdlc-labs.github.io/documentation/xdlc-agent/sessions/) · [Deployment](https://xdlc-labs.github.io/documentation/xdlc-agent/deployment/) · [Operations](https://xdlc-labs.github.io/documentation/xdlc-agent/operations/)
+
+Optional: [Profiles](https://xdlc-labs.github.io/documentation/xdlc-agent/production-loop/) · [GitOps](https://xdlc-labs.github.io/documentation/xdlc-agent/gitops-argo/) · [Prod health](https://xdlc-labs.github.io/documentation/xdlc-agent/prod-health/)
 
 ## In this org
 
 - [Airlock](https://github.com/xdlc-labs/airlock) — CI release gate for prompts, skills, MCP, and models
 - [documentation](https://github.com/xdlc-labs/documentation) — hosted guides
-- [example-service](https://github.com/xdlc-labs/example-service) — PR testing battleground
-- [fixtures](https://github.com/xdlc-labs/fixtures) — graded planted-break PRs
+- [example-service](https://github.com/xdlc-labs/example-service) — public demo HTTP service
+- [fixtures](https://github.com/xdlc-labs/fixtures) — scratch PRs with planted breaks
 
 ## Contribute
 
