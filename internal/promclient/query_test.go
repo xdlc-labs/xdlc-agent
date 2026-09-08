@@ -2,8 +2,10 @@ package promclient
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,15 +32,44 @@ func TestQuery(t *testing.T) {
 	}
 }
 
+// TestQueryEmptyResult: a query that matched no series must report
+// ErrNoData, not 0. Returning 0 made the prod-health gate — whose only
+// failure condition is value > threshold — read a renamed metric, a
+// dead exporter or a typo'd query as a perfectly healthy service, and
+// silently stop detecting breaches (issue #48).
 func TestQueryEmptyResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
 	}))
 	t.Cleanup(srv.Close)
 
-	v, err := New(srv.URL).Query(context.Background(), "none")
+	v, err := New(srv.URL).Query(context.Background(), "absent_metric")
+	if !errors.Is(err, ErrNoData) {
+		t.Fatalf("err = %v, want ErrNoData", err)
+	}
+	if v != 0 {
+		t.Fatalf("v = %v, want the zero value alongside the error", v)
+	}
+	// The text lands in a BACKLOG.md line and an audit row, so it has to
+	// name the query that came back empty.
+	if !strings.Contains(err.Error(), "absent_metric") {
+		t.Fatalf("error does not name the query: %v", err)
+	}
+}
+
+// TestQueryGenuineZero: a series that exists and holds 0 is data, not
+// missing data. An error-rate query with zero errors in the window is
+// the everyday case, and it must stay a plain 0, nil — otherwise the
+// #48 fix would block the gate on every healthy service.
+func TestQueryGenuineZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1,"0"]}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	v, err := New(srv.URL).Query(context.Background(), "err_rate")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("genuine zero returned an error: %v", err)
 	}
 	if v != 0 {
 		t.Fatalf("v = %v, want 0", v)

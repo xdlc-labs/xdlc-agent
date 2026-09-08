@@ -8,6 +8,7 @@ package promclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -35,6 +36,30 @@ const DefaultTimeout = 10 * time.Second
 // without an HTTP client. Shared, like http.DefaultClient, but with a
 // Timeout — the whole point of not using http.DefaultClient.
 var defaultHTTP = &http.Client{Timeout: DefaultTimeout}
+
+// ErrNoData reports that a query ran successfully and matched no series
+// at all. Query wraps it (with the PromQL text) instead of returning a
+// bare 0, because the two are not the same fact and the difference is
+// safety-critical for any caller that compares the value to a
+// threshold: "no series" carries no information about the service,
+// while 0 does.
+//
+// Before issue #48 an empty result set came back as 0, nil. On the
+// prod-health gate — whose only failure condition is value > threshold,
+// and whose action is Revert — that read as p95=0 / error_rate=0, i.e.
+// perfectly healthy, at the exact moment the gate's inputs had broken
+// (metric renamed, exporter down, relabelled away, a typo in the
+// query). The gate silently lost the ability to detect a breach, and
+// the poller's edge trigger cleared any breach already live.
+//
+// A caller that genuinely wants zero for an absent series can still
+// have it, but must now say so:
+//
+//	v, err := c.Query(ctx, q)
+//	if errors.Is(err, promclient.ErrNoData) {
+//		v, err = 0, nil
+//	}
+var ErrNoData = errors.New("query matched no series")
 
 // Client queries one PromQL instant-query HTTP API.
 type Client struct {
@@ -70,8 +95,11 @@ type queryResponse struct {
 }
 
 // Query runs promQL as an instant query and returns the first result's
-// scalar value. Returns 0 if the query has no result series (e.g. an
-// error-rate query with zero requests in the window).
+// scalar value.
+//
+// A query that matched no series returns ErrNoData, wrapped with the
+// PromQL text, rather than 0 — see ErrNoData for why. A series that
+// exists and holds 0 returns 0, nil, as it always has.
 func (c *Client) Query(ctx context.Context, promQL string) (float64, error) {
 	u := fmt.Sprintf("%s/api/v1/query?%s", c.BaseURL, url.Values{"query": {promQL}}.Encode())
 
@@ -98,7 +126,7 @@ func (c *Client) Query(ctx context.Context, promQL string) (float64, error) {
 		return 0, fmt.Errorf("promclient: query %q: status %q", promQL, qr.Status)
 	}
 	if len(qr.Data.Result) == 0 {
-		return 0, nil
+		return 0, fmt.Errorf("promclient: %w: %q", ErrNoData, promQL)
 	}
 
 	valStr, ok := qr.Data.Result[0].Value[1].(string)

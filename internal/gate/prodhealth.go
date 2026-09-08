@@ -2,8 +2,11 @@ package gate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/xdlc-labs/xdlc-agent/internal/promclient"
 )
 
 // RepoThresholds is an optional per-repo override of the gate's default
@@ -29,7 +32,10 @@ type ProdHealthGate struct {
 	// use P95ThresholdMS / ErrorRateThresh.
 	RepoThresholds map[string]RepoThresholds
 
-	// Query runs a PromQL query and returns the scalar result.
+	// Query runs a PromQL query and returns the scalar result. An error
+	// — including promclient.ErrNoData for a query that matched no
+	// series — makes Check return no verdict at all, which the runners
+	// turn into an orchestrator.Blocked signal.
 	Query func(ctx context.Context, promQL string) (float64, error)
 
 	P95Query       string
@@ -51,11 +57,11 @@ func (g *ProdHealthGate) Check(ctx context.Context, repo string) (Result, error)
 
 	p95, err := g.Query(ctx, p95Q)
 	if err != nil {
-		return Result{}, fmt.Errorf("prod-health gate: p95 query: %w", err)
+		return Result{}, queryErr("p95_query", err)
 	}
 	errRate, err := g.Query(ctx, errQ)
 	if err != nil {
-		return Result{}, fmt.Errorf("prod-health gate: error-rate query: %w", err)
+		return Result{}, queryErr("error_rate_query", err)
 	}
 
 	status := StatusPass
@@ -75,6 +81,28 @@ func (g *ProdHealthGate) Check(ctx context.Context, repo string) (Result, error)
 			"error_rate_query":  errQ,
 		},
 	}, nil
+}
+
+// queryErr wraps a failed metrics query, naming the config key that
+// produced it so an operator reading a BACKLOG.md line, an audit row or
+// the console Activity feed knows which of the two queries to go and
+// look at.
+//
+// A query that matched no series gets its own wording, because the
+// operator's next move is different: nothing needs to be wrong with the
+// service for this to happen, and the thing to inspect is the query or
+// the exporter behind it. Either way it is an error and not a verdict,
+// so the runner emits orchestrator.Blocked (escalate=gate_unavailable,
+// mapped to a noop) rather than a pass. Reporting a pass here is the
+// issue #48 bug: no data used to arrive as p95=0 / error_rate=0, which
+// this gate reads as healthy, silently disabling breach detection and
+// clearing any breach already live.
+func queryErr(key string, err error) error {
+	if errors.Is(err, promclient.ErrNoData) {
+		return fmt.Errorf("prod-health gate: %s matched no series, so prod health is unknown, not healthy: "+
+			"check the metric name, its exporter, and any relabelling before trusting this gate again: %w", key, err)
+	}
+	return fmt.Errorf("prod-health gate: %s: %w", key, err)
 }
 
 func (g *ProdHealthGate) thresholdsFor(repo string) (p95MS, errRate float64) {

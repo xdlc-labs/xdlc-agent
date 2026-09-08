@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A vanished metric series read as perfectly healthy, silently disabling breach detection** (#48). `promclient.Query` returned `0, nil` for a query that matched no series, and the prod-health gate fails only when a value exceeds its threshold, so no data always passed. If a series stopped existing — metric renamed, exporter down, a relabel change, a typo in `p95_query` or `error_rate_query` — the gate reported healthy at the exact moment its inputs broke, and the poller's edge trigger *cleared* any breach already live. Since this gate's action is Revert, that is the dangerous direction to fail in. An empty result set is now `promclient.ErrNoData`, which the gate turns into no verdict at all and therefore a `blocked` signal (`escalate=gate_unavailable`, mapped to a noop), naming which of the two queries came back empty and telling the operator to check the metric, its exporter and any relabelling. A genuine zero from a series that really exists is still a pass, and a transport failure keeps its own wording so the timeout case is not mislabelled as no-data. A caller that wants zero for an absent series can still have it, but has to say so
+
 ## [0.0.1-beta.5] - 2026-09-08
 
 This release exists because verifying the open adoption issues turned the daemon's own
