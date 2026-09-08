@@ -910,6 +910,13 @@ func mapKindStatus(kind string) string {
 		return "pass"
 	case "fail", "breach":
 		return "fail"
+	case string(orchestrator.KindBlocked):
+		// The gate could not run, so it has no verdict — "waiting" is
+		// the console vocabulary for that. Not "idle", which means
+		// "nothing has happened yet" and would show a dead gate as a
+		// quiet one (issue #45); not "fail", which is a verdict about
+		// the software.
+		return "waiting"
 	default:
 		return "idle"
 	}
@@ -920,6 +927,11 @@ func mapHealth(r store.Record) string {
 		return "breach"
 	}
 	if r.Kind == "fail" {
+		return "degraded"
+	}
+	if r.Kind == string(orchestrator.KindBlocked) {
+		// Unknown, not well: the last thing this repo's gate did was
+		// fail to run, so the row must not read "healthy".
 		return "degraded"
 	}
 	return "healthy"

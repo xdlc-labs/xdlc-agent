@@ -5,7 +5,9 @@ package validate
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,10 +150,10 @@ func Config(cfg *config.Config) []Issue {
 		}
 
 		if hasGate(r, "dev-smoke") {
-			if resolveArgoCDApp(cfg, r) == "" {
+			if ResolveArgoCDApp(cfg, r) == "" {
 				issues = append(issues, Issue{Repo: r.Name, Message: "dev-smoke gate configured but no argocd_app (repo or gates.dev-smoke default)"})
 			}
-			if resolveProbeJob(cfg, r) == "" {
+			if ResolveProbeJob(cfg, r) == "" {
 				issues = append(issues, Issue{Repo: r.Name, Message: "dev-smoke gate configured but no probe_job (repo or gates.dev-smoke default)"})
 			}
 		}
@@ -286,9 +288,25 @@ func GitOps(cfg *config.Config, gitopsDir string) ([]Issue, error) {
 	if strings.TrimSpace(gitopsDir) == "" {
 		return nil, nil // optional — full gitops tree lives outside this repo
 	}
-	appNames, err := applicationNames(filepath.Join(gitopsDir, "apps", "dev"))
+	appsDev := filepath.Join(gitopsDir, "apps", "dev")
+	// Guard before reading, the way RoleNamespace guards before
+	// comparing: a GitOps tree that simply does not use the apps/dev
+	// layout is a *finding about the config*, not a reason to abort the
+	// command. Reading first turned it into a returned error, which
+	// `validate` and `doctor` both surface as a cobra usage dump instead
+	// of the one-line issue every other check produces (issue #45).
+	if _, err := os.Stat(appsDev); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return []Issue{{Message: fmt.Sprintf(
+				"--gitops-dir %s has no %s directory, so no ArgoCD Application manifests could be "+
+					"cross-checked against argocd_app; point it at the root of a tree laid out as "+
+					"apps/dev/<app>.yaml, or drop the flag", gitopsDir, filepath.Join("apps", "dev"))}}, nil
+		}
+		return nil, fmt.Errorf("validate: reading %s: %w", appsDev, err)
+	}
+	appNames, err := applicationNames(appsDev)
 	if err != nil {
-		return nil, fmt.Errorf("validate: reading %s: %w", filepath.Join(gitopsDir, "apps", "dev"), err)
+		return nil, fmt.Errorf("validate: reading %s: %w", appsDev, err)
 	}
 
 	var issues []Issue
@@ -296,7 +314,7 @@ func GitOps(cfg *config.Config, gitopsDir string) ([]Issue, error) {
 		if !hasGate(r, "dev-smoke") {
 			continue
 		}
-		app := resolveArgoCDApp(cfg, r)
+		app := ResolveArgoCDApp(cfg, r)
 		if app == "" {
 			continue // already reported by Config()
 		}
@@ -308,14 +326,27 @@ func GitOps(cfg *config.Config, gitopsDir string) ([]Issue, error) {
 	return issues, nil
 }
 
-func resolveArgoCDApp(cfg *config.Config, r config.Repo) string {
+// ResolveArgoCDApp returns the ArgoCD Application name r's dev-smoke
+// gate will actually be built with: the repo's own argocd_app, falling
+// back to the shared gates.dev-smoke.argocd_app. Exported because
+// gatebuild.DevSmoke (which builds the gate) and `xdlc doctor` (which
+// decides whether the `argocd` binary is required) have to answer the
+// same question the same way. doctor used to read r.ArgoCDApp alone, so
+// two semantically identical configs — one naming the app per repo, one
+// sharing it under gates.dev-smoke — got opposite verdicts, and doctor
+// green-lit a config whose dev-smoke gate could not run (issue #45).
+func ResolveArgoCDApp(cfg *config.Config, r config.Repo) string {
 	if r.ArgoCDApp != "" {
 		return r.ArgoCDApp
 	}
 	return cfg.Gates.DevSmoke.ArgoCDApp
 }
 
-func resolveProbeJob(cfg *config.Config, r config.Repo) string {
+// ResolveProbeJob returns the probe Job name r's dev-smoke gate will be
+// built with — the repo's own probe_job, falling back to the shared
+// gates.dev-smoke.probe_job. Same single-source-of-truth reason as
+// ResolveArgoCDApp.
+func ResolveProbeJob(cfg *config.Config, r config.Repo) string {
 	if r.ProbeJob != "" {
 		return r.ProbeJob
 	}

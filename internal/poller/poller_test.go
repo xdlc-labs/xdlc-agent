@@ -74,8 +74,12 @@ func TestPollerTick(t *testing.T) {
 	if got["repo-fail"] != orchestrator.KindBreach {
 		t.Errorf("repo-fail kind = %v, want %v", got["repo-fail"], orchestrator.KindBreach)
 	}
-	if _, ok := got["repo-err"]; ok {
-		t.Errorf("repo-err should not emit a signal (Check errored), got %v", got["repo-err"])
+	// A Check that errored has no verdict. It used to emit nothing at
+	// all, which left a typo'd argocd_app invisible outside the daemon
+	// log (issue #45); it now emits KindBlocked, which is ActionNoop —
+	// never the KindBreach/KindFail that would revert or Fix.
+	if got["repo-err"] != orchestrator.KindBlocked {
+		t.Errorf("repo-err kind = %v, want %v", got["repo-err"], orchestrator.KindBlocked)
 	}
 	if len(fg.calls) != 3 {
 		t.Errorf("expected 3 Check calls, got %d: %v", len(fg.calls), fg.calls)

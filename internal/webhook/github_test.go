@@ -408,13 +408,6 @@ func TestHandleArgoCDSyncAloneDoesNotPromote(t *testing.T) {
 			wantKind:   orchestrator.KindPass,
 		},
 		{
-			name: "probe errored: no signal",
-			check: func(context.Context, string) (bool, map[string]any, error) {
-				return false, nil, errors.New("kubectl: connection refused")
-			},
-			wantStatus: http.StatusNoContent,
-		},
-		{
 			name: "unattributable commit: no signal",
 			check: func(context.Context, string) (bool, map[string]any, error) {
 				return true, nil, nil
@@ -1005,5 +998,52 @@ func TestHandleGitHubMatchingBranchDoesNotWarn(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "branch mismatch") {
 		t.Errorf("matching branch must not warn:\n%s", logs.String())
+	}
+}
+
+// TestHandleArgoCDGateThatCannotRunIsVisibleButNotAFail: the webhook leg
+// of issue #45. A CheckSmoke error used to answer 204 and emit nothing,
+// so a typo'd argocd_app produced no signal, no audit row and no
+// BACKLOG.md entry — Promote just never fired again. It now emits
+// KindBlocked, which records the reason without being mistaken for a
+// fail (a dev-gate fail is ActionFix, i.e. a paid coding-agent run).
+func TestHandleArgoCDGateThatCannotRunIsVisibleButNotAFail(t *testing.T) {
+	ch := make(chan orchestrator.Signal, 1)
+	srv := argoServer(ch)
+	srv.CheckSmoke = func(context.Context, string) (bool, map[string]any, error) {
+		return false, nil, errors.New(
+			`smoke gate: argocd health: gitops: argocd app get dev-typo: exit status 20: applications.argoproj.io "dev-typo" not found`)
+	}
+
+	if got := postArgoCD(t, srv, syncedHealthy); got != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", got, http.StatusAccepted)
+	}
+
+	select {
+	case sig := <-ch:
+		if sig.Kind != orchestrator.KindBlocked {
+			t.Fatalf("kind = %s, want %s", sig.Kind, orchestrator.KindBlocked)
+		}
+		if sig.Source != orchestrator.SourceDevGate {
+			t.Fatalf("source = %s", sig.Source)
+		}
+		if got := orchestrator.Decide(sig); got != orchestrator.ActionNoop {
+			t.Fatalf("Decide = %s, want %s — an unreachable ArgoCD must not buy a Fix", got, orchestrator.ActionNoop)
+		}
+		if sig.Evidence["escalate"] != orchestrator.EscalateGateUnavailable {
+			t.Fatalf("escalate = %v", sig.Evidence["escalate"])
+		}
+		if sig.Evidence["argocd_app"] != "dev-example-service" {
+			t.Fatalf("evidence does not name the app the notification was for: %v", sig.Evidence)
+		}
+		reason, _ := sig.Evidence["gate_error"].(string)
+		if !strings.Contains(reason, `"dev-typo" not found`) {
+			t.Fatalf("evidence does not say why the gate could not run: %q", reason)
+		}
+		if sig.SHA != testSHA {
+			t.Fatalf("sha = %q, want the tip read before the probe (%s)", sig.SHA, testSHA)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no signal emitted: the gate failure is still invisible")
 	}
 }

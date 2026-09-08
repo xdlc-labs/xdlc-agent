@@ -696,3 +696,44 @@ func TestHistoryManualSourceIsDaemon(t *testing.T) {
 		t.Fatalf("gate=%v, want CI for a manual Fix", m["gate"])
 	}
 }
+
+// TestBlockedRecordIsNotShownAsHealthyOrIdle: the console reads the same
+// audit rows as `xdlc history`. A gate that could not run has no
+// verdict, so it must not render as a quiet ("idle") gate on a
+// ("healthy") repo — that is the invisibility of issue #45 reappearing
+// in the browser.
+func TestBlockedRecordIsNotShownAsHealthyOrIdle(t *testing.T) {
+	blocked := string(orchestrator.KindBlocked)
+
+	if got := mapKindStatus(blocked); got == "idle" {
+		t.Error("a gate that could not run renders as idle")
+	}
+	if got := mapKindStatus(blocked); got == "pass" || got == "fail" {
+		t.Errorf("blocked renders as %q — indistinguishable from a verdict", got)
+	}
+	if got := mapKindStatus(blocked); got != "waiting" {
+		t.Errorf("mapKindStatus(blocked) = %q, want waiting", got)
+	}
+
+	rec := store.Record{Repo: "svc", Source: "dev-gate", Kind: blocked, Action: "noop"}
+	if got := mapHealth(rec); got == "healthy" {
+		t.Error("a repo whose gate could not run reports healthy")
+	}
+	if got := mapHealth(rec); got != "degraded" {
+		t.Errorf("mapHealth(blocked) = %q, want degraded", got)
+	}
+
+	// Unchanged for the verdicts.
+	if got := mapKindStatus("pass"); got != "pass" {
+		t.Errorf("pass = %q", got)
+	}
+	if got := mapKindStatus("fail"); got != "fail" {
+		t.Errorf("fail = %q", got)
+	}
+	if got := mapHealth(store.Record{Source: "prod-health", Kind: "breach"}); got != "breach" {
+		t.Errorf("breach = %q", got)
+	}
+	if got := mapHealth(store.Record{Source: "ci", Kind: "pass"}); got != "healthy" {
+		t.Errorf("pass = %q", got)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -224,5 +225,139 @@ agent:
 				t.Fatalf("expected ok webhook secret for listen addr:\n%s", buf.String())
 			}
 		})
+	}
+}
+
+// runDoctor executes `doctor --skip-network` against body and returns
+// its output plus whether it failed.
+func runDoctor(t *testing.T, body string) (string, bool) {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A PATH we control, so the verdict does not depend on whether the
+	// machine running the test happens to have `argocd` installed.
+	// doctor only LookPath's these, so a stub is enough; `git` doubles
+	// as the agent CLI, as the other doctor tests do.
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "git"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("XDLC_API_TOKEN", "dev-token")
+	t.Setenv("GITHUB_TOKEN", "ghp_test")
+
+	cfgPath = cfg
+	cmd := doctorCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetArgs([]string{"--skip-network"})
+	err := cmd.Execute()
+	return buf.String(), err != nil
+}
+
+// argocdLine extracts the "argocd on PATH" verdict line.
+func argocdLine(t *testing.T, out string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "argocd on PATH") {
+			return line
+		}
+	}
+	t.Fatalf("no argocd check in doctor output:\n%s", out)
+	return ""
+}
+
+// TestDoctorTreatsSharedAndPerRepoArgoCDAppIdentically is issue #45's
+// third part. doctor read repos[].argocd_app only, while gatebuild and
+// validate both fall back to gates.dev-smoke.argocd_app — so with
+// `argocd` off PATH two semantically identical configs got opposite
+// verdicts and doctor green-lit one whose dev-smoke gate cannot run.
+func TestDoctorTreatsSharedAndPerRepoArgoCDAppIdentically(t *testing.T) {
+	const perRepo = `
+repos:
+  - name: svc
+    github: org/svc
+    branch: develop
+    gates: [dev-smoke]
+    argocd_app: dev-svc
+    probe_job: smoke-e2e
+server:
+  addr: "127.0.0.1:8080"
+  require_webhook_secret: false
+gates:
+  dev-smoke:
+    trigger: on_sync
+agent:
+  provider: claude
+  binary: git
+`
+	const sharedDefault = `
+repos:
+  - name: svc
+    github: org/svc
+    branch: develop
+    gates: [dev-smoke]
+server:
+  addr: "127.0.0.1:8080"
+  require_webhook_secret: false
+gates:
+  dev-smoke:
+    trigger: on_sync
+    argocd_app: dev-svc
+    probe_job: smoke-e2e
+agent:
+  provider: claude
+  binary: git
+`
+	perRepoOut, perRepoFailed := runDoctor(t, perRepo)
+	sharedOut, sharedFailed := runDoctor(t, sharedDefault)
+
+	perRepoArgo := argocdLine(t, perRepoOut)
+	sharedArgo := argocdLine(t, sharedOut)
+	if perRepoArgo != sharedArgo {
+		t.Fatalf("two semantically identical configs got different argocd verdicts:\n"+
+			"per-repo:  %s\nshared:    %s", perRepoArgo, sharedArgo)
+	}
+	// Both must be a FAIL: argocd is not on the PATH the test built, and
+	// the dev-smoke gate cannot run without it.
+	if !strings.Contains(perRepoArgo, "FAIL") {
+		t.Fatalf("argocd is off PATH but the check passed:\n%s", perRepoArgo)
+	}
+	if !perRepoFailed || !sharedFailed {
+		t.Fatalf("doctor green-lit a config whose dev-smoke gate cannot run "+
+			"(per-repo failed=%v, shared failed=%v)\n--- per-repo ---\n%s\n--- shared ---\n%s",
+			perRepoFailed, sharedFailed, perRepoOut, sharedOut)
+	}
+}
+
+// TestDoctorArgoCDNotRequiredWithoutAnApp: the check stays warn-style —
+// a config with no resolved argocd_app at all must not demand the binary.
+func TestDoctorArgoCDNotRequiredWithoutAnApp(t *testing.T) {
+	const ciOnly = `
+repos:
+  - name: svc
+    github: org/svc
+    branch: develop
+    gates: [ci]
+server:
+  addr: "127.0.0.1:8080"
+  require_webhook_secret: false
+gates:
+  ci:
+    trigger: on_push
+agent:
+  provider: claude
+  binary: git
+`
+	out, failed := runDoctor(t, ciOnly)
+	if line := argocdLine(t, out); strings.Contains(line, "FAIL") {
+		t.Fatalf("argocd required by a ci-only config:\n%s", line)
+	}
+	if failed {
+		t.Fatalf("ci-only config failed doctor:\n%s", out)
 	}
 }
