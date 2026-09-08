@@ -16,10 +16,10 @@ func TestNewSubprocessRunnerProviderDefaults(t *testing.T) {
 		wantBinary string
 		wantArgs   []string
 	}{
-		{ProviderClaude, "claude", []string{"-p", promptPlaceholder, "--output-format", "json"}},
+		{ProviderClaude, "claude", []string{"-p", promptPlaceholder, "--output-format", "json", "--dangerously-skip-permissions"}},
 		{ProviderCodex, "codex", []string{"exec", promptPlaceholder}},
 		{ProviderCursor, "cursor-agent", []string{"-p", "--trust", "--force", promptPlaceholder}},
-		{"some-unknown-future-provider", "claude", []string{"-p", promptPlaceholder, "--output-format", "json"}},
+		{"some-unknown-future-provider", "claude", []string{"-p", promptPlaceholder, "--output-format", "json", "--dangerously-skip-permissions"}},
 	}
 
 	for _, c := range cases {

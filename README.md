@@ -3,7 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>Open-source CI Fix for your repos. You host it; nothing phones home.</strong>
+  <strong>CI broke. Your coding agent opens the PR.</strong><br>
+  Self-hosted. Bring your own agent (<code>claude</code>, <code>codex</code>, <code>cursor</code>, <code>gemini</code>). Your keys never leave your box. MIT.
 </p>
 
 <p align="center">
@@ -15,35 +16,79 @@
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome">
 </p>
 
+<p align="center">
+  <img src="docs/media/demo.gif" width="800" alt="xdlc demo: CI red → agent fixes in a worktree → tests green → promote → revert">
+</p>
+
 ---
 
-You run one small daemon next to your repos. When CI breaks it can open a **Fix** with the coding agent you already use (`claude`, `codex`, `cursor`, or `gemini`). Promote and Revert are optional gates you add later. Open source (MIT). You host it; nothing phones home.
+**One failed run in, one PR out.** Point `xdlc fix` at a red GitHub Actions run. It clones the repo, hands the failing logs and your repo's `AGENTS.md`/`CLAUDE.md` to the coding agent you already pay for, lets it commit in its own git worktree, pushes, and opens the PR. The prompt, the agent's output, the diff and what it cost are recorded. Run it from a laptop, from a workflow, or let the daemon do it on every failure without you.
 
-The CLI is called **`xdlc`**. The container image, Helm chart, and this repo are **`xdlc-agent`**.
+The CLI is **`xdlc`**. The container image, Helm chart, and this repo are **`xdlc-agent`**.
 
-## What you get
-
-- **CI Fix** — a failed GitHub Actions run becomes a Fix, with the evidence the agent used
-- **Your agent CLI** — `claude` / `codex` / `cursor` / `gemini` on `PATH`; your keys stay on your host
-- **Policy before the agent** — gates decide Fix / Promote / Revert / noop before anything runs
-- **Audit trail** — console, audit DB, `BACKLOG.md`, and `xdlc sessions show <id> --diff`
-- **Optional Promote / Revert** — fast-forward `develop` → `main` after DEV smoke; revert `main` on a prod SLO breach
-- **Ops console** — embedded on the same port as `/api/*`
-- **Self-hosted MIT** — no SaaS in the path
-
-## Quick start
-
-One command. No cluster required.
+## Try it in 30 seconds, no keys
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"   # if needed
-xdlc demo --provider fake
+xdlc demo
 ```
 
-Pin a release: `XDLC_VERSION=v0.0.1-beta.5`. More options: **[Install](https://xdlc.dev/agent/docs)**.
+That is the GIF above: a throwaway repo with a broken test, a fake agent, a real worktree, a real push, tests green, then a promote and a revert. `xdlc demo --provider claude` swaps in the real agent. Pin a release with `XDLC_VERSION=v0.0.1-beta.5`.
 
-Then a real daemon:
+## Fix a real failed run
+
+```sh
+gh auth login                  # or export GITHUB_TOKEN=...
+npm i -g @anthropic-ai/claude-code   # or codex / cursor-agent / gemini, anything on PATH
+xdlc fix https://github.com/you/repo/actions/runs/123456789
+```
+
+```
+github auth: gh auth token
+run: ci on develop@a1b2c3d → failure
+agent: claude, mode: pr, clone: ~/.cache/xdlc/repos/you/repo
+fixing… (a real agent usually takes 2–10 minutes)
+agent said: TestParse expected RFC3339; parser dropped the zone. Restored it.
+cost: $0.71
+session: xdlc sessions show 20260908T104727Z-repo --diff --dir ~/.cache/xdlc/sessions
+PR: https://github.com/you/repo/pull/124
+```
+
+No daemon, no webhook, no config file. `--mode direct` pushes to the failing branch instead of opening a PR. `-m "the flake is in the seed data"` gives the agent a hint. The agent's stdout, the exact prompt and the diff are on disk under `sessions/`.
+
+## Or run it from GitHub Actions
+
+The one-repo on-ramp. A second workflow fires when your CI fails and runs the same `xdlc fix`:
+
+```yaml
+# .github/workflows/xdlc-fix.yml
+name: xdlc fix
+on:
+  workflow_run:
+    workflows: [ci]          # the name of your CI workflow
+    types: [completed]
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+jobs:
+  fix:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: xdlc-labs/xdlc-agent@main
+        with:
+          provider: claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+Turn on **Settings → Actions → Allow GitHub Actions to create and approve pull requests**, or pass a PAT as `github-token`. This is a Fix per failure, nothing more. Fleet policy, promote/revert and the console live in the daemon, [for reasons](https://xdlc.dev/agent/docs/why-not-github-action).
+
+## Or run the daemon
+
+Unattended, across repos, with policy in front of the agent:
 
 ```sh
 xdlc init
@@ -56,12 +101,13 @@ xdlc daemon --config config.yaml
 
 Open http://127.0.0.1:8080/ → **Settings** → paste the same `XDLC_API_TOKEN`. Full walkthrough: **[Getting started](https://xdlc.dev/agent/docs/getting-started)**.
 
-**Docker** (console embedded). If `docker pull` returns `unauthorized`, the GHCR package is not public — run `docker login ghcr.io` with an account that has access, or build from source:
+<details>
+<summary><strong>Docker</strong></summary>
 
 A container always binds a non-loopback address, so the container path needs
 `server.require_webhook_secret: true` in `config.yaml` plus a
 `GITHUB_WEBHOOK_SECRET` in the environment. The daemon refuses to start
-without it. The local loopback run above (`127.0.0.1:8080`) does not need either.
+without it. If `docker pull` returns `unauthorized`, the GHCR package is not public yet — `docker login ghcr.io` or build from source.
 
 ```sh
 # config.yaml for the container: addr: ":8080" + require_webhook_secret: true
@@ -73,8 +119,12 @@ docker run --rm -p 8080:8080 \
   ghcr.io/xdlc-labs/xdlc-agent:0.0.1-beta.5 \
   daemon --config /etc/xdlc-agent/config.yaml
 ```
+</details>
 
-**Helm** (single replica; audit DB is single-writer):
+<details>
+<summary><strong>Helm</strong></summary>
+
+Single replica; the audit DB is single-writer.
 
 ```sh
 helm install xdlc-agent deploy/helm/xdlc-agent \
@@ -82,16 +132,27 @@ helm install xdlc-agent deploy/helm/xdlc-agent \
   --set existingSecret=xdlc-agent-secrets \
   --set-file config=config.yaml
 ```
+</details>
+
+## What you get
+
+- **Your agent, your keys** — `claude` / `codex` / `cursor` / `gemini` on `PATH`. Nothing phones home; there is no SaaS in the path
+- **A worktree per Fix** — the agent commits on an `xdlc/<session>` branch in its own checkout; xdlc pushes. Two Fixes on one repo run side by side, and a killed run cannot dirty your clone
+- **Repo conventions in the prompt** — `AGENTS.md`, `CLAUDE.md`, `.xdlc/rules.md`, `.xdlc/skills/*.md`
+- **Receipts** — every Fix records prompt, output, diff, verdict and cost. `xdlc sessions show <id> --diff`. A Fix that committed nothing is recorded as exactly that, never as a success
+- **Policy before the agent** — in daemon mode, gates decide Fix / Promote / Revert / noop before anything runs; flap and circuit breakers across the fleet
+- **Optional Promote / Revert** — fast-forward `develop` → `main` after DEV smoke; revert `main` on a prod SLO breach
+- **Ops console** — embedded on the same port as `/api/*`
 
 ## How it works
 
-Same diagram as the [architecture](https://xdlc.dev/agent/docs/architecture) page: one loop, three gates.
+One loop, three gates. Same diagram as the [architecture](https://xdlc.dev/agent/docs/architecture) page.
 
 ![One loop, three gates: xdlc-agent → GitHub → DEV → promote → PRODUCTION](https://xdlc.dev/images/architecture.jpg)
 
-1. GitHub reports a failed `workflow_run` (or you enable DEV smoke / prod health later).
+1. GitHub reports a failed `workflow_run` (or you run `xdlc fix` by hand, or enable DEV smoke / prod health later).
 2. The daemon validates the webhook and asks policy what to do.
-3. **Fix** runs your agent CLI with the failing logs and repo conventions (`AGENTS.md` / `CLAUDE.md`).
+3. **Fix** runs your agent CLI with the failing logs and repo conventions, in a fresh worktree.
 4. Evidence lands in the console, the audit store, and `xdlc sessions show`.
 
 The default install is **CI Fix** only. GitOps promote and prod revert are opt-in. See [Optional profiles](https://xdlc.dev/agent/docs/production-loop).
@@ -106,16 +167,12 @@ Embedded at `/` when the daemon runs.
 
 ![Manual Fix / Promote / Revert](https://xdlc.dev/images/screenshots/console-actions.jpg)
 
-## Why xdlc?
+## Why not just…
 
-| | xdlc-agent | Typical alternative |
-|---|---|---|
-| **CI Fix** | Long-lived daemon, fleet state, ops console | Paste logs into a coding agent by hand |
-| **GitHub Actions as control plane** | No — you need a loop that outlives a job | A workflow that exits when the job does |
-| **Copilot Autofix** | CI / DEV / prod gates under your policy | Security and dependency nits inside GitHub |
-| **Flagger / Rollouts** | Complementary: they move traffic; we own agent + git policy | Canary / analysis only |
-| **Deployment** | Self-hosted Docker / Helm / binary | SaaS |
-| **Source** | MIT | Often proprietary |
+- **…paste the logs into Claude Code myself?** You can, at 3pm. xdlc does it at 3am, records what it sent and what came back, and tells you what it cost.
+- **…Copilot Autofix?** It fixes security and dependency findings, inside GitHub, with GitHub's model. xdlc fixes whatever made your CI red, with any agent, on your machine.
+- **…a Claude Code / Codex GitHub Action?** That is what `xdlc fix` in a workflow is. The daemon adds the part a job cannot: a loop that outlives the job, shared state across repos, policy, promote and revert. [Why not a GitHub Action](https://xdlc.dev/agent/docs/why-not-github-action)
+- **…Flagger / Argo Rollouts?** Complementary. They move traffic; xdlc owns the agent and the git policy.
 
 ## Docs
 

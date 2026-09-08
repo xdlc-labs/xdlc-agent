@@ -27,10 +27,11 @@ const repoName = "demo"
 
 // Options configure Run.
 type Options struct {
-	Provider string    // fake | claude | codex | cursor | gemini (default fake)
-	Scenario string    // ci-red | smoke-red | prod-breach | all (default all)
-	WorkDir  string    // empty → MkdirTemp; printed to Out
-	Out      io.Writer // live loop lines; default os.Stdout
+	Provider string        // fake | claude | codex | cursor | gemini (default fake)
+	Scenario string        // ci-red | smoke-red | prod-breach | all (default all)
+	WorkDir  string        // empty → MkdirTemp; printed to Out
+	Out      io.Writer     // live loop lines; default os.Stdout
+	Pace     time.Duration // pause after each narrated line; 0 for tests, ~700ms for a recording
 }
 
 type stepResult struct {
@@ -61,7 +62,16 @@ func Run(ctx context.Context, opts Options) error {
 		}
 		workdir = dir
 	}
-	_, _ = fmt.Fprintf(out, "demo workdir: %s\n", workdir)
+	say := func(format string, args ...any) {
+		_, _ = fmt.Fprintf(out, format+"\n", args...)
+		if opts.Pace > 0 {
+			select {
+			case <-time.After(opts.Pace):
+			case <-ctx.Done():
+			}
+		}
+	}
+	say("demo workdir: %s", workdir)
 
 	bareDir, workRepo, err := setupOrigin(workdir)
 	if err != nil {
@@ -222,17 +232,37 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	runCIRed := func() error {
-		_, _ = fmt.Fprintln(out, "--- scenario: ci-red ---")
+		say("--- scenario: ci-red ---")
+		say("$ git log --oneline -1 develop")
+		say("  %s", gitOneline(ctx, workRepo))
+		say("$ go test ./...")
+		indent(out, tail(goTest(ctx, workRepo), 6))
+		say("ci/fail → policy says: fix (agent: %s)", provider)
 		send(orchestrator.Signal{
 			Source:   orchestrator.SourceCI,
 			Kind:     orchestrator.KindFail,
 			Evidence: map[string]any{"conclusion": "failure", "demo": "ci-red"},
 		})
-		return wait(orchestrator.ActionFix)
+		if err := wait(orchestrator.ActionFix); err != nil {
+			return err
+		}
+		if metas, err := sessions.List(repoName, 1); err == nil && len(metas) > 0 {
+			if patch, err := sessions.ReadFile(metas[0].ID, session.FileDiff); err == nil && patch != "" {
+				say("agent committed in its own worktree; xdlc pushed. The diff:")
+				indent(out, patch)
+			}
+			if metas[0].Summary != "" {
+				say("agent verdict: %s — %s", metas[0].Outcome, metas[0].Summary)
+			}
+		}
+		say("$ go test ./...   # on the pushed develop")
+		indent(out, tail(goTest(ctx, mgr.Dir(repoName)), 3))
+		return nil
 	}
 
 	runSmokeRed := func() error {
-		_, _ = fmt.Fprintln(out, "--- scenario: smoke-red ---")
+		say("--- scenario: smoke-red ---")
+		say("DEV smoke passed → policy says: promote develop → main (fast-forward)")
 		// map smoke-red → DevGate pass → Promote (issue #5)
 		res, err := smoke.Check(ctx, repoName)
 		if err != nil {
@@ -255,7 +285,8 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	runProdBreach := func() error {
-		_, _ = fmt.Fprintln(out, "--- scenario: prod-breach ---")
+		say("--- scenario: prod-breach ---")
+		say("prod p95 999ms > 500ms threshold → policy says: revert main")
 		res, err := prod.Check(ctx, repoName)
 		if err != nil {
 			return fmt.Errorf("demo: prod-health check: %w", err)
@@ -429,4 +460,45 @@ func git(dir string, args ...string) error {
 		return fmt.Errorf("git %v: %w: %s", args, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// goTest runs the demo repo's tests and returns combined output; the
+// failure text is the point, so the error is folded into the output.
+func goTest(ctx context.Context, dir string) string {
+	cmd := exec.CommandContext(ctx, "go", "test", "./...")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return err.Error()
+	}
+	return string(out)
+}
+
+func gitOneline(ctx context.Context, dir string) string {
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "log", "--oneline", "-1") //nolint:gosec // G204: dir is the demo tree, args fixed
+	out, err := cmd.Output()
+	if err != nil {
+		return "(git log failed)"
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// tail keeps the last n non-empty lines.
+func tail(s string, n int) string {
+	var lines []string
+	for _, l := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func indent(out io.Writer, s string) {
+	for _, l := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+		_, _ = fmt.Fprintf(out, "  %s\n", l)
+	}
 }

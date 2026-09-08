@@ -1,0 +1,90 @@
+# xdlc fix as a GitHub Action: the one-repo on-ramp.
+#
+# This runs one Fix per failed workflow run and opens a PR. It is the same
+# `xdlc fix <run-url>` you can run from a laptop. It is not the daemon:
+# there is no fleet state, no promote/revert, no console — see
+# https://xdlc.dev/agent/docs/why-not-github-action for why the loop itself
+# lives in a long-running process. Start here, graduate to `xdlc daemon`.
+name: xdlc fix
+description: When a workflow fails, run your coding agent on the failure and open a Fix PR. Your agent, your keys.
+author: xdlc-labs
+branding:
+  icon: tool
+  color: green
+
+inputs:
+  run-url:
+    description: The failed run to fix. Defaults to the workflow_run that triggered this job.
+    default: ${{ github.event.workflow_run.html_url }}
+  provider:
+    description: claude | codex | cursor | gemini
+    default: claude
+  mode:
+    description: pr (open a PR) | direct (push to the failing branch)
+    default: pr
+  message:
+    description: Optional hint for the agent, joined to the prompt's trusted block.
+    default: ""
+  github-token:
+    description: >-
+      Token used to read logs, push the fix branch and open the PR. The default
+      workflow token works if "Allow GitHub Actions to create and approve pull
+      requests" is on for the repo; a PAT or App token also works.
+    default: ${{ github.token }}
+  version:
+    description: xdlc release tag to install (e.g. v0.0.1-beta.5). Empty = newest release.
+    default: ""
+  install-agent:
+    description: Install the agent CLI for `provider` (npm / curl). Set false if the runner already has it.
+    default: "true"
+  timeout:
+    description: Agent wall-clock limit.
+    default: 20m
+
+outputs:
+  pr-url:
+    description: URL of the opened PR, when one was opened.
+    value: ${{ steps.fix.outputs.pr-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install xdlc
+      shell: bash
+      env:
+        XDLC_VERSION: ${{ inputs.version }}
+      run: |
+        curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/install.sh | bash
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Install agent CLI
+      if: inputs.install-agent == 'true'
+      shell: bash
+      env:
+        PROVIDER: ${{ inputs.provider }}
+      run: |
+        case "$PROVIDER" in
+          claude) npm install -g @anthropic-ai/claude-code ;;
+          codex)  npm install -g @openai/codex ;;
+          gemini) npm install -g @google/gemini-cli ;;
+          cursor) curl -fsS https://cursor.com/install | bash; echo "$HOME/.local/bin" >> "$GITHUB_PATH" ;;
+          *) echo "unknown provider: $PROVIDER" >&2; exit 1 ;;
+        esac
+
+    - name: xdlc fix
+      id: fix
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        RUN_URL: ${{ inputs.run-url }}
+        PROVIDER: ${{ inputs.provider }}
+        MODE: ${{ inputs.mode }}
+        MESSAGE: ${{ inputs.message }}
+        TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        set -o pipefail
+        args=(fix "$RUN_URL" --provider "$PROVIDER" --mode "$MODE" --timeout "$TIMEOUT" --dir "$RUNNER_TEMP/xdlc")
+        if [ -n "$MESSAGE" ]; then args+=(-m "$MESSAGE"); fi
+        xdlc "${args[@]}" | tee "$RUNNER_TEMP/xdlc-fix.log"
+        pr="$(sed -n 's/^PR: //p' "$RUNNER_TEMP/xdlc-fix.log" | tail -1)"
+        echo "pr-url=$pr" >> "$GITHUB_OUTPUT"

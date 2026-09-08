@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`xdlc fix <run-url>` — one Fix, no daemon** (#50). Point it at a failed GitHub Actions run and it does what the daemon does on a webhook: resolves a token (`GITHUB_TOKEN`, else `gh auth token`), reads the run and its failing job logs, clones the repo under the user cache dir, runs the agent in a per-Fix worktree, pushes, opens a PR against the branch that failed, and records the session. `--mode direct` pushes to the failing branch instead, `-m` passes an operator hint, `--provider` picks the agent. Exits non-zero when the run is not red, the agent delivered nothing, or the PR could not be opened, so a CI job wrapping it fails visibly
+- **A GitHub Action wrapper** (`action.yml`). `uses: xdlc-labs/xdlc-agent@main` on a `workflow_run` failure installs `xdlc` and the chosen agent CLI and runs `xdlc fix` on the triggering run. It is the one-repo on-ramp, not the daemon; the README says which is which
+- **A narrated demo** with a `--pace` flag for recordings. `xdlc demo` now shows the failing test, the diff the agent left, its verdict and the green re-run instead of three status lines, and the README opens with a GIF of it (`docs/media/demo.gif`)
+
+### Changed
+
+- **Fix PRs read on their own.** The title is the agent's one-line summary when it gave one (`fix: …`) rather than `xdlc fix: <repo>`, and the body links the failing run, names the provider and quotes the verdict, with an "Opened by xdlc" footer. Previously the body pointed a reviewer at BACKLOG.md, which they cannot see from GitHub
+
 ### Fixed
 
 - **A vanished metric series read as perfectly healthy, silently disabling breach detection** (#48). `promclient.Query` returned `0, nil` for a query that matched no series, and the prod-health gate fails only when a value exceeds its threshold, so no data always passed. If a series stopped existing — metric renamed, exporter down, a relabel change, a typo in `p95_query` or `error_rate_query` — the gate reported healthy at the exact moment its inputs broke, and the poller's edge trigger *cleared* any breach already live. Since this gate's action is Revert, that is the dangerous direction to fail in. An empty result set is now `promclient.ErrNoData`, which the gate turns into no verdict at all and therefore a `blocked` signal (`escalate=gate_unavailable`, mapped to a noop), naming which of the two queries came back empty and telling the operator to check the metric, its exporter and any relabelling. A genuine zero from a series that really exists is still a pass, and a transport failure keeps its own wording so the timeout case is not mislabelled as no-data. A caller that wants zero for an absent series can still have it, but has to say so

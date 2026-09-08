@@ -79,6 +79,7 @@ func main() {
 		sessionsCmd(),
 		doctorCmd(),
 		demoCmd(),
+		fixCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

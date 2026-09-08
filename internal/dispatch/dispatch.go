@@ -640,8 +640,7 @@ func (d *Dispatcher) finishPR(ctx context.Context, s orchestrator.Signal, sess *
 		}
 	}
 	if pr == nil && d.CreatePR != nil {
-		title := fmt.Sprintf("xdlc fix: %s", s.Repo)
-		body := fmt.Sprintf("Automated Fix for %s (%s).\n\nChain evidence is in BACKLOG.md / audit history.", s.Source, s.Kind)
+		title, body := prText(s)
 		created, cerr := d.CreatePR(ctx, ownerRepo, prBranch, base, title, body)
 		if cerr != nil {
 			d.Log.Warn("pr create failed", "repo", s.Repo, "branch", prBranch, "error", cerr)
@@ -664,6 +663,33 @@ func (d *Dispatcher) finishPR(ctx context.Context, s orchestrator.Signal, sess *
 	s.Evidence["pr_state"] = pr.State
 	s.Evidence["pr_branch"] = prBranch
 	return nil
+}
+
+// prText builds the title and body of a Fix PR. The agent's own one-line
+// summary is the title when it gave one — "xdlc fix: repo" told a
+// reviewer nothing about what changed — and the body links the failing
+// run so the PR reads on its own, without the console.
+func prText(s orchestrator.Signal) (title, body string) {
+	summary, _ := s.Evidence["agent_summary"].(string)
+	summary = strings.TrimSpace(summary)
+	title = fmt.Sprintf("xdlc fix: %s", s.Repo)
+	if summary != "" {
+		title = "fix: " + truncate(summary, 72)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Automated Fix for `%s` (%s) on `%s`.\n\n", s.Source, s.Kind, s.Repo)
+	if runURL, _ := s.Evidence["run_url"].(string); runURL != "" {
+		fmt.Fprintf(&b, "Failing run: %s\n\n", runURL)
+	}
+	if summary != "" {
+		provider, _ := s.Evidence["agent_provider"].(string)
+		if provider == "" {
+			provider = "agent"
+		}
+		fmt.Fprintf(&b, "**%s:** %s\n\n", provider, summary)
+	}
+	b.WriteString("---\nOpened by [xdlc](https://github.com/xdlc-labs/xdlc-agent) — self-hosted CI Fix. Prompt, agent output and diff are in the Fix session.\n")
+	return title, b.String()
 }
 
 // refreshEvidence folds the re-check's gate evidence into what the next

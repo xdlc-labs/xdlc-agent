@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -12,6 +13,7 @@ func demoCmd() *cobra.Command {
 	var (
 		provider string
 		scenario string
+		pace     time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "demo",
@@ -25,6 +27,7 @@ matching CLI on PATH.`,
 			err := demo.Run(cmd.Context(), demo.Options{
 				Provider: provider,
 				Scenario: scenario,
+				Pace:     pace,
 				Out:      cmd.OutOrStdout(),
 			})
 			if err != nil {
@@ -35,5 +38,6 @@ matching CLI on PATH.`,
 	}
 	cmd.Flags().StringVar(&provider, "provider", "fake", "claude|codex|cursor|gemini|fake")
 	cmd.Flags().StringVar(&scenario, "scenario", "all", "ci-red|smoke-red|prod-breach|all")
+	cmd.Flags().DurationVar(&pace, "pace", 0, "pause after each line, e.g. 700ms when recording")
 	return cmd
 }

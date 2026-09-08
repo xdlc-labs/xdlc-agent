@@ -135,7 +135,13 @@ type providerSpec struct {
 var providerDefaults = map[Provider]providerSpec{
 	ProviderClaude: {
 		binary: "claude",
-		args:   []string{"-p", promptPlaceholder, "--output-format", "json"},
+		// -p headless. --dangerously-skip-permissions auto-approves the
+		// Edit/Write/Bash calls a Fix needs; without it a headless run
+		// denies every write (permission_denials in the JSON result) and
+		// the agent can only report needs_human. Same tradeoff as
+		// cursor's --force and gemini's --yolo: the worktree is the
+		// sandbox.
+		args: []string{"-p", promptPlaceholder, "--output-format", "json", "--dangerously-skip-permissions"},
 	},
 	ProviderCodex: {
 		binary: "codex",
