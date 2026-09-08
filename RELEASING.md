@@ -12,15 +12,12 @@ was once missed and shipped a broken first run.
    vulnerabilities.
 3. Bump `version` and `appVersion` in `deploy/helm/xdlc-agent/Chart.yaml`, then run
    `./scripts/check-version-refs.sh`. It fails until every copy-pasteable release
-   reference in `README.md` and the `ui/content/docs/` install, deployment and
-   getting-started guides matches the new `appVersion`. Bump them together.
+   reference in `README.md` matches the new `appVersion`. Bump them together.
 
-   `ui/content/docs/` is **gitignored in this repository** — the guides live in
-   the separate documentation repository and are synced in, so they are present
-   for a local run and absent in CI. The check skips untracked files with a note
-   instead of failing, which means a green CI run has only proven `README.md` and
-   the chart. Run the check locally, with the guides synced, before tagging, and
-   land any guide wording upstream or the next sync overwrites it.
+   Install, getting-started and deployment pins live in the
+   [documentation](https://github.com/xdlc-labs/documentation) repository.
+   Update those in the same release window, or the hosted guides stay on the
+   old tag.
 4. Move the `## [Unreleased]` block in `CHANGELOG.md` under the new version with a
    date.
 5. **Walk the documented first run on a clean machine or an empty directory.** Not

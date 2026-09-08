@@ -69,7 +69,7 @@ agent:
   # committer:                  # git identity Fix commits are attributed to
   #   name: xdlc-agent          # default; GIT_AUTHOR_NAME / git config user.name win
   #   email: xdlc-agent@users.noreply.github.com  # default; git config user.email wins
-  # sessions:                       # prompt / output / diff per Fix (docs/sessions.md)
+  # sessions:                       # prompt / output / diff per Fix (https://xdlc.dev/agent/docs/sessions)
   #   enabled: true
   #   dir: sessions
   #   retain: 720h
@@ -82,7 +82,7 @@ agent:
 #   notify_webhook_url: https://hooks.slack.com/services/...
 #   patient_zero: true          # Fix upstream on root_cause suppress (#4)
 
-# --- opt-in: GitOps profile (docs/gitops-argo.md) ---
+# --- opt-in: GitOps profile (https://xdlc.dev/agent/docs/gitops-argo) ---
 # Also add "dev-smoke" to repos[].gates, plus argocd_app and probe_job.
 # server:
 #   argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
@@ -92,7 +92,7 @@ agent:
 #     namespace: dev
 #     interval: 30s
 
-# --- opt-in: full paved road (docs/prod-health.md) ---
+# --- opt-in: prod health (https://xdlc.dev/agent/docs/prod-health) ---
 # Also add "prod-health" to repos[].gates.
 # server:
 #   alertmanager_webhook_secret_env: ALERTMANAGER_WEBHOOK_SECRET

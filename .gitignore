@@ -38,20 +38,6 @@ ui/.tanstack/
 ui/.nitro/
 ui/.wrangler/
 
-# Built binaries checked in by mistake
-services/example-service/example-service
-
-# Terraform / IaC (infra/, cloud bootstrap) — state and vars carry
-# resource IDs and secrets, must live in a remote backend, never in git
-**/.terraform/
-*.tfstate
-*.tfstate.*
-*.tfplan
-*.tfvars
-!*.tfvars.example
-crash.log
-crash.*.log
-
 # Credentials / keys — should never be committed regardless of directory
 *.pem
 *.key
@@ -70,4 +56,3 @@ secrets.yml
 
 # Go vendoring — this project uses modules, not a committed vendor tree
 /vendor/
-plan.md
