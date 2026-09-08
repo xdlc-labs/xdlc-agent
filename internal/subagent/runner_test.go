@@ -16,10 +16,10 @@ func TestNewSubprocessRunnerProviderDefaults(t *testing.T) {
 		wantBinary string
 		wantArgs   []string
 	}{
-		{ProviderClaude, "claude", []string{"-p", promptPlaceholder, "--output-format", "json"}},
+		{ProviderClaude, "claude", []string{"-p", promptPlaceholder, "--output-format", "json", "--dangerously-skip-permissions"}},
 		{ProviderCodex, "codex", []string{"exec", promptPlaceholder}},
 		{ProviderCursor, "cursor-agent", []string{"-p", "--trust", "--force", promptPlaceholder}},
-		{"some-unknown-future-provider", "claude", []string{"-p", promptPlaceholder, "--output-format", "json"}},
+		{"some-unknown-future-provider", "claude", []string{"-p", promptPlaceholder, "--output-format", "json", "--dangerously-skip-permissions"}},
 	}
 
 	for _, c := range cases {
@@ -231,5 +231,42 @@ func TestGeminiKeyReachesSubprocessEnv(t *testing.T) {
 	}
 	if slices.Contains(env, "GITHUB_TOKEN=nope") {
 		t.Fatal("GITHUB_TOKEN must never reach the coding agent")
+	}
+}
+
+func TestWithModelAppendsFlag(t *testing.T) {
+	base := NewSubprocessRunner(ProviderClaude, "", nil, 0, nil)
+	got := base.WithModel("claude-opus-5")
+
+	want := []string{"-p", promptPlaceholder, "--output-format", "json",
+		"--dangerously-skip-permissions", "--model", "claude-opus-5"}
+	if len(got.Args) != len(want) {
+		t.Fatalf("Args = %v, want %v", got.Args, want)
+	}
+	for i := range want {
+		if got.Args[i] != want[i] {
+			t.Fatalf("Args = %v, want %v", got.Args, want)
+		}
+	}
+
+	// The default runner must not have grown a --model of its own: the
+	// clone shares a backing array with it until append copies.
+	for _, a := range base.Args {
+		if a == "--model" {
+			t.Fatal("WithModel mutated the receiver's Args")
+		}
+	}
+	if base.WithModel("") != base {
+		t.Error("empty model should return the receiver unchanged")
+	}
+}
+
+func TestWithModelIsPerProvider(t *testing.T) {
+	for _, p := range Providers() {
+		r := NewSubprocessRunner(p, "", nil, 0, nil).WithModel("m")
+		last := r.Args[len(r.Args)-2:]
+		if last[0] != "--model" || last[1] != "m" {
+			t.Errorf("%s: tail = %v", p, last)
+		}
 	}
 }

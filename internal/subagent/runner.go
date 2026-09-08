@@ -135,7 +135,13 @@ type providerSpec struct {
 var providerDefaults = map[Provider]providerSpec{
 	ProviderClaude: {
 		binary: "claude",
-		args:   []string{"-p", promptPlaceholder, "--output-format", "json"},
+		// -p headless. --dangerously-skip-permissions auto-approves the
+		// Edit/Write/Bash calls a Fix needs; without it a headless run
+		// denies every write (permission_denials in the JSON result) and
+		// the agent can only report needs_human. Same tradeoff as
+		// cursor's --force and gemini's --yolo: the worktree is the
+		// sandbox.
+		args: []string{"-p", promptPlaceholder, "--output-format", "json", "--dangerously-skip-permissions"},
 	},
 	ProviderCodex: {
 		binary: "codex",
@@ -213,6 +219,29 @@ func NewSubprocessRunner(provider Provider, binary string, args []string, timeou
 		timeout = 10 * time.Minute
 	}
 	return &SubprocessRunner{Provider: provider, Binary: binary, Args: args, Timeout: timeout, ExtraEnvKeys: extraEnvKeys}
+}
+
+// WithModel returns a copy of r that asks the CLI for a specific model,
+// by appending `--model <name>` to its argv. All four provider CLIs
+// accept that flag.
+//
+// This exists because the model, not the provider, is what a Fix's bill
+// mostly depends on: the same Fix that cost $1.63 on the priciest model
+// is well under half that on a mid-tier one. Overriding argv wholesale
+// (agent.args) could already do this, but that means restating the
+// provider's whole headless invocation to change one word, and the
+// alternative of an ANTHROPIC_MODEL env var only works for one of the
+// four and is not on the allowlist.
+//
+// An empty name returns r unchanged, so callers can pass through a flag
+// the operator left unset.
+func (r *SubprocessRunner) WithModel(name string) *SubprocessRunner {
+	if name == "" {
+		return r
+	}
+	clone := *r
+	clone.Args = append(append([]string(nil), r.Args...), "--model", name)
+	return &clone
 }
 
 // Run invokes the configured CLI in repoDir with prompt on stdin (never

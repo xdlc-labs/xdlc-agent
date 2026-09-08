@@ -640,8 +640,7 @@ func (d *Dispatcher) finishPR(ctx context.Context, s orchestrator.Signal, sess *
 		}
 	}
 	if pr == nil && d.CreatePR != nil {
-		title := fmt.Sprintf("xdlc fix: %s", s.Repo)
-		body := fmt.Sprintf("Automated Fix for %s (%s).\n\nChain evidence is in BACKLOG.md / audit history.", s.Source, s.Kind)
+		title, body := prText(s)
 		created, cerr := d.CreatePR(ctx, ownerRepo, prBranch, base, title, body)
 		if cerr != nil {
 			d.Log.Warn("pr create failed", "repo", s.Repo, "branch", prBranch, "error", cerr)
@@ -664,6 +663,59 @@ func (d *Dispatcher) finishPR(ctx context.Context, s orchestrator.Signal, sess *
 	s.Evidence["pr_state"] = pr.State
 	s.Evidence["pr_branch"] = prBranch
 	return nil
+}
+
+// prText builds the title and body of a Fix PR. The agent's own one-line
+// summary is the title when it gave one — "xdlc fix: repo" told a
+// reviewer nothing about what changed — and the body links the failing
+// run so the PR reads on its own, without the console.
+func prText(s orchestrator.Signal) (title, body string) {
+	summary, _ := s.Evidence["agent_summary"].(string)
+	summary = strings.TrimSpace(summary)
+	title = fmt.Sprintf("xdlc fix: %s", s.Repo)
+	if summary != "" {
+		title = "fix: " + prTitle(summary)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Automated Fix for `%s` (%s) on `%s`.\n\n", s.Source, s.Kind, s.Repo)
+	if runURL, _ := s.Evidence["run_url"].(string); runURL != "" {
+		fmt.Fprintf(&b, "Failing run: %s\n\n", runURL)
+	}
+	if summary != "" {
+		provider, _ := s.Evidence["agent_provider"].(string)
+		if provider == "" {
+			provider = "agent"
+		}
+		fmt.Fprintf(&b, "**%s:** %s\n\n", provider, summary)
+	}
+	b.WriteString("---\nOpened by [xdlc](https://github.com/xdlc-labs/xdlc-agent) — self-hosted CI Fix. Prompt, agent output and diff are in the Fix session.\n")
+	return title, b.String()
+}
+
+// prTitleMax is how much of the agent's summary fits a PR title after the
+// "fix: " prefix, before GitHub starts wrapping it.
+const prTitleMax = 68
+
+// prTitle turns the agent's one-line summary into a PR title. The summary
+// is a full sentence — "Made X distinct (details) so that Y" — and a title
+// is not. Cut at the first clause break past the first third, so the
+// title keeps the claim and drops the justification; fall back to a word
+// boundary with an ellipsis. Never cut mid-word or append "(truncated)",
+// which is what the first real Fix PR shipped with.
+func prTitle(summary string) string {
+	if len(summary) <= prTitleMax {
+		return summary
+	}
+	for _, sep := range []string{" (", "; ", ": ", ", so ", " so ", " — ", " -- ", " - "} {
+		if i := strings.Index(summary, sep); i >= prTitleMax/3 && i <= prTitleMax {
+			return strings.TrimRight(summary[:i], " ,.")
+		}
+	}
+	cut := summary[:prTitleMax]
+	if i := strings.LastIndex(cut, " "); i > prTitleMax/2 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " ,.") + "…"
 }
 
 // refreshEvidence folds the re-check's gate evidence into what the next

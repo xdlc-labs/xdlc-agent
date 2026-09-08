@@ -28,6 +28,8 @@ The pieces the open items below build on:
 - **Four agent providers** — `claude`, `codex`, `cursor` and `gemini`, each with a headless
   default invocation; Gemini is opt-in in the container image via
   `--build-arg GEMINI_CLI_VERSION` ([Fix modes](https://xdlc.dev/agent/docs/fix-modes))
+- **One-shot Fix without the daemon** — `xdlc fix <run-url>` and the `action.yml` wrapper run
+  the daemon's Fix path once, from a laptop or a `workflow_run` job, and record the same session
 - **Seeding a config from local checkouts** — `xdlc init --scan <dir>` fills `repos:` from
   Git checkouts that have a GitHub origin
 

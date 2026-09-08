@@ -14,6 +14,14 @@ type cliCostJSON struct {
 	Usage        *struct {
 		InputTokens  *int64 `json:"input_tokens"`
 		OutputTokens *int64 `json:"output_tokens"`
+		// Cache tokens are billed and are usually the bulk of a coding
+		// agent's input: one real Fix reported 514 uncached input tokens
+		// beside 49,801 cache writes and 843,579 cache reads. Recording
+		// only input_tokens put 0.06% of the billed input in the audit
+		// row, so the tokens could not be reconciled with the dollar
+		// figure next to them.
+		CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	} `json:"usage"`
 }
 
@@ -42,12 +50,18 @@ func ParseCost(stdout string) map[string]any {
 	if parsed.DurationMS != nil {
 		out["duration_ms"] = *parsed.DurationMS
 	}
-	if parsed.Usage != nil {
-		if parsed.Usage.InputTokens != nil {
-			out["input_tokens"] = *parsed.Usage.InputTokens
+	if u := parsed.Usage; u != nil {
+		if u.InputTokens != nil {
+			out["input_tokens"] = *u.InputTokens
 		}
-		if parsed.Usage.OutputTokens != nil {
-			out["output_tokens"] = *parsed.Usage.OutputTokens
+		if u.OutputTokens != nil {
+			out["output_tokens"] = *u.OutputTokens
+		}
+		if u.CacheCreationInputTokens != nil {
+			out["cache_write_tokens"] = *u.CacheCreationInputTokens
+		}
+		if u.CacheReadInputTokens != nil {
+			out["cache_read_tokens"] = *u.CacheReadInputTokens
 		}
 	}
 	if len(out) == 0 {

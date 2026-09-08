@@ -163,3 +163,41 @@ func (c *Client) FetchFailedJobLogs(ctx context.Context, runURL string) (string,
 	}
 	return string(body), nil
 }
+
+// Run is the slice of a workflow run the one-shot `xdlc fix` needs to
+// stand in for the webhook it never received: which branch and commit
+// failed, and whether the run really is red.
+type Run struct {
+	Owner      string
+	Name       string
+	ID         int64
+	HTMLURL    string
+	Workflow   string
+	HeadBranch string
+	HeadSHA    string
+	Status     string // queued | in_progress | completed
+	Conclusion string // success | failure | cancelled | ... ("" while not completed)
+}
+
+// GetRun fetches the workflow run behind an Actions run URL.
+func (c *Client) GetRun(ctx context.Context, runURL string) (Run, error) {
+	owner, name, runID, err := ParseRunURL(runURL)
+	if err != nil {
+		return Run{}, err
+	}
+	run, _, err := c.gh.Actions.GetWorkflowRunByID(ctx, owner, name, runID)
+	if err != nil {
+		return Run{}, fmt.Errorf("ghclient: get run %d for %s/%s: %w", runID, owner, name, err)
+	}
+	return Run{
+		Owner:      owner,
+		Name:       name,
+		ID:         runID,
+		HTMLURL:    run.GetHTMLURL(),
+		Workflow:   run.GetName(),
+		HeadBranch: run.GetHeadBranch(),
+		HeadSHA:    run.GetHeadSHA(),
+		Status:     run.GetStatus(),
+		Conclusion: run.GetConclusion(),
+	}, nil
+}

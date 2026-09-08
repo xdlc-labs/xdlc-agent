@@ -94,3 +94,65 @@ func TestAddCostFirstRunMatchesMerge(t *testing.T) {
 	}
 	AddCost(nil, sampleClaudeJSON) // must not panic
 }
+
+// realFixJSON is the usage block a real Fix on this repository reported
+// (session 20260908T171541Z, pull request #51, $1.6296 at list prices).
+// It is here because the shape that matters is not the sample above: the
+// uncached input is a rounding error next to the cache traffic.
+const realFixJSON = `{
+  "type": "result",
+  "total_cost_usd": 1.6296047500000004,
+  "usage": {
+    "input_tokens": 514,
+    "cache_creation_input_tokens": 49801,
+    "cache_read_input_tokens": 843579,
+    "output_tokens": 8351
+  }
+}`
+
+func TestParseCostRecordsCacheTokens(t *testing.T) {
+	got := ParseCost(realFixJSON)
+	for _, c := range []struct {
+		key  string
+		want int64
+	}{
+		{"input_tokens", 514},
+		{"cache_write_tokens", 49801},
+		{"cache_read_tokens", 843579},
+		{"output_tokens", 8351},
+	} {
+		if got[c.key] != c.want {
+			t.Errorf("%s = %v, want %d", c.key, got[c.key], c.want)
+		}
+	}
+
+	// The recorded tokens have to explain the recorded dollars. At
+	// claude-fable-5-1 list prices — $10/MTok in, $50/MTok out, a 1h
+	// cache write at 2x input, cache reads at $0.25/MTok — they do, to
+	// within a hundredth of a cent. Without the cache fields the same
+	// arithmetic lands at $0.42 against a reported $1.63.
+	toks := func(k string) float64 { return float64(got[k].(int64)) }
+	recomputed := (toks("input_tokens")*10.00 +
+		toks("cache_write_tokens")*20.00 +
+		toks("cache_read_tokens")*0.25 +
+		toks("output_tokens")*50.00) / 1e6
+	reported := got["total_cost_usd"].(float64)
+	if diff := recomputed - reported; diff > 0.0001 || diff < -0.0001 {
+		t.Errorf("recomputed $%.6f vs reported $%.6f (diff %.6f)", recomputed, reported, diff)
+	}
+}
+
+func TestAddCostSumsCacheTokensAcrossRuns(t *testing.T) {
+	dst := map[string]any{}
+	AddCost(dst, realFixJSON)
+	AddCost(dst, realFixJSON)
+	if dst["cache_read_tokens"] != int64(843579*2) {
+		t.Errorf("cache_read_tokens = %v, want %d", dst["cache_read_tokens"], 843579*2)
+	}
+	if dst["cache_write_tokens"] != int64(49801*2) {
+		t.Errorf("cache_write_tokens = %v, want %d", dst["cache_write_tokens"], 49801*2)
+	}
+	if got := dst["total_cost_usd"].(float64); got < 3.259 || got > 3.26 {
+		t.Errorf("total_cost_usd = %v, want ~3.2592", got)
+	}
+}
