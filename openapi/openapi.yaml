@@ -334,7 +334,14 @@ components:
         at: { type: string }
         merged: { type: boolean }
         title: { type: string }
-        ci: { type: string }
+        ci:
+          type: string
+          description: >-
+            Aggregate CI state on the PR head, merging GitHub check runs
+            and commit statuses. Empty means neither system reports a
+            check (no CI configured, or the lookup failed) and is
+            distinct from "pending".
+          enum: ["", "pending", "success", "failure"]
         reviewer: { type: string }
         stale: { type: boolean }
     RepoKPI:
