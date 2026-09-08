@@ -1,0 +1,14 @@
+# Airlock policy for this repo's dogfood Action.
+#
+# Not the stub `airlock init` writes. This tree has no eval suite, so the
+# default 0.99 / 0.995 mins can only ever report INCONCLUSIVE at a 5-sample
+# budget. Empty gates leave eval silent. The Action still fail-closes on
+# skill / MCP approval. Turn a gate on when there are cases it can clear.
+version: 1
+fail_on_ai_change: false
+data_boundary:
+  fail_on_pii: true
+gates: {}
+budgets:
+  max_cost_per_pr: 2.00
+  max_samples_per_case: 5

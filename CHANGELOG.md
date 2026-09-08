@@ -8,9 +8,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.0.1-beta.7] - 2026-09-08
+
+One-shot `xdlc fix` and the GitHub Action wrapper. The curl-installed binary includes that command.
+
+### Added
+
 - **`xdlc fix <run-url>` — one Fix, no daemon** (#50). Point it at a failed GitHub Actions run and it does what the daemon does on a webhook: resolves a token (`GITHUB_TOKEN`, else `gh auth token`), reads the run and its failing job logs, clones the repo under the user cache dir, runs the agent in a per-Fix worktree, pushes, opens a PR against the branch that failed, and records the session. `--mode direct` pushes to the failing branch instead, `-m` passes an operator hint, `--provider` picks the agent. Exits non-zero when the run is not red, the agent delivered nothing, or the PR could not be opened, so a CI job wrapping it fails visibly
 - **`xdlc fix --model`**, passed to the agent CLI as `--model`, which all four provider CLIs accept. The model, not the provider, is what a Fix's bill mostly depends on: the same Fix measured at $1.63 on Claude Fable 5.1 reprices to $1.13 on Opus 5 and $0.45 on Sonnet 5. Before this the one-shot path had no way to ask for one — `agent.args` could override the whole argv in daemon config, and `ANTHROPIC_MODEL` is not on the subprocess env allowlist and would only have covered one provider anyway. The README's cost table now names a lever that exists
-- **A GitHub Action wrapper** (`action.yml`). `uses: xdlc-labs/xdlc-agent@main` on a `workflow_run` failure builds `xdlc` from that checkout, installs the chosen agent CLI, and runs `xdlc fix` on the triggering run. It is the one-repo on-ramp, not the daemon; the README says which is which. It does not curl `scripts/install.sh`, because the last GitHub Release is still the daemon-only tag
+- **A GitHub Action wrapper** (`action.yml`). `uses: xdlc-labs/xdlc-agent@main` on a `workflow_run` failure builds `xdlc` from that checkout, installs the chosen agent CLI, and runs `xdlc fix` on the triggering run. It is the one-repo on-ramp, not the daemon. Curl-install of this tag also has `xdlc fix`
+- **A committed `.airlock/policy.yml`** for the dogfood Action. Eval `gates` are empty: this repo has no eval suite, so the init stub's 0.99 mins would stay `INCONCLUSIVE` forever. The Action still fail-closes on skill / MCP approval
 - **A "Fixes in the wild" table** in the README, holding the pull requests xdlc has opened on this repository with their cost, so the claims have receipts instead of adjectives
 - **A narrated demo** with a `--pace` flag for recordings. `xdlc demo` now shows the failing test, the diff the agent left, its wrapped verdict and the green re-run instead of three status lines. The GIF of it (`docs/assets/demo.gif`) is recorded from `docs/assets/demo.sh` against the real `claude` CLI rather than the stub provider, matching airlock's recording theme
 
@@ -338,6 +349,7 @@ First public beta of the open-source `xdlc-agent` daemon (MIT).
 - `claude.mode: sdk` reserved but unimplemented
 - AWS/EKS bootstrap not included (local Kind only)
 
+[0.0.1-beta.7]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.7
 [0.0.1-beta.6]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.6
 [0.0.1-beta.5]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.5
 [0.0.1-beta.4]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.4

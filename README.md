@@ -67,10 +67,8 @@ API key at all — a stub agent that writes a canned patch, which exercises the 
 push and the gate re-check, and nothing about the agent.
 
 This is a public beta, so every release is a pre-release and GitHub's "latest" link skips
-them. Pin the last daemon tag with `XDLC_VERSION=v0.0.1-beta.6`, or pick a tag from
-[Releases](https://github.com/xdlc-labs/xdlc-agent/releases). That binary does not include
-`xdlc fix` yet. Build from this branch (`go build -o xdlc ./cmd/xdlc-agent`) or use the
-Action below, which builds the same CLI from the checkout.
+them. Pin one with `XDLC_VERSION=v0.0.1-beta.7`, or pick a tag from
+[Releases](https://github.com/xdlc-labs/xdlc-agent/releases).
 
 The CLI is `xdlc`. The container image, Helm chart and this repository are `xdlc-agent`.
 
@@ -195,7 +193,7 @@ docker run --rm -p 8080:8080 \
   -v "$PWD/config.yaml:/etc/xdlc-agent/config.yaml:ro" \
   -e XDLC_API_TOKEN -e GITHUB_TOKEN -e GITHUB_WEBHOOK_SECRET \
   -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CURSOR_API_KEY \
-  ghcr.io/xdlc-labs/xdlc-agent:0.0.1-beta.6 \
+  ghcr.io/xdlc-labs/xdlc-agent:0.0.1-beta.7 \
   daemon --config /etc/xdlc-agent/config.yaml
 ```
 </details>
@@ -207,7 +205,7 @@ Single replica: the audit DB is single-writer.
 
 ```bash
 helm install xdlc-agent deploy/helm/xdlc-agent \
-  --set image.tag=0.0.1-beta.6 \
+  --set image.tag=0.0.1-beta.7 \
   --set existingSecret=xdlc-agent-secrets \
   --set-file config=config.yaml
 ```
