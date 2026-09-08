@@ -89,6 +89,11 @@ func silentLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// errOnly drops Fix's FixResult so a concurrency test can pipe the error
+// straight into a channel. Tests that care about delivery assert on the
+// result instead.
+func errOnly(_ orchestrator.FixResult, err error) error { return err }
+
 func TestPromoteFastForwardsRealRepo(t *testing.T) {
 	bareDir, workDir := setupOrigin(t)
 	mgr := testManager(t, workDir)
@@ -304,7 +309,7 @@ func TestFixRunsSubagentAgainstSyncedRepo(t *testing.T) {
 		Kind:     orchestrator.KindFail,
 		Evidence: map[string]any{"run_url": "http://ci/123"},
 	}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 
@@ -334,7 +339,7 @@ func TestFixPromptUsesFixMode(t *testing.T) {
 		Source: orchestrator.SourceCI,
 		Kind:   orchestrator.KindFail,
 	}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if !strings.Contains(runner.gotPrompt, "open a PR") {
@@ -359,7 +364,7 @@ func TestFixReverifyFailDoesNotReportOK(t *testing.T) {
 		Kind:     orchestrator.KindFail,
 		Evidence: map[string]any{},
 	}
-	err := d.Fix(context.Background(), sig)
+	_, err := d.Fix(context.Background(), sig)
 	if err == nil {
 		t.Fatal("expected reverify error")
 	}
@@ -383,7 +388,7 @@ func TestFixReverifyPass(t *testing.T) {
 		Kind:     orchestrator.KindFail,
 		Evidence: map[string]any{},
 	}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatal(err)
 	}
 	if sig.Evidence["reverify"] != "pass" {
@@ -410,7 +415,7 @@ func TestFixModePRRecordsPRIntoEvidence(t *testing.T) {
 		Kind:     orchestrator.KindFail,
 		Evidence: map[string]any{},
 	}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 
@@ -441,7 +446,7 @@ func TestFixModePRNoMatchDoesNotFailDispatch(t *testing.T) {
 	}
 
 	sig := orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail, Evidence: map[string]any{}}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if _, ok := sig.Evidence["pr_number"]; ok {
@@ -461,7 +466,7 @@ func TestFixModeDirectNeverCallsFindPR(t *testing.T) {
 	}
 
 	sig := orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail, Evidence: map[string]any{}}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if called {
@@ -507,7 +512,7 @@ func TestFixMergesCostIntoEvidence(t *testing.T) {
 		Kind:     orchestrator.KindFail,
 		Evidence: map[string]any{"run_url": "http://ci/1"},
 	}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if sig.Evidence["total_cost_usd"] != 0.02 {
@@ -533,7 +538,7 @@ func TestFixMergesCostOnSubagentError(t *testing.T) {
 		Repo:     "svc",
 		Evidence: map[string]any{},
 	}
-	if err := d.Fix(context.Background(), sig); err == nil {
+	if _, err := d.Fix(context.Background(), sig); err == nil {
 		t.Fatal("expected error")
 	}
 	if sig.Evidence["total_cost_usd"] != 0.01 {
@@ -550,12 +555,12 @@ func TestFixConcurrencyCap(t *testing.T) {
 
 	sig := orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail}
 	errCh := make(chan error, 2)
-	go func() { errCh <- d.Fix(context.Background(), sig) }()
+	go func() { errCh <- errOnly(d.Fix(context.Background(), sig)) }()
 	<-br.started
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if err := d.Fix(ctx, sig); err == nil {
+	if _, err := d.Fix(ctx, sig); err == nil {
 		t.Fatal("second Fix should block until slot free / ctx cancel")
 	}
 
@@ -603,7 +608,7 @@ func TestFairDrainMultiRepo(t *testing.T) {
 
 	errA := make(chan error, 1)
 	go func() {
-		errA <- d.Fix(context.Background(), orchestrator.Signal{Repo: "a", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail})
+		errA <- errOnly(d.Fix(context.Background(), orchestrator.Signal{Repo: "a", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail}))
 	}()
 	select {
 	case <-brA.started:
@@ -616,13 +621,13 @@ func TestFairDrainMultiRepo(t *testing.T) {
 	defer cancelA2()
 	errA2 := make(chan error, 1)
 	go func() {
-		errA2 <- d.Fix(ctxA2, orchestrator.Signal{Repo: "a", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail})
+		errA2 <- errOnly(d.Fix(ctxA2, orchestrator.Signal{Repo: "a", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail}))
 	}()
 
 	// Repo B should acquire the other global slot while A holds one.
 	errB := make(chan error, 1)
 	go func() {
-		errB <- d.Fix(context.Background(), orchestrator.Signal{Repo: "b", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail})
+		errB <- errOnly(d.Fix(context.Background(), orchestrator.Signal{Repo: "b", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail}))
 	}()
 	select {
 	case <-brB.started:
@@ -663,7 +668,7 @@ func TestFixBudgetTimeout(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- d.Fix(context.Background(), orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail})
+		errCh <- errOnly(d.Fix(context.Background(), orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail}))
 	}()
 	<-br.started
 	select {
@@ -704,7 +709,7 @@ func TestFixPlanOffSingleRunnerCall(t *testing.T) {
 		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
 		Evidence: map[string]any{},
 	}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatal(err)
 	}
 	if runner.calls != 1 {
@@ -725,7 +730,7 @@ func TestFixPlanOnTwoRunnerCalls(t *testing.T) {
 		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
 		Evidence: map[string]any{},
 	}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatal(err)
 	}
 	if runner.calls != 2 {
@@ -764,7 +769,7 @@ func TestFixRecordsSession(t *testing.T) {
 		Kind:     orchestrator.KindFail,
 		Evidence: map[string]any{"run_url": "http://ci/123"},
 	}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 
@@ -811,7 +816,7 @@ func TestFixRecordsFailedSession(t *testing.T) {
 		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
 		Evidence: map[string]any{},
 	}
-	if err := d.Fix(context.Background(), sig); err == nil {
+	if _, err := d.Fix(context.Background(), sig); err == nil {
 		t.Fatal("want the subagent error to surface")
 	}
 	metas, err := store.List("svc", 0)
@@ -847,7 +852,7 @@ func TestFixPromptCarriesOperatorInstructions(t *testing.T) {
 		Evidence:             map[string]any{"run_url": "http://ci/1"},
 		OperatorInstructions: "the flake is in the seed data",
 	}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if !strings.Contains(runner.gotPrompt, "the flake is in the seed data") {
@@ -876,7 +881,7 @@ func TestFixUsesGlobalRulesFile(t *testing.T) {
 		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
 		Evidence: map[string]any{},
 	}
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if !strings.Contains(runner.gotPrompt, "never touch generated files") {
@@ -942,7 +947,7 @@ func TestFixRetriesUntilGateGreen(t *testing.T) {
 	}
 
 	sig := fixSignal()
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if runner.calls() != 2 {
@@ -998,7 +1003,7 @@ func TestFixRetryRefreshesLogsFromNewRun(t *testing.T) {
 
 	sig := fixSignal()
 	sig.Evidence["run_url"] = "https://gh/run/1"
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if len(fetched) != 2 || fetched[0] != "https://gh/run/1" || fetched[1] != "https://gh/run/2" {
@@ -1025,7 +1030,7 @@ func TestFixStopsAtAttemptCeiling(t *testing.T) {
 	}
 
 	sig := fixSignal()
-	err := d.Fix(context.Background(), sig)
+	_, err := d.Fix(context.Background(), sig)
 	if err == nil {
 		t.Fatal("Fix must fail when the gate never goes green")
 	}
@@ -1053,7 +1058,7 @@ func TestFixGaveUpVerdictStopsLadderAndFails(t *testing.T) {
 	}
 
 	sig := fixSignal()
-	err := d.Fix(context.Background(), sig)
+	_, err := d.Fix(context.Background(), sig)
 	if err == nil {
 		t.Fatal("a gave_up verdict must not be recorded as a clean Fix")
 	}
@@ -1081,7 +1086,7 @@ func TestFixWithoutVerdictKeepsOldBehavior(t *testing.T) {
 	d.Reverify = func(_ context.Context, _ orchestrator.Signal) (map[string]any, error) { return nil, nil }
 
 	sig := fixSignal()
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if _, ok := sig.Evidence["agent_outcome"]; ok {
@@ -1101,7 +1106,7 @@ func TestFixAttemptsClampedWithoutReverify(t *testing.T) {
 	d := New(mgr, runner, silentLogger())
 	d.FixAttempts = 3
 
-	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+	if _, err := d.Fix(context.Background(), fixSignal()); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if runner.calls() != 1 {
@@ -1134,7 +1139,7 @@ func TestFixSessionRecordsEachAttempt(t *testing.T) {
 		return nil, nil
 	}
 
-	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+	if _, err := d.Fix(context.Background(), fixSignal()); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	metas, err := store.List("svc", 0)
@@ -1184,7 +1189,7 @@ func TestFixLessonCarriesAgentSummary(t *testing.T) {
 	les := &fakeLessons{}
 	d.Lessons = les
 
-	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+	if _, err := d.Fix(context.Background(), fixSignal()); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if len(les.recorded) != 1 {
@@ -1208,7 +1213,7 @@ func TestFixLessonOnFailureCarriesReason(t *testing.T) {
 	les := &fakeLessons{}
 	d.Lessons = les
 
-	if err := d.Fix(context.Background(), fixSignal()); err == nil {
+	if _, err := d.Fix(context.Background(), fixSignal()); err == nil {
 		t.Fatal("needs_human must fail the Fix")
 	}
 	got := les.recorded[0]
@@ -1228,7 +1233,7 @@ func TestFixPromptStillCarriesPastLessons(t *testing.T) {
 	d := New(mgr, runner, silentLogger())
 	d.Lessons = &fakeLessons{give: "- outcome=error symptom=the flake is in the seed data"}
 
-	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+	if _, err := d.Fix(context.Background(), fixSignal()); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if !strings.Contains(runner.prompts[0], "the flake is in the seed data") {
@@ -1255,7 +1260,7 @@ func TestFixCostSumsAcrossAttempts(t *testing.T) {
 	}
 
 	sig := fixSignal()
-	if err := d.Fix(context.Background(), sig); err != nil {
+	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if got := sig.Evidence["total_cost_usd"]; got != 0.50 {
@@ -1318,8 +1323,18 @@ func TestWorktreeFixPushesAndCleansUp(t *testing.T) {
 	d.SetWorktree(true, 0)
 
 	sig := fixSignal()
-	if err := d.Fix(context.Background(), sig); err != nil {
+	res, err := d.Fix(context.Background(), sig)
+	if err != nil {
 		t.Fatalf("Fix: %v", err)
+	}
+	// A Fix that pushed commits is a delivered Fix, which is what lets
+	// the orchestrator mark the SHA fixed (#34) and suppress a second
+	// Fix for the same commit.
+	if !res.Delivered {
+		t.Error("a Fix that pushed commits must report Delivered")
+	}
+	if v, ok := sig.Evidence["fix_delivered"]; ok {
+		t.Errorf("delivered Fix should not flag fix_delivered, got %v", v)
 	}
 
 	// The agent must have run somewhere other than the shared clone.
@@ -1358,7 +1373,7 @@ func TestWorktreeFixesForOneRepoRunConcurrently(t *testing.T) {
 
 	done := make(chan error, 2)
 	for i := 0; i < 2; i++ {
-		go func() { done <- d.Fix(context.Background(), fixSignal()) }()
+		go func() { done <- errOnly(d.Fix(context.Background(), fixSignal())) }()
 	}
 
 	// Both agents must be inside Run at once. If the per-repo cap were
@@ -1406,7 +1421,7 @@ func TestWorktreeKeptOnFailedFix(t *testing.T) {
 	d := New(mgr, runner, silentLogger())
 	d.SetWorktree(true, time.Hour)
 
-	if err := d.Fix(context.Background(), fixSignal()); err == nil {
+	if _, err := d.Fix(context.Background(), fixSignal()); err == nil {
 		t.Fatal("gave_up must fail the Fix")
 	}
 	dirs := runner.seenDirs()
@@ -1427,12 +1442,141 @@ func TestWorktreeNoCommitsNoPush(t *testing.T) {
 	d := New(mgr, &noopRunner{}, silentLogger())
 	d.SetWorktree(true, 0)
 
-	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+	sig := fixSignal()
+	res, err := d.Fix(context.Background(), sig)
+	if err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	after := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "develop"))
 	if before != after {
 		t.Fatalf("develop moved from %s to %s with no agent commits", before, after)
+	}
+	// #34: nothing was delivered, so the orchestrator must be able to
+	// try this SHA again instead of recording it as fixed forever.
+	if res.Delivered {
+		t.Error("a Fix that committed nothing must not report Delivered")
+	}
+	if sig.Evidence["fix_delivered"] != false {
+		t.Errorf("fix_delivered evidence = %v, want false", sig.Evidence["fix_delivered"])
+	}
+}
+
+// #37: a PR request needs a head ref that exists. A Fix that pushed
+// nothing has no branch on the remote, so GitHub would answer 422 —
+// under an audit row that still read as success.
+func TestFixModePRNoCommitsNeverCallsPRAPI(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := worktreeManager(t, workDir)
+	d := New(mgr, &noopRunner{}, silentLogger())
+	d.SetWorktree(true, 0)
+	d.FixMode = "pr"
+
+	var findCalls, createCalls int
+	d.FindPR = func(context.Context, string, string) (*PRRef, error) {
+		findCalls++
+		return nil, nil
+	}
+	d.CreatePR = func(context.Context, string, string, string, string, string) (*PRRef, error) {
+		createCalls++
+		return &PRRef{Number: 7, URL: "https://github.com/org/svc/pull/7", State: "open"}, nil
+	}
+
+	sig := fixSignal()
+	res, err := d.Fix(context.Background(), sig)
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if findCalls != 0 || createCalls != 0 {
+		t.Fatalf("PR API called with nothing pushed: FindPR=%d CreatePR=%d", findCalls, createCalls)
+	}
+	if _, ok := sig.Evidence["pr_url"]; ok {
+		t.Errorf("no push should leave no pr_* evidence, got %+v", sig.Evidence)
+	}
+	if res.Delivered {
+		t.Error("Delivered must be false when nothing was pushed")
+	}
+}
+
+// The other half of the same guard: once the branch is really on the
+// remote, pr bookkeeping runs exactly as before.
+func TestFixModePRWithCommitsCreatesPRForPushedBranch(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := worktreeManager(t, workDir)
+	d := New(mgr, &committingRunner{}, silentLogger())
+	d.SetWorktree(true, 0)
+	d.FixMode = "pr"
+
+	var gotHead, gotBase string
+	d.FindPR = func(context.Context, string, string) (*PRRef, error) { return nil, nil }
+	d.CreatePR = func(_ context.Context, _, head, base, _, _ string) (*PRRef, error) {
+		gotHead, gotBase = head, base
+		return &PRRef{Number: 7, URL: "https://github.com/org/svc/pull/7", State: "open"}, nil
+	}
+
+	sig := fixSignal()
+	res, err := d.Fix(context.Background(), sig)
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if !res.Delivered {
+		t.Error("Delivered must be true after a push")
+	}
+	if !strings.HasPrefix(gotHead, "xdlc-fix-") || gotBase != "develop" {
+		t.Fatalf("CreatePR head=%q base=%q", gotHead, gotBase)
+	}
+	if sig.Evidence["pr_url"] != "https://github.com/org/svc/pull/7" {
+		t.Fatalf("pr evidence = %+v", sig.Evidence)
+	}
+}
+
+// #37: a 422 (or any other PR failure) used to be a Warn under a green
+// audit row. The Fix has to fail instead.
+func TestFixModePRCreateFailureFailsFix(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	d := New(mgr, &fakeRunner{}, silentLogger())
+	d.FixMode = "pr"
+	d.FindPR = func(context.Context, string, string) (*PRRef, error) { return nil, nil }
+	d.CreatePR = func(context.Context, string, string, string, string, string) (*PRRef, error) {
+		return nil, errors.New("422 Validation Failed")
+	}
+
+	sig := orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail, Evidence: map[string]any{}}
+	if _, err := d.Fix(context.Background(), sig); err == nil {
+		t.Fatal("a failed PR create must fail the Fix")
+	} else if !strings.Contains(err.Error(), "create pr") {
+		t.Fatalf("error = %v, want a create pr error", err)
+	}
+}
+
+// The pre-existing intent: pr bookkeeping runs on the failure path too,
+// because a Fix that pushed a branch but could not turn the gate green
+// still owes the operator a PR link. Only the gate error surfaces.
+func TestFixModePRRecordsPROnFailedFix(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := worktreeManager(t, workDir)
+	d := New(mgr, &committingRunner{}, silentLogger())
+	d.SetWorktree(true, time.Hour)
+	d.FixMode = "pr"
+	d.Reverify = func(context.Context, orchestrator.Signal) (map[string]any, error) {
+		return nil, errors.New("still red")
+	}
+	d.FindPR = func(context.Context, string, string) (*PRRef, error) {
+		return &PRRef{Number: 9, URL: "https://github.com/org/svc/pull/9", State: "open"}, nil
+	}
+
+	sig := fixSignal()
+	res, err := d.Fix(context.Background(), sig)
+	if err == nil || !strings.Contains(err.Error(), "reverify") {
+		t.Fatalf("want the reverify error, got %v", err)
+	}
+	if sig.Evidence["pr_url"] != "https://github.com/org/svc/pull/9" {
+		t.Fatalf("a pushed-but-red Fix still needs its PR link, evidence = %+v", sig.Evidence)
+	}
+	// Pushed, so the daemon did deliver; the error is what keeps the
+	// orchestrator from marking the SHA fixed.
+	if !res.Delivered {
+		t.Error("Delivered must be true after a push, even on a failed Fix")
 	}
 }
 
@@ -1451,7 +1595,7 @@ func TestWorktreePromptTellsAgentNotToPush(t *testing.T) {
 	d := New(mgr, runner, silentLogger())
 	d.SetWorktree(true, 0)
 
-	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+	if _, err := d.Fix(context.Background(), fixSignal()); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if !strings.Contains(runner.prompt, "Do NOT push") {
@@ -1473,7 +1617,7 @@ func TestWorktreeDisabledUsesSharedClone(t *testing.T) {
 	runner := &promptCapturingRunner{}
 	d := New(mgr, runner, silentLogger())
 
-	if err := d.Fix(context.Background(), fixSignal()); err != nil {
+	if _, err := d.Fix(context.Background(), fixSignal()); err != nil {
 		t.Fatalf("Fix: %v", err)
 	}
 	if strings.Contains(runner.prompt, "Do NOT push") {

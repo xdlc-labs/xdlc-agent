@@ -17,9 +17,9 @@ type fakeDispatcher struct {
 	fixCalls, revertCalls, promoteCalls []Signal
 }
 
-func (f *fakeDispatcher) Fix(_ context.Context, s Signal) error {
+func (f *fakeDispatcher) Fix(_ context.Context, s Signal) (FixResult, error) {
 	f.fixCalls = append(f.fixCalls, s)
-	return nil
+	return FixResult{Delivered: true}, nil
 }
 func (f *fakeDispatcher) Revert(_ context.Context, s Signal) error {
 	f.revertCalls = append(f.revertCalls, s)
@@ -99,14 +99,14 @@ type blockingDispatcher struct {
 	revertDone chan struct{}
 }
 
-func (d *blockingDispatcher) Fix(ctx context.Context, _ Signal) error {
+func (d *blockingDispatcher) Fix(ctx context.Context, _ Signal) (FixResult, error) {
 	close(d.fixStarted)
 	select {
 	case <-d.fixRelease:
 	case <-ctx.Done():
-		return ctx.Err()
+		return FixResult{}, ctx.Err()
 	}
-	return nil
+	return FixResult{Delivered: true}, nil
 }
 func (d *blockingDispatcher) Revert(_ context.Context, _ Signal) error {
 	close(d.revertDone)
@@ -161,7 +161,7 @@ type countingFixDispatcher struct {
 	fixRelease chan struct{}
 }
 
-func (d *countingFixDispatcher) Fix(ctx context.Context, _ Signal) error {
+func (d *countingFixDispatcher) Fix(ctx context.Context, _ Signal) (FixResult, error) {
 	d.mu.Lock()
 	d.n++
 	n := d.n
@@ -171,10 +171,10 @@ func (d *countingFixDispatcher) Fix(ctx context.Context, _ Signal) error {
 		select {
 		case <-d.fixRelease:
 		case <-ctx.Done():
-			return ctx.Err()
+			return FixResult{}, ctx.Err()
 		}
 	}
-	return nil
+	return FixResult{Delivered: true}, nil
 }
 func (d *countingFixDispatcher) Revert(context.Context, Signal) error  { return nil }
 func (d *countingFixDispatcher) Promote(context.Context, Signal) error { return nil }
@@ -234,16 +234,19 @@ type scriptedFixDispatcher struct {
 	mu        sync.Mutex
 	calls     int
 	failUntil int
+	// undelivered models the #34 case: the agent exits 0 but committed
+	// nothing, so Fix reports no error and no delivery.
+	undelivered bool
 }
 
-func (d *scriptedFixDispatcher) Fix(context.Context, Signal) error {
+func (d *scriptedFixDispatcher) Fix(context.Context, Signal) (FixResult, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.calls++
 	if d.calls <= d.failUntil {
-		return errors.New("fix failed")
+		return FixResult{}, errors.New("fix failed")
 	}
-	return nil
+	return FixResult{Delivered: !d.undelivered}, nil
 }
 func (d *scriptedFixDispatcher) Revert(context.Context, Signal) error  { return nil }
 func (d *scriptedFixDispatcher) Promote(context.Context, Signal) error { return nil }
@@ -266,9 +269,37 @@ func TestFixOnePerRepoSHA(t *testing.T) {
 		o := New(disp, bl, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		sig := Signal{Source: SourceCI, Repo: "svc", Kind: KindFail, SHA: sha}
 		o.handle(ctx, sig)
-		o.handle(ctx, sig)
+		// Non-nil Evidence: handle takes the Signal by value, so the
+		// skip reason is only visible to the caller through the map.
+		second := Signal{Source: SourceCI, Repo: "svc", Kind: KindFail, SHA: sha, Evidence: map[string]any{}}
+		o.handle(ctx, second)
 		if disp.n() != 1 {
 			t.Fatalf("Fix calls = %d, want 1", disp.n())
+		}
+		// d75b2c2's guarantee: a flake-ladder workflow_run for a commit
+		// already fixed must not open a second PR.
+		if second.Evidence["skip_fix_sha"] != "already_fixed" {
+			t.Fatalf("skip reason = %v, want already_fixed", second.Evidence["skip_fix_sha"])
+		}
+	})
+
+	// #34: pushWorktree returns nil when the agent committed nothing, so
+	// a timed-out or OOM-killed agent used to latch st.ok and burn the
+	// commit for the daemon's lifetime.
+	t.Run("Fix that delivered nothing can retry the same SHA", func(t *testing.T) {
+		disp := &scriptedFixDispatcher{undelivered: true}
+		o := New(disp, bl, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		sig := Signal{Source: SourceCI, Repo: "svc", Kind: KindFail, SHA: sha}
+		o.handle(ctx, sig)
+		// Non-nil Evidence: handle takes the Signal by value, so the
+		// skip reason is only visible to the caller through the map.
+		second := Signal{Source: SourceCI, Repo: "svc", Kind: KindFail, SHA: sha, Evidence: map[string]any{}}
+		o.handle(ctx, second)
+		if disp.n() != 2 {
+			t.Fatalf("Fix calls = %d, want 2 (retry after a Fix that delivered nothing)", disp.n())
+		}
+		if r, ok := second.Evidence["skip_fix_sha"]; ok {
+			t.Fatalf("second delivery was skipped with reason %v", r)
 		}
 	})
 
