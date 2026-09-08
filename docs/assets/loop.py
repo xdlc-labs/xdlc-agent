@@ -3,14 +3,22 @@
 
     python3 docs/assets/loop.py
 
-Two files rather than one with a media query, because GitHub's own
-`<picture>` + `prefers-color-scheme` is the only theme switch that is
-reliable for a README image. Hand-authored coordinates: the point of the
-picture is that the agent is reachable through exactly one gate, so the
-layout has to make that literal rather than decorative.
+Two files rather than one with a media query, because GitHub's `<picture>`
+plus `prefers-color-scheme` is the only theme switch that is reliable for a
+README image. Colors are substituted in below rather than carried as CSS
+custom properties: GitHub's SVG sanitizer is free to drop a style
+attribute, and a hero that renders black-on-black is worse than no hero.
 
-The viewBox is 900 wide and the README renders it at 900, so every font
-size here is the size a reader actually gets.
+Hand-authored coordinates. The claim the picture has to make is that the
+agent sits behind exactly one of four verdicts, so the layout makes that
+literal: one row per signal, and only the top row reaches the agent box.
+
+Sizing: GitHub renders a README image at the width of its content column,
+roughly 660px on a laptop rather than the 900 of this viewBox. Every font
+here is therefore about 0.73x on screen, which is why nothing is smaller
+than 10 and why the strings are as short as they are. Lengthen one and it
+will overflow its box on a real page -- check a render, because the SVG
+itself will not complain.
 """
 
 import pathlib
@@ -28,23 +36,25 @@ DARK = dict(
     red="#f85149", green="#3fb950", blue="#4493f8", host="#ab7df8",
 )
 
-# Rows: each signal, its action, and its outcome share one baseline.
+# Each signal, the verdict it draws, and its outcome share one baseline.
 FIX_Y, PROMOTE_Y, REVERT_Y = 126, 214, 270
 
-SIG_X, SIG_W = 8, 122
-POL_X, POL_W = 182, 118
+SIG_X, SIG_W = 8, 140
+POL_X, POL_W = 184, 126
 POL_Y, POL_H = 88, 214
-FIX_X, FIX_W = 340, 330
+FIX_X, FIX_W = 344, 326
 FIX_BOX_Y, FIX_BOX_H = 84, 108
-OUT_X, OUT_W = 724, 168
-BOX_X, BOX_Y, BOX_W, BOX_H = 166, 52, 520, 350
+OUT_X, OUT_W = 722, 170
+BOX_X, BOX_Y, BOX_W, BOX_H = 168, 52, 520, 350
+
+SMALL, BODY, TITLE, BIG = 10, 11, 12, 15
 
 
 def esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def text(x, y, s, size=11, fill="ink", weight=None, anchor="start", mono=False):
+def text(x, y, s, size=BODY, fill="ink", weight=None, anchor="start", mono=False):
     fam = ("ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" if mono
            else "-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif")
     w = f' font-weight="{weight}"' if weight else ""
@@ -71,30 +81,29 @@ def varrow(x, y1, y2, color="mid", dash=None):
             f' stroke-width="1.5"{d} marker-end="url(#a-{color})"/>')
 
 
-def dot(x, y, color):
-    return f'<circle cx="{x}" cy="{y}" r="4" fill="var(--{color})"/>'
-
-
 def signal(y, title, sub, color):
-    """A signal chip: what the outside world reported."""
+    """A signal chip: what the outside world just reported."""
     top = y - 24
     return "".join([
         box(SIG_X, top, SIG_W, 48, fill="panel2"),
-        dot(SIG_X + 14, y - 6, color),
-        text(SIG_X + 26, y - 2, title, 12, "ink", "600"),
-        text(SIG_X + 12, y + 15, sub, 9, "mid", mono=True),
+        f'<circle cx="{SIG_X + 15}" cy="{y - 7}" r="4" fill="var(--{color})"/>',
+        text(SIG_X + 27, y - 3, title, TITLE, "ink", "600"),
+        text(SIG_X + 13, y + 15, sub, SMALL, "mid", mono=True),
     ])
 
 
-def outcome(y, h, title, sub, color, strong=False):
+def outcome(y, h, title, sub, note=None):
+    """An outcome chip. note marks the headline one, in the accent color."""
     top = y - h // 2
-    return "".join([
-        box(OUT_X, top, OUT_W, h, fill="panel2", stroke=color if strong else "line",
-            sw=1.5 if strong else 1),
-        text(OUT_X + 14, top + 21, title, 12, "ink", "600"),
-        text(OUT_X + 14, top + 37, sub, 9, "mid", mono=True),
-    ] + ([text(OUT_X + 14, top + 51, "green checks, cost recorded", 9, "green", mono=True)]
-         if strong else []))
+    parts = [
+        box(OUT_X, top, OUT_W, h, fill="panel2",
+            stroke="green" if note else "line", sw=1.5 if note else 1),
+        text(OUT_X + 14, top + 21, title, TITLE, "ink", "600"),
+        text(OUT_X + 14, top + 38, sub, SMALL, "mid", mono=True),
+    ]
+    if note:
+        parts.append(text(OUT_X + 14, top + 55, note, SMALL, "green", mono=True))
+    return "".join(parts)
 
 
 def svg(pal):
@@ -102,85 +111,85 @@ def svg(pal):
         f'<marker id="a-{c}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6"'
         f' markerHeight="6" orient="auto-start-reverse">'
         f'<path d="M0,1 L9,5 L0,9 z" fill="var(--{c})"/></marker>'
-        for c in ("mid", "faint", "green", "red")
+        for c in ("mid", "faint", "green")
     )
     p = []
 
     # The boundary that matters: what runs on hardware you own.
     p.append(box(BOX_X, BOX_Y, BOX_W, BOX_H, fill="panel2", stroke="host", rx=10, dash="5 4"))
-    p.append(text(BOX_X + 14, BOX_Y + 20, "your host  ·  your keys  ·  nothing phones home",
-                  10, "host", "600", mono=True))
+    p.append(text(BOX_X + 14, BOX_Y + 21, "your host · your keys · nothing phones home",
+                  BODY, "host", "600", mono=True))
 
     # Signals in, from GitHub and Prometheus.
-    p.append(signal(FIX_Y, "CI red", "workflow_run: failure", "red"))
+    p.append(signal(FIX_Y, "CI red", "workflow_run failed", "red"))
     p.append(signal(PROMOTE_Y, "DEV green", "smoke probe passed", "green"))
-    p.append(signal(REVERT_Y, "prod breach", "p95 over threshold", "red"))
+    p.append(signal(REVERT_Y, "prod breach", "p95 over budget", "red"))
 
     # Policy: the whole point of the picture.
     p.append(box(POL_X, POL_Y, POL_W, POL_H))
-    p.append(text(POL_X + 14, POL_Y + 26, "policy", 15, "ink", "700"))
-    p.append(text(POL_X + 14, POL_Y + 44, "decides before", 10, "mid"))
-    p.append(text(POL_X + 14, POL_Y + 58, "anything runs", 10, "mid"))
-    p.append(f'<line x1="{POL_X + 14}" y1="{POL_Y + 72}" x2="{POL_X + POL_W - 14}"'
-             f' y2="{POL_Y + 72}" stroke="var(--line)" stroke-width="1"/>')
-    for i, s in enumerate(("flap detection", "circuit breaker", "depends_on", "budgets, caps")):
-        p.append(text(POL_X + 14, POL_Y + 92 + i * 15, s, 9, "mid", mono=True))
+    p.append(text(POL_X + 14, POL_Y + 27, "policy", BIG, "ink", "700"))
+    p.append(text(POL_X + 14, POL_Y + 46, "decides before", BODY, "mid"))
+    p.append(text(POL_X + 14, POL_Y + 61, "anything runs", BODY, "mid"))
+    p.append(f'<line x1="{POL_X + 14}" y1="{POL_Y + 76}" x2="{POL_X + POL_W - 14}"'
+             f' y2="{POL_Y + 76}" stroke="var(--line)" stroke-width="1"/>')
+    for i, s in enumerate(("flap detect", "circuit break", "depends_on", "budgets")):
+        p.append(text(POL_X + 14, POL_Y + 97 + i * 17, s, SMALL, "mid", mono=True))
 
-    # What a Fix actually is. One box, because it is one gated path.
+    # What a Fix is. One box, because it is one gated path.
     p.append(box(FIX_X, FIX_BOX_Y, FIX_W, FIX_BOX_H, stroke="blue", sw=1.5))
-    p.append(text(FIX_X + 16, FIX_BOX_Y + 24, "Fix", 15, "ink", "700"))
-    p.append(text(FIX_X + 52, FIX_BOX_Y + 24, "the only path to the agent", 10, "blue", mono=True))
-    p.append(text(FIX_X + 16, FIX_BOX_Y + 46, "1. git worktree per Fix, on a scratch branch", 10, "mid", mono=True))
-    p.append(text(FIX_X + 16, FIX_BOX_Y + 63, "2. your agent CLI runs in it, with the failing logs", 10, "mid", mono=True))
-    p.append(text(FIX_X + 16, FIX_BOX_Y + 80, "3. the agent commits, xdlc pushes", 10, "mid", mono=True))
-    p.append(text(FIX_X + 16, FIX_BOX_Y + 97, "claude · codex · cursor · gemini", 9, "faint", mono=True))
+    p.append(text(FIX_X + 16, FIX_BOX_Y + 25, "Fix", BIG, "ink", "700"))
+    p.append(text(FIX_X + 54, FIX_BOX_Y + 25, "the only path to an agent", BODY, "blue", mono=True))
+    for i, s in enumerate(("1. a git worktree per Fix",
+                           "2. your agent CLI, given the failing logs",
+                           "3. the agent commits, xdlc pushes")):
+        p.append(text(FIX_X + 16, FIX_BOX_Y + 47 + i * 18, s, BODY, "mid", mono=True))
+    p.append(text(FIX_X + 16, FIX_BOX_Y + 99, "claude · codex · cursor · gemini",
+                  SMALL, "faint", mono=True))
 
     # Signal edges into policy.
     for y in (FIX_Y, PROMOTE_Y, REVERT_Y):
         p.append(arrow(SIG_X + SIG_W, y, POL_X))
 
-    # Policy's four verdicts.
+    # Policy's four verdicts. Only the first reaches the Fix box.
     p.append(arrow(POL_X + POL_W, FIX_Y, FIX_X))
-    p.append(text((POL_X + POL_W + FIX_X) // 2, FIX_Y - 8, "fix", 10, "ink", "700", "middle", mono=True))
-
+    p.append(text((POL_X + POL_W + FIX_X) // 2, FIX_Y - 9, "fix", BODY, "ink", "700",
+                  "middle", mono=True))
     p.append(arrow(POL_X + POL_W, PROMOTE_Y, OUT_X))
-    p.append(text(POL_X + POL_W + 12, PROMOTE_Y - 8, "promote", 10, "ink", "700", mono=True))
-
+    p.append(text(POL_X + POL_W + 12, PROMOTE_Y - 9, "promote", BODY, "ink", "700", mono=True))
     p.append(arrow(POL_X + POL_W, REVERT_Y, OUT_X))
-    p.append(text(POL_X + POL_W + 12, REVERT_Y - 8, "revert", 10, "ink", "700", mono=True))
-
+    p.append(text(POL_X + POL_W + 12, REVERT_Y - 9, "revert", BODY, "ink", "700", mono=True))
     p.append(varrow(POL_X + POL_W // 2, POL_Y + POL_H, 330, color="faint", dash="4 4"))
-    p.append(text(POL_X + 6, 346, "noop — where most signals end", 10, "faint", "700", mono=True))
+    p.append(text(POL_X + 4, 348, "noop — where most signals end", BODY, "faint", "700", mono=True))
 
-    # Fix's result leaves the host and lands back on GitHub.
+    # A Fix's result leaves the host and lands back on GitHub.
     p.append(arrow(FIX_X + FIX_W, FIX_Y, OUT_X, color="green"))
 
-    # Outcomes out.
-    p.append(outcome(FIX_Y, 68, "pull request", "agent's summary, run link", "green", strong=True))
-    p.append(outcome(PROMOTE_Y, 48, "develop → main", "fast-forward, gated SHA", "line"))
-    p.append(outcome(REVERT_Y, 48, "main reverted", "before anyone pages you", "line"))
+    p.append(outcome(FIX_Y, 72, "pull request", "the agent's summary", "cost recorded"))
+    p.append(outcome(PROMOTE_Y, 50, "develop → main", "fast-forward only"))
+    p.append(outcome(REVERT_Y, 50, "main reverted", "before you get paged"))
 
-    # The audit trail, which is what makes the rest reviewable.
-    band_y = 356
+    # The audit trail, which is what makes any of the above reviewable.
+    band_y = 358
     p.append(box(POL_X, band_y, FIX_X + FIX_W - POL_X, 34, fill="panel", rx=6))
     p.append(text(POL_X + 16, band_y + 22,
-                  "every action recorded: prompt · agent output · diff · verdict · cost",
-                  10, "mid", mono=True))
+                  "recorded per action: prompt · output · diff · verdict · cost",
+                  BODY, "mid", mono=True))
 
-    # Close the cycle. A merged Fix, a promote and a revert all change the
-    # state the next signal is measured against -- that is the loop the
+    # Close the cycle: a merged Fix, a promote and a revert all change the
+    # state the next signal is measured against. That is the loop the
     # project is named for, so the picture has to actually loop.
-    p.append(f'<path d="M{OUT_X + OUT_W // 2},{FIX_Y - 34} V32 Q{OUT_X + OUT_W // 2},22'
+    p.append(f'<path d="M{OUT_X + OUT_W // 2},{FIX_Y - 38} V32 Q{OUT_X + OUT_W // 2},22'
              f' {OUT_X + OUT_W // 2 - 10},22 H{SIG_X + SIG_W // 2 + 10} Q{SIG_X + SIG_W // 2},22'
              f' {SIG_X + SIG_W // 2},32 V{FIX_Y - 31}" fill="none" stroke="var(--faint)"'
              f' stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#a-faint)"/>')
-    p.append(text(W // 2, 16, "the outcome is what the next signal measures", 10, "faint",
+    p.append(text(W // 2, 16, "the outcome is what the next signal measures", BODY, "faint",
                   anchor="middle", mono=True))
 
     out = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}"'
-           f' height="{H}" role="img" aria-label="xdlc: signals from CI, DEV smoke and prod'
-           f' health enter a policy gate that decides Fix, Promote, Revert or noop; only Fix'
-           f' reaches the coding agent, which runs in a per-Fix git worktree on your own host">'
+           f' height="{H}" role="img" aria-label="Signals from CI, DEV smoke and prod health'
+           f' enter a policy gate that returns Fix, Promote, Revert or noop. Only Fix reaches'
+           f' a coding agent, which runs in a per-Fix git worktree on your own host. Every'
+           f' action is recorded with its prompt, diff, verdict and cost.">'
            f'<defs>{markers}</defs>{"".join(p)}</svg>')
     for key, value in pal.items():
         out = out.replace(f"var(--{key})", value)
