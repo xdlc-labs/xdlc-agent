@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -216,8 +217,12 @@ func TestPromoteRepinsAcrossTagCarry(t *testing.T) {
 		if env == "prod" {
 			tag = "sha-oldtag"
 		}
-		if err := os.WriteFile(filepath.Join(dir, "svc.yaml"),
-			[]byte("image:\n  repository: ghcr.io/org/svc\n  tag: \""+tag+"\"\n"), 0o644); err != nil {
+		body := "image:\n  repository: ghcr.io/org/svc\n  tag: \"" + tag + "\"\n" +
+			// An unrelated image in the same file: the carry used to
+			// point this at the service's SHA too, which is a tag that
+			// does not exist in the collector's registry.
+			"sidecar:\n  image:\n    tag: v0.104.0\n"
+		if err := os.WriteFile(filepath.Join(dir, "svc.yaml"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -227,9 +232,18 @@ func TestPromoteRepinsAcrossTagCarry(t *testing.T) {
 
 	d := New(testManager(t, workDir), nil, silentLogger())
 	gated := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "develop"))
-	sig := orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceDevGate, Kind: orchestrator.KindPass, SHA: gated}
+	sig := orchestrator.Signal{
+		Repo: "svc", Source: orchestrator.SourceDevGate, Kind: orchestrator.KindPass, SHA: gated,
+		Evidence: map[string]any{},
+	}
 	if err := d.Promote(context.Background(), sig); err != nil {
 		t.Fatalf("Promote: %v", err)
+	}
+	if got := sig.Evidence["tag_carry"]; got != string(promote.CarryUpdated) {
+		t.Errorf("evidence tag_carry = %v, want %q", got, promote.CarryUpdated)
+	}
+	if got := sig.Evidence["image_tag"]; got != "sha-newtag" {
+		t.Errorf("evidence image_tag = %v, want sha-newtag", got)
 	}
 
 	// main is the carry commit, whose parent is the gated commit.
@@ -240,8 +254,76 @@ func TestPromoteRepinsAcrossTagCarry(t *testing.T) {
 	if parent := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "main^")); parent != gated {
 		t.Errorf("main^ = %s, want the gated sha %s", parent, gated)
 	}
-	if got := runGit(t, bareDir, "show", "main:gitops/values/prod/svc.yaml"); !strings.Contains(got, "sha-newtag") {
-		t.Errorf("prod values not carried: %s", got)
+	prodValues := runGit(t, bareDir, "show", "main:gitops/values/prod/svc.yaml")
+	if !strings.Contains(prodValues, "sha-newtag") {
+		t.Errorf("prod values not carried: %s", prodValues)
+	}
+	if !strings.Contains(prodValues, "tag: v0.104.0") {
+		t.Errorf("the sidecar's tag was clobbered by the carry: %s", prodValues)
+	}
+	if !strings.HasSuffix(prodValues, "\n") {
+		t.Errorf("the carry stripped the trailing newline: %q", prodValues)
+	}
+}
+
+// TestPromoteReportsMissingValuesFile is the silent-no-op regression.
+// dispatch passes repos[].name as the service, so a values file named
+// after the service instead ("svc-api.yaml" for repos[].name "svc") was
+// never found: no tag was carried, prod was fast-forwarded anyway, and
+// the only trace was `msg=promoted ... ok=true`. It still promotes —
+// fast-forward-only repos are supported — but the outcome now reaches
+// the log and the audit row's evidence.
+func TestPromoteReportsMissingValuesFile(t *testing.T) {
+	bareDir, workDir := setupOrigin(t)
+	for _, env := range []string{"dev", "prod"} {
+		dir := filepath.Join(workDir, "gitops", "values", env)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		tag := "sha-dev-9f1c2ab"
+		if env == "prod" {
+			tag = "sha-prod-old000"
+		}
+		// Named after the service, not after repos[].name.
+		if err := os.WriteFile(filepath.Join(dir, "svc-api.yaml"),
+			[]byte("image:\n  repository: ghcr.io/org/svc\n  tag: "+tag+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, workDir, "add", ".")
+	runGit(t, workDir, "commit", "-m", "add gitops values")
+	runGit(t, workDir, "push", "origin", "develop")
+
+	var logs bytes.Buffer
+	d := New(testManager(t, workDir), nil, slog.New(slog.NewTextHandler(&logs, nil)))
+	gated := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "develop"))
+	sig := orchestrator.Signal{
+		Repo: "svc", Source: orchestrator.SourceDevGate, Kind: orchestrator.KindPass, SHA: gated,
+		Evidence: map[string]any{},
+	}
+	if err := d.Promote(context.Background(), sig); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+
+	// Prod is still fast-forwarded, as before.
+	if got := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "main")); got != gated {
+		t.Errorf("main = %s, want the gated sha %s", got, gated)
+	}
+	if got := sig.Evidence["tag_carry"]; got != string(promote.CarryNoValues) {
+		t.Errorf("evidence tag_carry = %v, want %q", got, promote.CarryNoValues)
+	}
+	if got, _ := sig.Evidence["tag_carry_missing"].(string); !strings.Contains(got, "gitops/values/prod/svc.yaml") {
+		t.Errorf("evidence tag_carry_missing = %q, want the path that was looked for", got)
+	}
+	if got, _ := sig.Evidence["tag_carry_values_dir"].(string); !strings.Contains(got, "svc-api.yaml") {
+		t.Errorf("evidence tag_carry_values_dir = %q, want the misnamed file that is actually there", got)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "carried no image tag") {
+		t.Errorf("no warning about the uncarried tag:\n%s", out)
+	}
+	if !strings.Contains(out, "tag_carry="+string(promote.CarryNoValues)) {
+		t.Errorf("the promoted log line does not say what the carry did:\n%s", out)
 	}
 }
 

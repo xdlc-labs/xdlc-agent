@@ -540,19 +540,237 @@ func TestHandleArgoCDUnknownApp(t *testing.T) {
 	}
 }
 
-func TestHandleAlertmanager(t *testing.T) {
-	body := []byte(`{"status":"firing","alerts":[{"status":"firing","labels":{"repo":"example-service","alertname":"HighP95Latency"}}]}`)
-	ch := make(chan orchestrator.Signal, 1)
-	srv := &Server{Signals: ch, ResolveRepo: resolveTestRepo, Log: silentLogger()}
+// gatedTestRepo enrols the one test repo in prod-health, the way
+// `repos[].gates: [prod-health]` does for the real daemon.
+func gatedTestRepo(repo string) bool { return repo == "example-service" }
+
+// amServer is the minimum server an alert can act through: the label
+// resolves *and* the repo opted into the prod-health gate.
+func amServer(ch chan orchestrator.Signal) *Server {
+	return &Server{
+		Signals:         ch,
+		ResolveRepo:     resolveTestRepo,
+		ProdHealthGated: gatedTestRepo,
+		Log:             silentLogger(),
+	}
+}
+
+// amAlert builds a single-alert Alertmanager delivery. status is
+// "firing" or "resolved"; labels is a JSON object literal.
+func amAlert(status, labels string) []byte {
+	return []byte(`{"status":"` + status + `","alerts":[{"status":"` + status + `","labels":` + labels + `}]}`)
+}
+
+// postAM delivers body to /webhooks/alertmanager. Each header in
+// headers is applied as key/value pairs.
+func postAM(t *testing.T, srv *Server, body []byte, headers ...string) int {
+	t.Helper()
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/alertmanager", bytes.NewReader(body))
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
 	w := httptest.NewRecorder()
 	srv.handleAlertmanager(w, req)
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("status = %d", w.Code)
+	return w.Code
+}
+
+func TestHandleAlertmanager(t *testing.T) {
+	ch := make(chan orchestrator.Signal, 1)
+	body := amAlert("firing", `{"repo":"example-service","alertname":"HighP95Latency"}`)
+	if got := postAM(t, amServer(ch), body); got != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", got)
 	}
 	sig := <-ch
 	if sig.Source != orchestrator.SourceProdHealth || sig.Kind != orchestrator.KindBreach {
 		t.Errorf("signal = %+v", sig)
+	}
+}
+
+// TestHandleAlertmanagerSecret covers the accept path with a real
+// credential, which had no coverage at all: every alertmanager test left
+// AMSecret empty, so the one route into ActionRevert that a shared
+// secret guards was only ever exercised unauthenticated.
+func TestHandleAlertmanagerSecret(t *testing.T) {
+	const secret = "am-shhh"
+	body := amAlert("firing", `{"repo":"example-service"}`)
+
+	cases := []struct {
+		name          string
+		secret        string
+		requireSecret bool
+		headers       []string
+		want          int
+		wantSignal    bool
+	}{
+		{
+			name: "correct bearer accepted", secret: secret,
+			headers: []string{"Authorization", "Bearer " + secret},
+			want:    http.StatusAccepted, wantSignal: true,
+		},
+		{
+			name: "correct x-webhook-secret accepted", secret: secret,
+			headers: []string{"X-Webhook-Secret", secret},
+			want:    http.StatusAccepted, wantSignal: true,
+		},
+		{
+			name: "wrong bearer rejected", secret: secret,
+			headers: []string{"Authorization", "Bearer not-it"},
+			want:    http.StatusUnauthorized,
+		},
+		{
+			name: "wrong x-webhook-secret rejected", secret: secret,
+			headers: []string{"X-Webhook-Secret", "not-it"},
+			want:    http.StatusUnauthorized,
+		},
+		{
+			name: "no credential rejected when one is configured", secret: secret,
+			want: http.StatusUnauthorized,
+		},
+		{
+			// The prod posture: require_webhook_secret: true with the
+			// env var unset must refuse, not fall through to the
+			// "skipping verification" warning.
+			name: "missing configured secret refuses the request", requireSecret: true,
+			headers: []string{"Authorization", "Bearer " + secret},
+			want:    http.StatusUnauthorized,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ch := make(chan orchestrator.Signal, 1)
+			srv := amServer(ch)
+			srv.AMSecret = c.secret
+			srv.RequireSecret = c.requireSecret
+			if got := postAM(t, srv, body, c.headers...); got != c.want {
+				t.Fatalf("status = %d, want %d", got, c.want)
+			}
+			if c.wantSignal {
+				sig := <-ch
+				if sig.Repo != "example-service" || sig.Kind != orchestrator.KindBreach {
+					t.Errorf("signal = %+v", sig)
+				}
+				return
+			}
+			if len(ch) != 0 {
+				t.Fatalf("emitted a signal for an unauthenticated alert: %+v", <-ch)
+			}
+		})
+	}
+}
+
+// TestHandleAlertmanagerRepeatFiringIsOneBreach is the revert-the-revert
+// regression. Alertmanager is level-triggered: it re-sends a firing
+// notification every repeat_interval while the alert holds. Each
+// re-notification is a genuine, correctly credentialed delivery with its
+// own id, so delivery-id dedupe does not see it — and treating it as a
+// fresh breach reverted the revert, putting the bad commit back in prod
+// on every even-numbered notification.
+func TestHandleAlertmanagerRepeatFiringIsOneBreach(t *testing.T) {
+	ch := make(chan orchestrator.Signal, 8)
+	srv := amServer(ch)
+	firing := amAlert("firing", `{"repo":"example-service","alertname":"HighP95Latency"}`)
+
+	if got := postAM(t, srv, firing); got != http.StatusAccepted {
+		t.Fatalf("first firing status = %d, want 202", got)
+	}
+	for i := 2; i <= 3; i++ {
+		if got := postAM(t, srv, firing); got != http.StatusNoContent {
+			t.Fatalf("firing notification %d status = %d, want 204 (level unchanged)", i, got)
+		}
+	}
+	if len(ch) != 1 {
+		t.Fatalf("three firing notifications produced %d signals, want 1", len(ch))
+	}
+	if sig := <-ch; sig.Kind != orchestrator.KindBreach {
+		t.Fatalf("signal kind = %v, want breach", sig.Kind)
+	}
+
+	// A resolve clears the state, so the *next* breach is a real edge
+	// and must revert again.
+	resolved := amAlert("resolved", `{"repo":"example-service","alertname":"HighP95Latency"}`)
+	if got := postAM(t, srv, resolved); got != http.StatusAccepted {
+		t.Fatalf("resolved status = %d, want 202", got)
+	}
+	if sig := <-ch; sig.Kind != orchestrator.KindPass {
+		t.Fatalf("resolved signal kind = %v, want pass", sig.Kind)
+	}
+	if got := postAM(t, srv, firing); got != http.StatusAccepted {
+		t.Fatalf("new breach after resolve status = %d, want 202", got)
+	}
+	if sig := <-ch; sig.Kind != orchestrator.KindBreach {
+		t.Fatalf("new breach kind = %v, want breach", sig.Kind)
+	}
+
+	// A repeated resolve is not an edge either.
+	if got := postAM(t, srv, resolved); got != http.StatusAccepted {
+		t.Fatalf("resolve after breach status = %d, want 202", got)
+	}
+	<-ch
+	if got := postAM(t, srv, resolved); got != http.StatusNoContent {
+		t.Fatalf("repeat resolve status = %d, want 204", got)
+	}
+	if len(ch) != 0 {
+		t.Fatalf("repeat resolve emitted a signal: %+v", <-ch)
+	}
+}
+
+// TestHandleAlertmanagerRepeatFiringPerRepo: the edge is per repo, so
+// one repo's sustained breach must not mask another repo's first one.
+func TestHandleAlertmanagerRepeatFiringPerRepo(t *testing.T) {
+	ch := make(chan orchestrator.Signal, 8)
+	srv := amServer(ch)
+	srv.ResolveRepo = func(name string) (string, bool) {
+		if name == "example-service" || name == "other-service" {
+			return name, true
+		}
+		return "", false
+	}
+	srv.ProdHealthGated = func(string) bool { return true }
+
+	for range 2 {
+		_ = postAM(t, srv, amAlert("firing", `{"repo":"example-service"}`))
+	}
+	if got := postAM(t, srv, amAlert("firing", `{"repo":"other-service"}`)); got != http.StatusAccepted {
+		t.Fatalf("second repo status = %d, want 202", got)
+	}
+	got := map[string]int{}
+	for len(ch) > 0 {
+		got[(<-ch).Repo]++
+	}
+	if got["example-service"] != 1 || got["other-service"] != 1 {
+		t.Fatalf("signals per repo = %v, want one each", got)
+	}
+}
+
+// TestHandleAlertmanagerRequiresProdHealthGate: resolving the label says
+// the repo is configured, not that it opted into having prod reverted
+// from a metric. Without this check every repo in config.yaml was
+// revertable by anything holding the shared webhook secret — including
+// repos deliberately left on `gates: [ci]`.
+func TestHandleAlertmanagerRequiresProdHealthGate(t *testing.T) {
+	body := amAlert("firing", `{"repo":"example-service"}`)
+	cases := []struct {
+		name  string
+		gated func(string) bool
+		want  int
+	}{
+		{"gate enabled", gatedTestRepo, http.StatusAccepted},
+		{"gate not enabled for this repo", func(string) bool { return false }, http.StatusNoContent},
+		{"no gate resolver wired", nil, http.StatusNoContent},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ch := make(chan orchestrator.Signal, 1)
+			srv := amServer(ch)
+			srv.ProdHealthGated = c.gated
+			if got := postAM(t, srv, body); got != c.want {
+				t.Fatalf("status = %d, want %d", got, c.want)
+			}
+			if c.want == http.StatusNoContent && len(ch) != 0 {
+				t.Fatalf("reverted a repo that never enabled prod-health: %+v", <-ch)
+			}
+		})
 	}
 }
 
@@ -575,13 +793,10 @@ func TestHandleAlertmanagerRejectsUnknownRepo(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			ch := make(chan orchestrator.Signal, 1)
-			srv := &Server{Signals: ch, ResolveRepo: c.resolver, Log: silentLogger()}
-			body := []byte(`{"status":"firing","alerts":[{"status":"firing","labels":` + c.labels + `}]}`)
-			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/alertmanager", bytes.NewReader(body))
-			w := httptest.NewRecorder()
-			srv.handleAlertmanager(w, req)
-			if w.Code != c.want {
-				t.Fatalf("status = %d, want %d", w.Code, c.want)
+			srv := amServer(ch)
+			srv.ResolveRepo = c.resolver
+			if got := postAM(t, srv, amAlert("firing", c.labels)); got != c.want {
+				t.Fatalf("status = %d, want %d", got, c.want)
 			}
 			if c.want == http.StatusNoContent && len(ch) != 0 {
 				t.Fatalf("emitted a signal for an unverifiable repo label: %+v", <-ch)
@@ -675,26 +890,18 @@ func TestBodyTooLarge(t *testing.T) {
 
 func TestWebhookRateLimit429(t *testing.T) {
 	ch := make(chan orchestrator.Signal, 8)
-	srv := &Server{
-		Signals:     ch,
-		ResolveRepo: resolveTestRepo,
-		Limiter:     ratelimit.New(100, 2), // burst 2, then 429
-		Log:         silentLogger(),
-	}
-	body := []byte(`{"status":"firing","alerts":[{"status":"firing","labels":{"repo":"example-service"}}]}`)
-	post := func() int {
-		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/alertmanager", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		srv.handleAlertmanager(w, req)
-		return w.Code
-	}
-	if code := post(); code != http.StatusAccepted {
+	srv := amServer(ch)
+	srv.Limiter = ratelimit.New(100, 2) // burst 2, then 429
+	// firing → resolved → firing: each delivery is a prod-health edge,
+	// so a 202 here is the rate limiter passing rather than the edge
+	// guard coalescing.
+	if code := postAM(t, srv, amAlert("firing", `{"repo":"example-service"}`)); code != http.StatusAccepted {
 		t.Fatalf("1st = %d, want 202", code)
 	}
-	if code := post(); code != http.StatusAccepted {
+	if code := postAM(t, srv, amAlert("resolved", `{"repo":"example-service"}`)); code != http.StatusAccepted {
 		t.Fatalf("2nd = %d, want 202", code)
 	}
-	if code := post(); code != http.StatusTooManyRequests {
+	if code := postAM(t, srv, amAlert("firing", `{"repo":"example-service"}`)); code != http.StatusTooManyRequests {
 		t.Fatalf("3rd = %d, want 429", code)
 	}
 }

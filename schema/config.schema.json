@@ -90,6 +90,10 @@
             "prometheus_url": { "type": "string", "description": "Legacy alias for metrics_url" },
             "thresholds": { "$ref": "#/$defs/Thresholds" },
             "interval": { "type": "string" },
+            "timeout": {
+              "type": "string",
+              "description": "Per-poll-tick deadline for the PromQL queries; defaults to 80% of interval"
+            },
             "p95_query": { "type": "string" },
             "error_rate_query": { "type": "string" }
           }

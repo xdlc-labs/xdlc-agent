@@ -83,6 +83,19 @@ type Server struct {
 	// the tracked branch is treated as CI.
 	CIWorkflows []string
 	ResolveRepo func(fullName string) (shortName string, ok bool) // org/repo -> config short name
+	// ProdHealthGated reports whether an already-resolved repo has the
+	// prod-health gate enabled (repos[].gates). The polled route asks
+	// the same question via gatebuild.ReposForGate(cfg, "prod-health");
+	// this handler has to ask it too, because resolving an alert's
+	// `repo` label says only that the name is configured, not that the
+	// operator ever opted this repo into having prod reverted from a
+	// metric.
+	//
+	// nil is a misconfiguration, not a wildcard: it gates nothing in,
+	// so every alert is declined. Same rule as ResolveRepo — the shared
+	// webhook secret must not be able to name a repo the config never
+	// enrolled.
+	ProdHealthGated func(repo string) bool
 	// ResolveArgoApp maps ArgoCD app name -> config short repo name.
 	ResolveArgoApp func(appName string) (shortName string, ok bool)
 	// CheckSmoke runs the repo's real dev-smoke gate — ArgoCD
@@ -109,6 +122,11 @@ type Server struct {
 	initOnce   sync.Once
 	deliveries *dedupe
 	smokeSem   chan struct{}
+
+	// prodEdgeMu guards prodEdge, the last prod-health Kind pushed per
+	// repo. See prodHealthEdge.
+	prodEdgeMu sync.Mutex
+	prodEdge   map[string]orchestrator.Kind
 }
 
 // Handler returns the http.Handler serving webhook paths.
@@ -469,6 +487,21 @@ type alertmanagerPayload struct {
 // configured repo is dropped, instead of being carried into the
 // orchestrator, which would spawn a worker goroutine and a 64-slot
 // channel per unknown name for the lifetime of the process.
+//
+// Resolving is not enough on its own, either. The repo must also have
+// opted into the gate (ProdHealthGated) — the polled route only ever
+// checks repos that list prod-health in repos[].gates, and without the
+// same filter here every repo in config.yaml is revertable by anything
+// holding the shared webhook secret, including repos whose operator
+// deliberately left prod-health off.
+//
+// Alerts are edge-triggered (prodHealthEdge). Alertmanager is a
+// level-triggered source: it re-sends a *firing* notification every
+// repeat_interval for as long as the alert fires, so treating each
+// delivery as a fresh breach reverted the revert — after an even number
+// of notifications prod sat back on the bad commit, with a row of
+// "Revert / ok=true" audit entries and nothing saying the rollback had
+// been undone.
 func (s *Server) handleAlertmanager(w http.ResponseWriter, r *http.Request) {
 	if !s.allow(w) {
 		return
@@ -500,9 +533,22 @@ func (s *Server) handleAlertmanager(w http.ResponseWriter, r *http.Request) {
 			s.Log.Warn("alertmanager webhook: unknown repo label, dropping alert", "label", label)
 			continue
 		}
+		if !s.prodHealthGated(repo) {
+			// Declined the same way an unresolvable label is, and said
+			// out loud: an operator who wired an alert at a repo they
+			// never enrolled otherwise sees a 2xx and no effect.
+			s.Log.Warn("alertmanager webhook: repo has not enabled the prod-health gate, declining alert",
+				"label", label, "repo", repo)
+			continue
+		}
 		kind := orchestrator.KindBreach
 		if a.Status == "resolved" || payload.Status == "resolved" {
 			kind = orchestrator.KindPass
+		}
+		if !s.prodHealthEdge(repo, kind) {
+			s.Log.Info("alertmanager webhook: prod-health state unchanged, no new signal",
+				"repo", repo, "kind", kind)
+			continue
 		}
 		s.emit(orchestrator.Signal{
 			Source: orchestrator.SourceProdHealth,
@@ -546,6 +592,59 @@ func (s *Server) resolveRepo(name string) (string, bool) {
 		return "", false
 	}
 	return s.ResolveRepo(name)
+}
+
+// prodHealthGated reports whether repo has the prod-health gate enabled.
+// A nil ProdHealthGated resolves nothing, so an unwired server declines
+// every alert rather than accepting alerts for every repo.
+func (s *Server) prodHealthGated(repo string) bool {
+	return s.ProdHealthGated != nil && s.ProdHealthGated(repo)
+}
+
+// prodHealthEdge reports whether kind differs from the last prod-health
+// Kind this server pushed for repo (including the first observation),
+// recording it when it does.
+//
+// This is the poller's edge trigger (poller.Poller.edge) applied to the
+// pushed route, and for the same reason: prod-health is a *level*, and
+// SourceProdHealth + KindBreach is ActionRevert, so acting on every
+// report of a level that is still true reverts the revert.
+//
+// Why the state lives here and not in the orchestrator, which already
+// tracks a breach flag per repo (orchestrator.updateBreach): that flag
+// is set when the Signal is *handled*, which happens asynchronously
+// after the emit returns. Two firing notifications arriving before the
+// orchestrator dequeues the first would both see "not breaching" and
+// both emit, and the loop's drainSameSource only coalesces signals
+// still pending in a worker's queue — not one already being worked.
+// Checking and setting under one lock in the emitting goroutine, the
+// way the poller does, is what makes the guard hold regardless of
+// timing. The two are consistent by construction, because both flip on
+// the same Kinds: KindBreach sets, KindPass clears.
+//
+// This is deliberately not delivery-id dedupe. A re-notification is a
+// genuinely new, correctly signed delivery reporting the same condition
+// — not a replayed one — so the question that has to be asked is "has
+// this repo's prod-health state changed?", not "have I seen this id?".
+// A resolved alert records KindPass, so a genuinely new breach after a
+// resolve is an edge again and does revert.
+//
+// Consequence worth knowing: a breach whose Revert failed stays latched
+// until the alert resolves, so a repeat notification will not retry it.
+// That is the poller's behaviour too — a sustained breach re-reverting
+// on a timer is the failure mode this guard exists to prevent — and a
+// failed Revert is already an Error log plus an ok=false audit row.
+func (s *Server) prodHealthEdge(repo string, kind orchestrator.Kind) bool {
+	s.prodEdgeMu.Lock()
+	defer s.prodEdgeMu.Unlock()
+	if s.prodEdge == nil {
+		s.prodEdge = make(map[string]orchestrator.Kind)
+	}
+	if prev, ok := s.prodEdge[repo]; ok && prev == kind {
+		return false
+	}
+	s.prodEdge[repo] = kind
+	return true
 }
 
 // resolveArgoRepo maps an ArgoCD Application name to a configured repo,

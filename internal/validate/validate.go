@@ -210,16 +210,41 @@ func Config(cfg *config.Config) []Issue {
 		issues = append(issues, Issue{Message: fmt.Sprintf("fleet.flap_max_cycles %d must be >= 0", cfg.Fleet.FlapMaxCycles)})
 	}
 
+	// prod-health has two routes, and only one of them polls: the
+	// Alertmanager webhook (POST /webhooks/alertmanager) pushes
+	// breaches, the poller queries PromQL for them. metrics_url is what
+	// switches the poller on (cmd/xdlc-agent only starts it when the
+	// endpoint is set), so it is the switch we key off here too —
+	// demanding it, p95_query and error_rate_query from every
+	// prod-health user made a webhook-only deployment unconfigurable
+	// without naming a metrics endpoint it never intends to query.
 	if reposForGate(cfg, "prod-health") != nil {
-		if cfg.Gates.ProdHealth.MetricsEndpoint() == "" {
-			issues = append(issues, Issue{Message: "prod-health gate used by a repo but gates.prod-health.metrics_url is empty"})
+		ph := cfg.Gates.ProdHealth
+		switch {
+		case ph.MetricsEndpoint() != "":
+			// Polled route: the queries are what it polls with.
+			if ph.P95Query == "" {
+				issues = append(issues, Issue{Message: "prod-health gate used by a repo but gates.prod-health.p95_query is empty"})
+			}
+			if ph.ErrorRateQuery == "" {
+				issues = append(issues, Issue{Message: "prod-health gate used by a repo but gates.prod-health.error_rate_query is empty"})
+			}
+			if ph.Timeout > 0 && ph.Interval > 0 && ph.Timeout >= ph.Interval {
+				issues = append(issues, Issue{Message: fmt.Sprintf(
+					"gates.prod-health.timeout %v must be shorter than interval %v, or ticks overrun each other",
+					ph.Timeout, ph.Interval)})
+			}
+		case ph.P95Query != "" || ph.ErrorRateQuery != "":
+			// Queries with nothing to run them against: the poller
+			// never starts, so this reads as a webhook-only setup that
+			// is really a missing/typo'd metrics_url.
+			issues = append(issues, Issue{Message: "gates.prod-health.p95_query/error_rate_query are set but " +
+				"gates.prod-health.metrics_url is empty, so the prod-health poller will not run; set metrics_url, " +
+				"or drop the queries if breaches arrive via the Alertmanager webhook"})
 		}
-		if cfg.Gates.ProdHealth.P95Query == "" {
-			issues = append(issues, Issue{Message: "prod-health gate used by a repo but gates.prod-health.p95_query is empty"})
-		}
-		if cfg.Gates.ProdHealth.ErrorRateQuery == "" {
-			issues = append(issues, Issue{Message: "prod-health gate used by a repo but gates.prod-health.error_rate_query is empty"})
-		}
+		// Otherwise: webhook-only prod-health. Nothing to require —
+		// the alert supplies the verdict, so there is no endpoint and
+		// no query.
 	}
 
 	return issues

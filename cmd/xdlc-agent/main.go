@@ -353,6 +353,15 @@ func daemonCmd() *cobra.Command {
 			if amSecretEnv == "" {
 				amSecretEnv = "ALERTMANAGER_WEBHOOK_SECRET" //nolint:gosec // env var name, not a secret value
 			}
+			// Repos that opted into prod-health (repos[].gates). Both
+			// routes into ActionRevert have to honour it: the poller
+			// already does by only polling these repos, the
+			// Alertmanager webhook needs the set to check labels
+			// against.
+			prodHealthRepos := map[string]bool{}
+			for _, name := range gatebuild.ReposForGate(cfg, "prod-health") {
+				prodHealthRepos[name] = true
+			}
 			wh := &webhook.Server{
 				Signals:       o.Signals,
 				Secret:        os.Getenv(secretEnv),
@@ -365,6 +374,9 @@ func daemonCmd() *cobra.Command {
 				DefaultBranch: repos.DefaultBranch,
 				CIWorkflows:   cfg.Gates.CI.Workflows,
 				ResolveRepo:   repoMgr.Resolve,
+				// Same gate filter the prod-health poller uses: an alert
+				// may only revert a repo that opted into prod-health.
+				ProdHealthGated: func(repo string) bool { return prodHealthRepos[repo] },
 				// An ArgoCD notification is a check-now trigger: the
 				// verdict comes from the real gate, pinned to the dev tip
 				// read before the probe.
@@ -492,10 +504,14 @@ func daemonCmd() *cobra.Command {
 					Gate:     gatebuild.ProdHealth(cfg),
 					Repos:    gatebuild.ReposForGate(cfg, "prod-health"),
 					Interval: cfg.Gates.ProdHealth.Interval,
-					Source:   orchestrator.SourceProdHealth,
-					Signals:  o.Signals,
-					Log:      log,
-					Metrics:  &metrics,
+					// 0 → derived from Interval. A metrics backend that
+					// accepts connections and never answers otherwise
+					// wedges the tick loop and disables the gate.
+					Timeout: cfg.Gates.ProdHealth.Timeout,
+					Source:  orchestrator.SourceProdHealth,
+					Signals: o.Signals,
+					Log:     log,
+					Metrics: &metrics,
 				}
 				go p.Run(ctx)
 			}

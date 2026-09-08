@@ -10,85 +10,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
 	"strings"
 )
-
-var tagLine = regexp.MustCompile(`(?m)^(\s*tag:\s*)(["']?)([^"'\n]+)(["']?)\s*$`)
-
-// ReadProdTag returns image.tag from gitops/values/prod/<service>.yaml
-// in repoDir. Empty string + nil if the file is missing (no gitops/).
-func ReadProdTag(repoDir, service string) (string, error) {
-	return readTag(filepath.Join(repoDir, "gitops", "values", "prod", service+".yaml"))
-}
-
-// ReadDevTag returns image.tag from gitops/values/dev/<service>.yaml.
-func ReadDevTag(repoDir, service string) (string, error) {
-	return readTag(filepath.Join(repoDir, "gitops", "values", "dev", service+".yaml"))
-}
-
-func readTag(path string) (string, error) {
-	raw, err := os.ReadFile(path) //nolint:gosec // path under agent-owned repo clone
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("promote: read values: %w", err)
-	}
-	m := tagLine.FindSubmatch(raw)
-	if m == nil {
-		return "", fmt.Errorf("promote: no tag: line in %s", path)
-	}
-	return string(m[3]), nil
-}
-
-// CarryProdTag copies image.tag from gitops/values/dev/<service>.yaml
-// into values/prod/<service>.yaml in repoDir. Returns true if the prod
-// file changed. No-op (false, nil) if either file is missing — multi-repo
-// service clones without gitops/ skip quietly.
-func CarryProdTag(repoDir, service string) (bool, error) {
-	devPath := filepath.Join(repoDir, "gitops", "values", "dev", service+".yaml")
-	prodPath := filepath.Join(repoDir, "gitops", "values", "prod", service+".yaml")
-	devRaw, err := os.ReadFile(devPath) //nolint:gosec // path under agent-owned repo clone
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("promote: read dev values: %w", err)
-	}
-	prodRaw, err := os.ReadFile(prodPath) //nolint:gosec // path under agent-owned repo clone
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("promote: read prod values: %w", err)
-	}
-	devTag := tagLine.FindSubmatch(devRaw)
-	if devTag == nil {
-		return false, fmt.Errorf("promote: no tag: line in %s", devPath)
-	}
-	tag := string(devTag[3])
-	prodTag := tagLine.FindSubmatch(prodRaw)
-	if prodTag == nil {
-		return false, fmt.Errorf("promote: no tag: line in %s", prodPath)
-	}
-	if string(prodTag[3]) == tag {
-		return false, nil
-	}
-	newProd := tagLine.ReplaceAllFunc(prodRaw, func(line []byte) []byte {
-		m := tagLine.FindSubmatch(line)
-		if m == nil {
-			return line
-		}
-		return []byte(fmt.Sprintf("%s%s%s%s", m[1], m[2], tag, m[4]))
-	})
-	// GitOps values are world-readable by design (committed YAML).
-	if err := os.WriteFile(prodPath, newProd, 0o644); err != nil { //nolint:gosec // G306: values.yaml must stay 0644 for git
-		return false, fmt.Errorf("promote: write prod values: %w", err)
-	}
-	return true, nil
-}
 
 // CommitProdTag stages and commits the prod values file if dirty, then
 // pushes to origin branch (the configured dev branch). It returns the
@@ -100,7 +23,7 @@ func CarryProdTag(repoDir, service string) (bool, error) {
 // the caller's pin check and here, git rejects it and the promote fails
 // instead of racing.
 func CommitProdTag(ctx context.Context, repoDir, service string, env []string, branch string) (string, error) {
-	rel := filepath.Join("gitops", "values", "prod", service+".yaml")
+	rel := valuesRel("prod", service)
 	add := exec.CommandContext(ctx, "git", "-C", repoDir, "add", rel) //nolint:gosec
 	applyEnv(add, env)
 	if out, err := add.CombinedOutput(); err != nil {

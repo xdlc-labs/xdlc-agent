@@ -949,11 +949,12 @@ func (d *Dispatcher) promoteInner(ctx context.Context, s orchestrator.Signal) er
 		return fmt.Errorf("dispatch: promote: %w", err)
 	}
 
-	changed, err := promote.CarryProdTag(dir, s.Repo)
+	carry, err := promote.CarryProdTag(dir, s.Repo)
 	if err != nil {
 		return fmt.Errorf("dispatch: promote: %w", err)
 	}
-	if changed {
+	d.recordCarry(s, carry)
+	if carry.Changed() {
 		carried, err := promote.CommitProdTag(ctx, dir, s.Repo, env, dev)
 		if err != nil {
 			return fmt.Errorf("dispatch: promote: %w", err)
@@ -968,8 +969,53 @@ func (d *Dispatcher) promoteInner(ctx context.Context, s orchestrator.Signal) er
 	if err := promote.FastForward(ctx, dir, env, dev, prod, pin); err != nil {
 		return fmt.Errorf("dispatch: promote: %w", err)
 	}
-	d.Log.Info("promoted", "repo", s.Repo, "from", dev, "to", prod, "sha", pin)
+	d.Log.Info("promoted", "repo", s.Repo, "from", dev, "to", prod, "sha", pin,
+		"tag_carry", string(carry.Status), "image_tag", carry.Tag)
 	return nil
+}
+
+// recordCarry puts the tag carry's outcome where an operator will
+// actually see it: the daemon log and the audit row's evidence.
+//
+// This is the fix for a promote that carried nothing looking exactly
+// like one that carried a tag. The dangerous case is no_values_file:
+// prod gets fast-forwarded and keeps whatever image it already had, so
+// ArgoCD reports synced+healthy on a stale image and the audit row says
+// ok=true. It is not an error — a repo that promotes by fast-forward
+// alone is a supported topology — but it is a warning naming the file
+// the daemon looked for and what the values directory does contain,
+// which is what turns a values file named after something other than
+// repos[].name into a one-line fix.
+func (d *Dispatcher) recordCarry(s orchestrator.Signal, c promote.Carry) {
+	if s.Evidence != nil {
+		s.Evidence["tag_carry"] = string(c.Status)
+		if c.Tag != "" {
+			s.Evidence["image_tag"] = c.Tag
+		}
+		switch c.Status {
+		case promote.CarryUpdated:
+			s.Evidence["tag_carry_file"] = c.ProdPath
+			s.Evidence["tag_carry_from"] = c.PrevTag
+		case promote.CarryNoValues:
+			s.Evidence["tag_carry_missing"] = c.DevPath + "," + c.ProdPath
+			if len(c.Siblings) > 0 {
+				s.Evidence["tag_carry_values_dir"] = strings.Join(c.Siblings, ",")
+			}
+		case promote.CarryCurrent:
+		}
+	}
+	switch c.Status {
+	case promote.CarryNoValues:
+		d.Log.Warn("promote carried no image tag: no values file for this service, so prod keeps the image it already has",
+			"repo", s.Repo, "looked_for", c.ProdPath,
+			"values_dir_contains", strings.Join(c.Siblings, ","))
+	case promote.CarryCurrent:
+		d.Log.Info("promote: prod values already at the dev image tag",
+			"repo", s.Repo, "file", c.ProdPath, "image_tag", c.Tag)
+	case promote.CarryUpdated:
+		d.Log.Info("promote: carried image tag to prod values",
+			"repo", s.Repo, "file", c.ProdPath, "from", c.PrevTag, "to", c.Tag)
+	}
 }
 
 func truncate(s string, n int) string {

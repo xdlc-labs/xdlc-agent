@@ -6,6 +6,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Verifying the two opt-in legs (#25, #26) end to end turned up six confirmed bugs, four of
+which damaged production silently. All six are fixed here.
+
+### Fixed
+
+- **A promote rewrote every `tag:` line in the prod values file** (#43). The regexp matched any `^\s*tag:`, so an unrelated `sidecar.image.tag` was rewritten to the promoted service's image SHA. Any values file with a sidecar, init container or sub-chart sent those containers into `ImagePullBackOff` in production, from a promote whose audit row said `ok=true`. The tag is now located structurally, by addressing `image.tag` through the YAML node tree, and written by splicing just that scalar's bytes, so every other byte of the file survives. The result is re-parsed and re-checked before it is committed, and a tag that is not a plain image tag is refused rather than written. Reads use the same locator, so `promote_requires` pins no longer see the first `tag:` in the file
+- **A promote deleted a blank line and stripped the file's trailing newline** (#43), every time, because the regexp's trailing `\s*$` consumed the following newline. That fought any YAML formatter or `end-of-file-fixer` hook in the GitOps repo. Whitespace is now preserved byte-for-byte
+- **A missing values file made the image carry a silent no-op that still reported success** (#44). The prod branch was fast-forwarded while prod kept its old image, with no warn, no evidence field and nothing in the audit row to distinguish it from a real carry. The outcome is now recorded as `tag_carry` in the audit evidence and on the `promoted` log line, a missing file warns and lists what the values directory actually contains (which names a misnamed file directly), and a half-configured repo, where exactly one of the dev and prod values files exists, is now an error rather than a shrug. A repo with neither file is still fine, since fast-forward-only is a real topology
+- **Repeated firing alerts reverted the revert, putting the bad commit back in production** (#40). Alertmanager re-sends a firing notification every `repeat_interval` for as long as the alert fires, and the webhook treated each delivery as a fresh breach, so an even number of notifications left prod on the bad commit behind a row of `Revert / ok=true` audit entries. The pushed path is now edge-triggered per repo, like the poller: a breach emits once, a resolve re-arms it, and a genuine new breach still reverts. It deliberately keeps its own state rather than reading the orchestrator's, which is only updated once a signal is handled and so races two fast notifications
+- **`repos[].gates` was ignored on the Alertmanager path** (#41), so every repo in `config.yaml` was revertable by anything holding the shared webhook secret, including repos whose operator never enabled prod-health. Reproduced against a repo configured `gates: [ci]`. The pushed path now applies the same gate filter the polled path does and declines the alert out loud. An unwired filter declines everything rather than allowing everything
+- **A hung Prometheus silently and permanently disabled the prod-health gate** (#42). With no client timeout, no per-tick deadline and a synchronous tick, one unanswered query parked the ticker loop for the life of the process: a stub that accepted connections and never answered produced exactly one query in 30 seconds and not one line of log. Each tick now gets a deadline, and an overrun is logged as an error instead of being absorbed. Measured on the same stub: one silent query in 30 seconds became nine queries and eighteen operator-visible lines
+- `validate` no longer demands `metrics_url`, `p95_query` and `error_rate_query` for a webhook-only prod-health deployment, which previously could not be configured without pointing at a metrics endpoint it never intended to poll. Queries configured without a `metrics_url` are now flagged specifically
+
+### Added
+
+- `gates.prod-health.timeout` — the per-tick deadline for the PromQL queries. Unset means 80% of `interval`, deliberately the same fraction at which a tick already warned that it was slow, so the point a tick was considered unhealthy is now also the point it is abandoned and logged. Keeping it under one interval means ticks cannot stack
+- Test coverage for the Alertmanager **accept** path, which had none: the secret appeared in no test file, and both existing handler tests left it empty, so "a correctly credentialed alert is accepted" was unproven at every level
+
+### Changed
+
+- The per-tick deadline applies to the dev-smoke and external-gate pollers too, bounding them at 80% of their interval. That is the threshold at which they already warned, so nothing previously considered healthy is now cancelled, but a probe that legitimately runs past 80% of its interval now needs a larger `interval`
+- `xdlc init --profile gitops` and `--profile full` set `prod_branch` explicitly and say which GitOps values files the operator still has to create. They scaffolded neither before, which landed opt-in users straight in the silent no-op above
+- `promote.CarryProdTag` now returns a `promote.Carry` describing what happened, rather than a bare bool
+
 ## [0.0.1-beta.5] - 2026-09-08
 
 ### Fixed

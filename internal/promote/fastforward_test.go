@@ -29,34 +29,46 @@ func TestCarryProdTag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changed, err := CarryProdTag(dir, "svc")
+	c, err := CarryProdTag(dir, "svc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !changed {
-		t.Fatal("expected change")
+	if !c.Changed() {
+		t.Fatalf("expected change, got status %q", c.Status)
 	}
 	got, _ := os.ReadFile(filepath.Join(prod, "svc.yaml"))
 	if !strings.Contains(string(got), `tag: "sha-abc1234"`) {
 		t.Fatalf("prod tag not updated: %s", got)
 	}
 
-	changed, err = CarryProdTag(dir, "svc")
+	c, err = CarryProdTag(dir, "svc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed {
+	if c.Changed() {
 		t.Fatal("second call should be no-op")
+	}
+	if c.Status != CarryCurrent {
+		t.Fatalf("status = %q, want %q", c.Status, CarryCurrent)
 	}
 }
 
+// A repo with no gitops/ tree at all promotes by fast-forward alone.
+// That stays a non-error, but it is now a named outcome rather than an
+// indistinguishable (false, nil).
 func TestCarryProdTagMissingGitops(t *testing.T) {
-	changed, err := CarryProdTag(t.TempDir(), "svc")
+	c, err := CarryProdTag(t.TempDir(), "svc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed {
+	if c.Changed() {
 		t.Fatal("missing gitops should no-op")
+	}
+	if c.Status != CarryNoValues {
+		t.Fatalf("status = %q, want %q", c.Status, CarryNoValues)
+	}
+	if c.Siblings != nil {
+		t.Errorf("Siblings = %v, want nil with no values dir at all", c.Siblings)
 	}
 }
 

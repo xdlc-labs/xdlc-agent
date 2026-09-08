@@ -301,3 +301,46 @@ func emptyCommit(t *testing.T, dir string) string {
 	}
 	return sha
 }
+
+// TestGitopsScaffoldsAreHonest: the promote-capable profiles used to
+// scaffold argocd_app and probe_job and nothing else — no
+// gitops/values/** and no prod_branch. An operator who opted into
+// gitops therefore landed on the default prod branch and on a promote
+// that carried no image tag, with the config file implying everything
+// was configured. Both facts have to be on the page.
+func TestGitopsScaffoldsAreHonest(t *testing.T) {
+	found := []scannedRepo{{Name: "api", GitHub: "acme/api", Dir: "/src/api"}}
+	for _, profile := range []string{"gitops", "full"} {
+		bodies := map[string]string{
+			"starter": starterYAML(profile),
+			"scan":    configFromScan(found, profile),
+		}
+		for kind, body := range bodies {
+			name := profile + "/" + kind
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Errorf("%s load: %v", name, err)
+				continue
+			}
+			if len(cfg.Repos) == 0 || cfg.Repos[0].ProdBranch == "" {
+				t.Errorf("%s: parsed repos[0].prod_branch is empty; promote would use the silent default:\n%s", name, body)
+			}
+			if !strings.Contains(body, prodBranchNote) {
+				t.Errorf("%s: prod_branch is not annotated with what it does:\n%s", name, body)
+			}
+			for _, want := range []string{"gitops/values/dev/", "gitops/values/prod/", "image.tag", "repos[].name"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("%s: scaffold never mentions %q, so the operator does not know to create it:\n%s", name, want, body)
+				}
+			}
+		}
+	}
+	// The CI profile does not promote, so it must not carry the note.
+	if strings.Contains(starterYAML("ci"), "gitops/values/") {
+		t.Error("ci profile should not talk about gitops values files")
+	}
+}
