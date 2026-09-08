@@ -674,7 +674,7 @@ func prText(s orchestrator.Signal) (title, body string) {
 	summary = strings.TrimSpace(summary)
 	title = fmt.Sprintf("xdlc fix: %s", s.Repo)
 	if summary != "" {
-		title = "fix: " + truncate(summary, 72)
+		title = "fix: " + prTitle(summary)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Automated Fix for `%s` (%s) on `%s`.\n\n", s.Source, s.Kind, s.Repo)
@@ -690,6 +690,32 @@ func prText(s orchestrator.Signal) (title, body string) {
 	}
 	b.WriteString("---\nOpened by [xdlc](https://github.com/xdlc-labs/xdlc-agent) — self-hosted CI Fix. Prompt, agent output and diff are in the Fix session.\n")
 	return title, b.String()
+}
+
+// prTitleMax is how much of the agent's summary fits a PR title after the
+// "fix: " prefix, before GitHub starts wrapping it.
+const prTitleMax = 68
+
+// prTitle turns the agent's one-line summary into a PR title. The summary
+// is a full sentence — "Made X distinct (details) so that Y" — and a title
+// is not. Cut at the first clause break past the first third, so the
+// title keeps the claim and drops the justification; fall back to a word
+// boundary with an ellipsis. Never cut mid-word or append "(truncated)",
+// which is what the first real Fix PR shipped with.
+func prTitle(summary string) string {
+	if len(summary) <= prTitleMax {
+		return summary
+	}
+	for _, sep := range []string{" (", "; ", ": ", ", so ", " so ", " — ", " -- ", " - "} {
+		if i := strings.Index(summary, sep); i >= prTitleMax/3 && i <= prTitleMax {
+			return strings.TrimRight(summary[:i], " ,.")
+		}
+	}
+	cut := summary[:prTitleMax]
+	if i := strings.LastIndex(cut, " "); i > prTitleMax/2 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " ,.") + "…"
 }
 
 // refreshEvidence folds the re-check's gate evidence into what the next

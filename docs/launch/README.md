@@ -5,7 +5,7 @@ Drafts for the first public push. Nothing here is posted automatically. Edit, th
 ## Before posting (blockers)
 
 1. **Make the GHCR package public.** `docker pull ghcr.io/xdlc-labs/xdlc-agent:<tag>` must work anonymously. Org → Packages → xdlc-agent → Package settings → Change visibility. A broken pull on launch day is the top comment.
-2. **Dogfood, in public.** Point `xdlc fix` (or the daemon) at this repo and at [airlock](https://github.com/xdlc-labs/airlock). Break CI on purpose if you have to. Collect **five merged PRs** whose body ends with "Opened by xdlc", each with its `cost:` line. Add a "Fixes in the wild" section to the README linking them. Receipts beat claims.
+2. **Dogfood, in public.** One down: [#51](https://github.com/xdlc-labs/xdlc-agent/pull/51), a real flaky-test fix on this repo for $1.63, and it is the README hero (`docs/assets/pr.png`, regenerate with `docs/assets/pr.sh`). Get to **five** the same way, across this repo and [airlock](https://github.com/xdlc-labs/airlock), and add each to the "Fixes in the wild" table. Merge them: an open PR from the author reads weaker than a merged one. Receipts beat claims.
 3. **Cut a release** so the install one-liner and the Action resolve to a tag that has `xdlc fix`. Bump `appVersion` in the Helm chart and the README pins together (`make check-versions`).
 4. **Watch the GIF once more** at `docs/assets/demo.gif`. It is a real `claude` run, not the stub agent, which is the half a skeptic will poke at first. Re-record with the two commands in the header of `docs/assets/demo.sh` if the output changed, and keep the theme identical to [airlock](https://github.com/xdlc-labs/airlock)'s.
 5. **Be online for six hours after posting.** Answer every comment in the first hour.
@@ -18,6 +18,8 @@ Drafts for the first public push. Nothing here is posted automatically. Edit, th
 
 **Text:**
 
+> The README screenshot is a pull request this thing opened against its own repository, for a flaky concurrency test in its own test suite, for $1.63. That is the honest version of the pitch.
+>
 > I run a small Go daemon next to my repos. When a GitHub Actions run fails, it hands the failing job's logs and the repo's AGENTS.md/CLAUDE.md to whichever coding-agent CLI is on PATH (claude, codex, cursor, gemini), lets the agent commit in its own git worktree, pushes, and opens a PR. The prompt, the agent's output, the diff and the cost are written to disk per run.
 >
 > Try it without keys: `curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/install.sh | bash && xdlc demo`. With keys, `xdlc fix <run-url>` does one real run, no daemon. There is also a GitHub Action wrapper for one repo.

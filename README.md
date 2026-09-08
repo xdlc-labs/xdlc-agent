@@ -26,20 +26,21 @@ cost. Doing that by hand at 9am is not the hard part. Doing it unattended, safel
 
 xdlc is that part, self-hosted. A failed GitHub Actions run becomes a **Fix**: your agent
 CLI gets the failing job's logs and the repo's own conventions, works in a throwaway git
-worktree, commits, and xdlc pushes and opens the pull request. Policy decides whether a
-Fix, a Promote, or a Revert is even allowed before the agent starts.
+worktree, commits, and xdlc pushes and opens the pull request.
 
 <p align="center">
-  <img src="docs/assets/demo.gif" width="760" alt="xdlc fixing a red test with a real coding agent, then promoting and reverting">
+  <a href="https://github.com/xdlc-labs/xdlc-agent/pull/51"><img src="docs/assets/pr.png" width="820" alt="Pull request #51 on this repository, opened by xdlc: title from the agent's summary, a link to the failing run, and the agent's verdict"></a>
 </p>
 
-That is the whole loop in thirty seconds, and the agent in it is real: `claude` read a real
-failing test and wrote that diff. Reproduce it with `bash docs/assets/demo.sh`, or run
-`xdlc demo` yourself.
+That is [#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) on this repository, and it is
+not a mockup. This project's own CI was red on a flaky concurrency test. One
+`xdlc fix <run-url>` read the failing job's logs, found that two Fixes committing in the
+same second produced identical SHAs so the losing push was a silent no-op, wrote the patch,
+pushed it, and opened that pull request. It cost **$1.63** and the checks are green.
 
 - **Your agent, your keys.** `claude`, `codex`, `cursor` or `gemini` on `PATH`. Nothing phones home; there is no SaaS in the path.
-- **No keys to see the loop.** `xdlc demo --provider fake` swaps in a stub agent that writes a canned patch. It exercises the worktree, the push and the gate re-check, not the agent.
-- **Beside your CI, not instead of it.** Keep GitHub Actions. xdlc reacts to it.
+- **It stays out of your tree.** Every Fix gets its own `git worktree` on a scratch branch. The agent commits; xdlc pushes. A run killed mid-edit cannot dirty a clone.
+- **Receipts, not vibes.** The prompt, the agent's stdout, the diff, its verdict and the cost are on disk for every Fix. A Fix that committed nothing is recorded as exactly that.
 
 ## Install
 
@@ -50,6 +51,18 @@ curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/i
 export PATH="$HOME/.local/bin:$PATH"   # if needed
 xdlc demo
 ```
+
+<p align="center">
+  <img src="docs/assets/demo.gif" width="760" alt="xdlc demo: a real coding agent fixing a red test in a throwaway repo, then a promote and a revert">
+</p>
+
+`xdlc demo` builds a throwaway repo with a failing test and runs the whole loop against it:
+Fix, then a promote, then a revert on a simulated prod breach. The agent in that recording
+is real `claude`, but the bug is a toy one, so treat it as a tour of the mechanics and
+[#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) as the evidence. Reproduce it with
+`bash docs/assets/demo.sh`, or run `xdlc demo --provider fake` to see the same loop with no
+API key at all — a stub agent that writes a canned patch, which exercises the worktree, the
+push and the gate re-check, and nothing about the agent.
 
 This is a public beta, so every release is a pre-release and GitHub's "latest" link skips
 them. Pin one with `XDLC_VERSION=v0.0.1-beta.5`, or pick a tag from
@@ -67,15 +80,21 @@ npm i -g @anthropic-ai/claude-code   # or codex / cursor-agent / gemini
 xdlc fix https://github.com/you/repo/actions/runs/123456789
 ```
 
+That is the whole command. Here is what the run behind
+[#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) printed, wrapping the agent's
+summary and showing the default cache paths:
+
 ```console
-github auth: gh auth token
-run: ci on develop@a1b2c3d → failure
-agent: claude, mode: pr, clone: ~/.cache/xdlc/repos/you/repo
+github auth: GITHUB_TOKEN
+run: ci on main@a72d02f → failure
+agent: claude, mode: pr, clone: ~/.cache/xdlc/repos/xdlc-labs/xdlc-agent
 fixing… (a real agent usually takes 2–10 minutes)
-agent said: TestParse expected RFC3339; the parser dropped the zone. Restored it.
-cost: $0.71
-session: xdlc sessions show 20260908T104727Z-repo --diff --dir ~/.cache/xdlc/sessions
-PR: https://github.com/you/repo/pull/124
+agent said: Made committingRunner's concurrent commits distinct (worktree name in
+  message, identity via env) so the losing push is a real non-fast-forward rejection
+  instead of a no-op on an identical SHA.
+cost: $1.63
+session: xdlc sessions show 20260908T171541Z-xdlc-agent --diff
+PR: https://github.com/xdlc-labs/xdlc-agent/pull/51
 ```
 
 It exits non-zero when the run is not actually red, when the agent committed nothing, or
@@ -90,7 +109,7 @@ Every run writes a session: the exact prompt, the agent's stdout, the diff, its 
 and the cost.
 
 ```bash
-xdlc sessions show 20260908T104727Z-repo --diff
+xdlc sessions show 20260908T171541Z-xdlc-agent --diff
 ```
 
 ## Use it on your repo
@@ -205,6 +224,13 @@ The default install is **CI Fix** only. GitOps promote and prod revert are opt-i
 A Fix that committed nothing is recorded as exactly that, never as a success. That
 distinction was a bug once ([#34](https://github.com/xdlc-labs/xdlc-agent/issues/34)) and it
 is the one an unattended loop most needs to get right.
+
+**Fixes in the wild.** Every pull request xdlc opens on this repository stays linked here,
+cost included, so the claims above have receipts rather than adjectives.
+
+| Pull request | Repo | Agent | Cost | What broke |
+|---|---|---|---|---|
+| [#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) | `xdlc-agent` | `claude` | $1.63 | Two concurrent Fixes committed identical SHAs in the same second, so the losing push was a silent no-op |
 
 ## If you already use Copilot Autofix, or a coding-agent Action
 
