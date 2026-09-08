@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.1-beta.5] - 2026-09-08
+
 ### Fixed
 
 - **A Fix that delivered nothing permanently marked the commit as fixed** (#34). A no-commit run returned no error, so the SHA was latched as fixed and every later delivery for it short-circuited to `already_fixed`, with no eviction. One agent timeout, OOM or bad prompt left that commit unfixable until the daemon restarted. `Dispatcher.Fix` now reports whether a fix was actually delivered, and only a delivered Fix latches the SHA. A genuinely successful Fix still suppresses a second Fix for the same commit, which is the guarantee added in d75b2c2. Runs that delivered nothing show `fix_delivered=false` in the audit row

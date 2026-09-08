@@ -41,7 +41,7 @@ export PATH="$HOME/.local/bin:$PATH"   # if needed
 xdlc demo --provider fake
 ```
 
-Pin a release: `XDLC_VERSION=v0.0.1-beta.4`. More options: **[Install](https://xdlc.dev/agent/docs)**.
+Pin a release: `XDLC_VERSION=v0.0.1-beta.5`. More options: **[Install](https://xdlc.dev/agent/docs)**.
 
 Then a real daemon:
 
@@ -70,7 +70,7 @@ docker run --rm -p 8080:8080 \
   -v "$PWD/config.yaml:/etc/xdlc-agent/config.yaml:ro" \
   -e XDLC_API_TOKEN -e GITHUB_TOKEN -e GITHUB_WEBHOOK_SECRET \
   -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CURSOR_API_KEY \
-  ghcr.io/xdlc-labs/xdlc-agent:0.0.1-beta.4 \
+  ghcr.io/xdlc-labs/xdlc-agent:0.0.1-beta.5 \
   daemon --config /etc/xdlc-agent/config.yaml
 ```
 
@@ -78,7 +78,7 @@ docker run --rm -p 8080:8080 \
 
 ```sh
 helm install xdlc-agent deploy/helm/xdlc-agent \
-  --set image.tag=0.0.1-beta.4 \
+  --set image.tag=0.0.1-beta.5 \
   --set existingSecret=xdlc-agent-secrets \
   --set-file config=config.yaml
 ```
