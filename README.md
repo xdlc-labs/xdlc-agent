@@ -42,7 +42,7 @@ exactly that, never as a success.
 
 - **Your agent, your keys.** `claude`, `codex`, `cursor` or `gemini` on `PATH`. Nothing phones home; there is no SaaS in the path.
 - **It stays out of your tree.** Every Fix gets its own `git worktree` on a scratch branch. The agent commits; xdlc pushes. A run killed mid-edit cannot dirty a clone.
-- **Receipts, not vibes.** The prompt, the agent's stdout, the diff, its verdict and the cost are on disk for every Fix, queryable long after.
+- **Receipts, not vibes.** The prompt, the agent's stdout, the diff and its verdict are on disk for every Fix, with tokens and cost whenever the agent CLI reports them, as `claude` does.
 
 ## Install
 
@@ -87,8 +87,10 @@ Here is one that happened. This project's own CI was red on a flaky concurrency 
 the same second produced identical SHAs, which made the losing push a silent no-op, and
 wrote the patch. That is
 [#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) on this repository, green checks and
-all, for $1.63. Its output, wrapping the agent's summary and showing the default cache
-paths:
+all. It cost $1.63, and that is close to the worst case: the run used Claude Fable 5.1, the
+priciest model on offer. The same work prices out at **$1.13 on Opus 5 and $0.45 on
+Sonnet 5**, which `--model` selects. Its output, wrapping the agent's summary and showing the
+default cache paths:
 
 ```console
 github auth: GITHUB_TOKEN
@@ -111,9 +113,14 @@ It exits non-zero when the run is not actually red, when the agent committed not
 when the pull request could not be opened, so a job wrapping it fails visibly instead of
 reporting a Fix that never happened.
 
-`--mode direct` pushes to the failing branch instead of opening a pull request.
-`-m "the flake is in the seed data"` adds a hint to the prompt's trusted block.
-`--provider` picks the agent.
+`--provider` picks the agent CLI and `--model` picks the model it asks for, which is the
+lever that actually moves the bill. `--mode direct` pushes to the failing branch instead of
+opening a pull request. `-m "the flake is in the seed data"` adds a hint to the prompt's
+trusted block.
+
+```bash
+xdlc fix <run-url> --provider claude --model claude-sonnet-5
+```
 
 Every run writes a session: the exact prompt, the agent's stdout, the diff, its own verdict,
 and the cost.
@@ -239,9 +246,30 @@ is the one an unattended loop most needs to get right.
 **Fixes in the wild.** Every pull request xdlc opens on this repository stays linked here,
 cost included, so the claims above have receipts rather than adjectives.
 
-| Pull request | Repo | Agent | Cost | What broke |
-|---|---|---|---|---|
-| [#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) | `xdlc-agent` | `claude` | $1.63 | Two concurrent Fixes committed identical SHAs in the same second, so the losing push was a silent no-op |
+| Pull request | Repo | Agent | Model | Cost | What broke |
+|---|---|---|---|---|---|
+| [#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) | `xdlc-agent` | `claude` | Fable 5.1 | $1.63 | Two concurrent Fixes committed identical SHAs in the same second, so the losing push was a silent no-op |
+
+### What a Fix costs
+
+Cost is the agent CLI's own `total_cost_usd` at list API prices, so a subscription plan pays
+less at the margin than the number recorded. Almost none of it is fresh input. That Fix
+billed 514 uncached input tokens against 49,801 cache writes, 843,579 cache reads and 8,351
+of output, so the bill is mostly cache traffic and the model's rate on it is what moves the
+total:
+
+| Model | Rate in / out per MTok | Same Fix costs |
+|---|---|---|
+| Claude Fable 5.1 | $10 / $50 | $1.63 (measured) |
+| Claude Opus 5 | $5 / $25 | $1.13 |
+| Claude Sonnet 5 | $2 / $10 | $0.45 |
+| Claude Haiku 4.5 | $1 / $5 | $0.23 |
+
+Only the first row was measured. The rest reprice those exact token counts at each model's
+published rates, including the 2x one-hour cache write and the 0.1x cache read (0.025x on
+Fable 5.1, which is why it is closer to Opus than its headline rate suggests). Treat them as
+the shape of the bill, not a promise: a different model will not spend the same tokens on the
+same bug, and a Fix that needs two attempts costs both.
 
 ## If you already use Copilot Autofix, or a coding-agent Action
 

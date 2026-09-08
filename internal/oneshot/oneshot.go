@@ -40,6 +40,7 @@ type GitHub interface {
 type Options struct {
 	RunURL       string        // https://github.com/<owner>/<repo>/actions/runs/<id>
 	Provider     string        // claude | codex | cursor | gemini (default claude)
+	Model        string        // passed to the agent CLI as --model; empty = the CLI's own default
 	Mode         string        // pr (default) | direct
 	WorkDir      string        // clones + sessions live here; default os.UserCacheDir()/xdlc
 	Instructions string        // optional operator hint, joins the prompt's trusted block
@@ -142,7 +143,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		if _, err := exec.LookPath(sub.Binary); err != nil {
 			return res, fmt.Errorf("oneshot: provider %s: %q not on PATH — install it, or pick another with --provider (%s)", provider, sub.Binary, providerList())
 		}
-		runner = sub
+		runner = sub.WithModel(strings.TrimSpace(opts.Model))
 	}
 
 	workdir := opts.WorkDir
@@ -222,7 +223,11 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		sig.Evidence["run_url"] = opts.RunURL
 	}
 
-	_, _ = fmt.Fprintf(out, "agent: %s, mode: %s, clone: %s\n", provider, mode, repoDir)
+	agentLine := provider
+	if m := strings.TrimSpace(opts.Model); m != "" {
+		agentLine += " (" + m + ")"
+	}
+	_, _ = fmt.Fprintf(out, "agent: %s, mode: %s, clone: %s\n", agentLine, mode, repoDir)
 	_, _ = fmt.Fprintln(out, "fixing… (a real agent usually takes 2–10 minutes)")
 
 	fix, fixErr := disp.Fix(ctx, sig)

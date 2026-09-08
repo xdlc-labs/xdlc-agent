@@ -13,6 +13,7 @@ import (
 func fixCmd() *cobra.Command {
 	var (
 		provider     string
+		model        string
 		mode         string
 		workdir      string
 		instructions string
@@ -40,6 +41,7 @@ you want it to happen without you: xdlc init.`,
 			_, err := oneshot.Run(cmd.Context(), oneshot.Options{
 				RunURL:       args[0],
 				Provider:     provider,
+				Model:        model,
 				Mode:         mode,
 				WorkDir:      workdir,
 				Instructions: instructions,
@@ -53,6 +55,7 @@ you want it to happen without you: xdlc init.`,
 		},
 	}
 	cmd.Flags().StringVar(&provider, "provider", "claude", "claude|codex|cursor|gemini")
+	cmd.Flags().StringVar(&model, "model", "", "model to ask the agent CLI for, e.g. claude-opus-5 (default: the CLI's own)")
 	cmd.Flags().StringVar(&mode, "mode", "pr", "pr (open a PR) | direct (push to the failing branch)")
 	cmd.Flags().StringVar(&workdir, "dir", "", "clones and sessions root (default: $XDG_CACHE_HOME/xdlc)")
 	cmd.Flags().StringVarP(&instructions, "message", "m", "", "hint for the agent, e.g. \"the flake is in the seed data\"")
