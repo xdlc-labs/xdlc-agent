@@ -369,6 +369,15 @@ type argoCDNotification struct {
 // Without both of those wired, this path emits no signal at all and the
 // poller remains the only route to a promote: losing webhook latency is
 // strictly better than promoting on an unverified claim.
+//
+// A CheckSmoke that *errors* is a third outcome, distinct from pass and
+// fail: the gate could not run. It emits KindBlocked (202) rather than
+// the old bare 204, so the delivery leaves a BACKLOG.md line and an
+// audit row saying why — see orchestrator.KindBlocked. 202 rather than
+// a 5xx on purpose: an ArgoCD notification is not a retry queue this
+// daemon wants to drive, and the record has already been written, so
+// asking the notification controller to redeliver would only multiply
+// it.
 func (s *Server) handleArgoCD(w http.ResponseWriter, r *http.Request) {
 	if !s.allow(w) {
 		return
@@ -433,8 +442,19 @@ func (s *Server) handleArgoCD(w http.ResponseWriter, r *http.Request) {
 
 	passed, gateEvidence, err := s.CheckSmoke(ctx, repo)
 	if err != nil {
-		s.Log.Error("argocd webhook: smoke check failed", "repo", repo, "error", err)
-		w.WriteHeader(http.StatusNoContent)
+		// The gate could not run, which is not the same as the gate
+		// failing: answering with KindFail would route dev-smoke to
+		// ActionFix and pay a coding agent to fix a repo that is not
+		// broken. Emit KindBlocked instead — ActionNoop, but with a
+		// BACKLOG.md line and an audit row naming the reason, so a
+		// typo'd argocd_app is no longer invisible outside the daemon
+		// log (issue #45).
+		s.Log.Error("argocd webhook: smoke check could not run", "repo", repo, "app", app, "error", err)
+		blocked := orchestrator.Blocked(orchestrator.SourceDevGate, repo, "dev-smoke", sha, err)
+		blocked.Evidence["argocd_app"] = app
+		blocked.Evidence["via"] = "webhook+probe"
+		s.emit(blocked, "argocd")
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 

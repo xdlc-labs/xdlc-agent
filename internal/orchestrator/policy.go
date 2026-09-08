@@ -177,6 +177,10 @@ func (o *Orchestrator) updateBreach(s Signal) {
 		o.breach[s.Repo] = false
 		o.clearPatientZero(s.Repo)
 	}
+	// KindBlocked deliberately falls through: a gate that could not run
+	// knows nothing about prod, so it must neither raise nor clear a
+	// breach. Clearing one would silently re-arm Revert (and the circuit
+	// breaker) off a failed check.
 }
 
 func (o *Orchestrator) breachCount() int {

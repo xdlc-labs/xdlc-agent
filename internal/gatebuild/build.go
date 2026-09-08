@@ -13,6 +13,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/gitops"
 	"github.com/xdlc-labs/xdlc-agent/internal/k8sprobe"
 	"github.com/xdlc-labs/xdlc-agent/internal/promclient"
+	"github.com/xdlc-labs/xdlc-agent/internal/validate"
 )
 
 // CI builds the one CIGate instance shared across all repos —
@@ -62,14 +63,11 @@ func DevSmoke(cfg *config.Config) map[string]*gate.SmokeGate {
 
 	gates := make(map[string]*gate.SmokeGate, len(cfg.Repos))
 	for _, r := range cfg.Repos {
-		app := r.ArgoCDApp
-		if app == "" {
-			app = cfg.Gates.DevSmoke.ArgoCDApp
-		}
-		job := r.ProbeJob
-		if job == "" {
-			job = cfg.Gates.DevSmoke.ProbeJob
-		}
+		// One resolver, shared with validate and `xdlc doctor`, so
+		// what doctor says the gate needs is what the gate is actually
+		// built with (issue #45).
+		app := validate.ResolveArgoCDApp(cfg, r)
+		job := validate.ResolveProbeJob(cfg, r)
 		if app == "" || job == "" {
 			continue // repo has no dev-smoke config, skip
 		}

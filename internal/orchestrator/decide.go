@@ -16,6 +16,16 @@ const (
 // This is intentionally a pure function — easy to unit test, easy for
 // forks to swap out for their own policy.
 func Decide(s Signal) Action {
+	// A gate that could not run reported no verdict, so there is
+	// nothing to act on. This is checked before the Source switch, not
+	// inside each arm, so a new Source can never accidentally route
+	// "ArgoCD was unreachable" to Fix and pay for a coding-agent run
+	// against a repo that is not broken (issue #45). The record an
+	// operator sees is written by handle(), not by an Action.
+	if s.Kind == KindBlocked {
+		return ActionNoop
+	}
+
 	switch s.Source {
 	case SourceCI:
 		if s.Kind == KindFail {

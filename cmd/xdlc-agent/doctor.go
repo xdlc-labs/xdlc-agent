@@ -96,7 +96,13 @@ Exit 1 when any required check fails.`,
 						needKubectl = true
 					}
 				}
-				if r.ArgoCDApp != "" {
+				// The same resolver gatebuild.DevSmoke builds the gate
+				// with, so the shared gates.dev-smoke.argocd_app
+				// fallback counts here too. Reading r.ArgoCDApp alone
+				// gave two semantically identical configs opposite
+				// verdicts and green-lit one whose dev-smoke gate could
+				// not run (issue #45).
+				if validate.ResolveArgoCDApp(cfg, r) != "" {
 					needArgo = true
 				}
 			}

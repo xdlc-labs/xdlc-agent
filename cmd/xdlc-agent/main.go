@@ -279,12 +279,7 @@ func daemonCmd() *cobra.Command {
 			}
 			o.Suppressions = metrics.FleetSuppressions
 			o.Audit = func(s orchestrator.Signal, action orchestrator.Action, dispatchErr error, started time.Time) error {
-				status := store.StatusOK
-				errMsg := ""
-				if dispatchErr != nil {
-					status = store.StatusError
-					errMsg = dispatchErr.Error()
-				}
+				status, errMsg := auditStatus(s, dispatchErr)
 				provider := ""
 				if s.Evidence != nil {
 					if v, ok := s.Evidence["agent_provider"].(string); ok {
@@ -1050,4 +1045,25 @@ func parseGitHubRemote(remote string) string {
 		return ""
 	}
 	return parts[0] + "/" + parts[1]
+}
+
+// auditStatus classifies one signal+dispatch outcome for the audit
+// store: the Status and Error an `xdlc history` row (and the console
+// Activity feed, which shows the same record) will carry.
+//
+// A KindBlocked signal dispatched nothing, so there is no dispatchErr —
+// but recording it as ok would make "ArgoCD is unreachable" or a typo'd
+// argocd_app look like a clean noop, which is the invisibility issue #45
+// is about. It is the daemon failing to do its job, so the row reads
+// ok=false and carries the reason the gate could not run. That is still
+// distinguishable from a gate *fail*, which arrives as Kind "fail" with
+// action fix/revert.
+func auditStatus(s orchestrator.Signal, dispatchErr error) (status, errMsg string) {
+	if dispatchErr != nil {
+		return store.StatusError, dispatchErr.Error()
+	}
+	if reason, blocked := orchestrator.BlockedReason(s); blocked {
+		return store.StatusError, reason
+	}
+	return store.StatusOK, ""
 }

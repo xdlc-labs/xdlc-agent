@@ -456,3 +456,76 @@ func hasIssueContaining(issues []Issue, want string) bool {
 	}
 	return false
 }
+
+// TestGitOpsMissingAppsDevReportsAnIssue: pointing --gitops-dir at a
+// tree that does not use the apps/dev layout used to hard-error, which
+// cobra turns into a usage dump instead of the one-line issue every
+// other check produces (issue #45). It is a finding about the config,
+// not a reason to abort the command — the same shape RoleNamespace has.
+func TestGitOpsMissingAppsDevReportsAnIssue(t *testing.T) {
+	cfg := &config.Config{
+		Repos: []config.Repo{
+			{Name: "svc", GitHub: "org/svc", Gates: []string{"dev-smoke"}, ArgoCDApp: "dev-svc", ProbeJob: "smoke-e2e"},
+		},
+	}
+
+	// A real directory that simply has no apps/dev in it.
+	issues, err := GitOps(cfg, t.TempDir())
+	if err != nil {
+		t.Fatalf("GitOps returned an error instead of an issue: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected exactly 1 issue, got %v", issues)
+	}
+	if !strings.Contains(issues[0].Message, filepath.Join("apps", "dev")) {
+		t.Errorf("issue does not name the missing directory: %q", issues[0].Message)
+	}
+
+	// And a --gitops-dir that does not exist at all.
+	issues, err = GitOps(cfg, filepath.Join(t.TempDir(), "no-such-tree"))
+	if err != nil {
+		t.Fatalf("GitOps returned an error instead of an issue: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected exactly 1 issue, got %v", issues)
+	}
+
+	// An empty flag is still "not configured", not an issue.
+	if issues, err := GitOps(cfg, ""); err != nil || issues != nil {
+		t.Fatalf("empty gitops-dir = (%v, %v), want (nil, nil)", issues, err)
+	}
+}
+
+// TestResolveArgoCDAppSharesTheFallback pins the one resolver
+// gatebuild.DevSmoke, validate and `xdlc doctor` all read, so the app
+// doctor tests for is the app the gate is built with (issue #45).
+func TestResolveArgoCDAppSharesTheFallback(t *testing.T) {
+	shared := &config.Config{Repos: []config.Repo{{Name: "svc"}}}
+	shared.Gates.DevSmoke.ArgoCDApp = "dev-svc"
+	shared.Gates.DevSmoke.ProbeJob = "smoke-e2e"
+	perRepo := &config.Config{
+		Repos: []config.Repo{{Name: "svc", ArgoCDApp: "dev-svc", ProbeJob: "smoke-e2e"}},
+	}
+
+	for _, c := range []struct {
+		name string
+		cfg  *config.Config
+	}{
+		{"shared default", shared},
+		{"per-repo override", perRepo},
+	} {
+		if got := ResolveArgoCDApp(c.cfg, c.cfg.Repos[0]); got != "dev-svc" {
+			t.Errorf("%s: ResolveArgoCDApp = %q, want dev-svc", c.name, got)
+		}
+		if got := ResolveProbeJob(c.cfg, c.cfg.Repos[0]); got != "smoke-e2e" {
+			t.Errorf("%s: ResolveProbeJob = %q, want smoke-e2e", c.name, got)
+		}
+	}
+
+	// The per-repo value wins when both are set.
+	both := &config.Config{Repos: []config.Repo{{Name: "svc", ArgoCDApp: "dev-mine"}}}
+	both.Gates.DevSmoke.ArgoCDApp = "dev-shared"
+	if got := ResolveArgoCDApp(both, both.Repos[0]); got != "dev-mine" {
+		t.Errorf("ResolveArgoCDApp = %q, want the per-repo dev-mine", got)
+	}
+}
