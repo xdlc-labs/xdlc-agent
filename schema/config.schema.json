@@ -163,7 +163,7 @@
     "Sessions": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Per-Fix recording of prompt, agent output and diff. See docs/sessions.md.",
+      "description": "Per-Fix recording of prompt, agent output and diff. See https://xdlc.dev/agent/docs/sessions.",
       "properties": {
         "enabled": { "type": "boolean" },
         "dir": { "type": "string" },

@@ -17,7 +17,7 @@ image:
 # Must stay 1. The daemon is a single writer: it holds bbolt's exclusive
 # flock on the audit DB and the data PVC below is ReadWriteOnce. Any
 # value > 1 fails `helm install`/`template` with an explanation rather
-# than deploying a replica that cannot start. See chart comments / backup values.
+# than deploying a replica that cannot start.
 replicaCount: 1
 
 # Recreate is required whenever persistence.enabled is true (the
@@ -69,7 +69,7 @@ serviceAccount:
 # Namespaced RBAC for reading Job status / pod logs in the smoke
 # probe namespace. Off by default: the CI Fix profile does not call
 # kubectl. Set create: true (and role.namespace = gates.dev-smoke.namespace)
-# when you enable the GitOps profile (docs/gitops-argo.md).
+# when you enable the GitOps profile (https://xdlc.dev/agent/docs/gitops-argo).
 role:
   create: false
   namespace: dev
@@ -125,20 +125,3 @@ persistence:
   enabled: true
   size: 2Gi
   storageClassName: ""
-
-# PVC backup — pick at most one; both are opt-in and off by default.
-# See chart comments / backup values. Neither replaces a
-# pre-restore RPO/RTO check with your actual recovery procedure.
-backup:
-  velero:
-    enabled: false
-    schedule: "0 2 * * *"     # daily; tune to RPO
-    veleroNamespace: velero   # namespace Velero watches
-    ttl: 720h
-  csiSnapshot:
-    enabled: false
-    schedule: "0 2 * * *"
-    # registry.k8s.io — Bitnami free versioned tags deprecated (no patches).
-    image: registry.k8s.io/kubectl:v1.34.0
-    # Cluster-specific — must already exist (`kubectl get volumesnapshotclass`).
-    volumeSnapshotClassName: ""

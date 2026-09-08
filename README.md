@@ -62,7 +62,7 @@ xdlc demo
 Fix, then a promote, then a revert on a simulated prod breach. The agent in that recording
 is real `claude`, but the bug is a toy one, so treat it as a tour of the mechanics and
 [#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) as the evidence. Reproduce it with
-`bash docs/assets/demo.sh`, or run `xdlc demo --provider fake` to see the same loop with no
+`xdlc demo`, or run `xdlc demo --provider fake` to see the same loop with no
 API key at all — a stub agent that writes a canned patch, which exercises the worktree, the
 push and the gate re-check, and nothing about the agent.
 

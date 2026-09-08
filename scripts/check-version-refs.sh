@@ -17,18 +17,10 @@ if [ -z "$want" ]; then
 fi
 
 # CHANGELOG.md is excluded on purpose: its entries must keep naming the version
-# they actually shipped in.
-#
-# The ui/content/docs/ guides are gitignored here -- they are synced in from the
-# separate documentation repository -- so they are present for a local run and
-# absent in CI. Untracked entries are skipped with a note rather than failing,
-# which is why the "matched no release references" guard below matters: it keeps
-# a silent pass from looking like a real one.
+# they actually shipped in. Hosted install / getting-started / deployment pins
+# live in the documentation repository, not this one.
 files=(
   README.md
-  ui/content/docs/install.md
-  ui/content/docs/deployment.md
-  ui/content/docs/getting-started.md
   deploy/helm/xdlc-agent/Chart.yaml
 )
 
