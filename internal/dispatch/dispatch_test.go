@@ -1384,10 +1384,21 @@ func (r *committingRunner) Run(ctx context.Context, dir, prompt string, _ []stri
 		body = "fixed\n"
 	}
 	_ = os.WriteFile(filepath.Join(dir, "app.txt"), []byte(body), 0o600)
-	_ = exec.CommandContext(ctx, "git", "-C", dir, "config", "user.email", "t@e.c").Run()
-	_ = exec.CommandContext(ctx, "git", "-C", dir, "config", "user.name", "t").Run()
+	// Identity goes in via env rather than `git config`: worktrees share
+	// one .git/config, so two concurrent runners writing it race on its
+	// lock and the loser would commit with whatever identity the host
+	// happens to have (or none).
+	commit := exec.CommandContext(ctx, "git", "-C", dir, "commit",
+		// The directory in the message keeps concurrent commits distinct.
+		// Same tree + same message + same identity within one second is
+		// the same SHA, and pushing a SHA the remote already has is a
+		// no-op — so two racing Fixes would both "win".
+		"-m", "fix from agent in "+filepath.Base(dir))
+	commit.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e.c",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e.c")
 	_ = exec.CommandContext(ctx, "git", "-C", dir, "add", ".").Run()
-	_ = exec.CommandContext(ctx, "git", "-C", dir, "commit", "-m", "fix from agent").Run()
+	_ = commit.Run()
 	return r.out, nil
 }
 
