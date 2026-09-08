@@ -29,18 +29,20 @@ CLI gets the failing job's logs and the repo's own conventions, works in a throw
 worktree, commits, and xdlc pushes and opens the pull request.
 
 <p align="center">
-  <a href="https://github.com/xdlc-labs/xdlc-agent/pull/51"><img src="docs/assets/pr.png" width="820" alt="Pull request #51 on this repository, opened by xdlc: title from the agent's summary, a link to the failing run, and the agent's verdict"></a>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/loop-dark.svg">
+    <img src="docs/assets/loop-light.svg" width="900" alt="Signals from CI, DEV smoke and prod health enter a policy gate that decides Fix, Promote, Revert or noop. Only Fix reaches the coding agent, which runs in a per-Fix git worktree on your own host. Every action is recorded with its prompt, diff, verdict and cost.">
+  </picture>
 </p>
 
-That is [#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) on this repository, and it is
-not a mockup. This project's own CI was red on a flaky concurrency test. One
-`xdlc fix <run-url>` read the failing job's logs, found that two Fixes committing in the
-same second produced identical SHAs so the losing push was a silent no-op, wrote the patch,
-pushed it, and opened that pull request. It cost **$1.63** and the checks are green.
+**The agent never decides whether it runs. Policy does.** That is the difference between
+this and a bot on a webhook. Three signals go in, one of four verdicts comes out, and only
+one of them reaches a coding agent at all. A Fix that committed nothing is recorded as
+exactly that, never as a success.
 
 - **Your agent, your keys.** `claude`, `codex`, `cursor` or `gemini` on `PATH`. Nothing phones home; there is no SaaS in the path.
 - **It stays out of your tree.** Every Fix gets its own `git worktree` on a scratch branch. The agent commits; xdlc pushes. A run killed mid-edit cannot dirty a clone.
-- **Receipts, not vibes.** The prompt, the agent's stdout, the diff, its verdict and the cost are on disk for every Fix. A Fix that committed nothing is recorded as exactly that.
+- **Receipts, not vibes.** The prompt, the agent's stdout, the diff, its verdict and the cost are on disk for every Fix, queryable long after.
 
 ## Install
 
@@ -80,9 +82,13 @@ npm i -g @anthropic-ai/claude-code   # or codex / cursor-agent / gemini
 xdlc fix https://github.com/you/repo/actions/runs/123456789
 ```
 
-That is the whole command. Here is what the run behind
-[#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) printed, wrapping the agent's
-summary and showing the default cache paths:
+Here is one that happened. This project's own CI was red on a flaky concurrency test, so
+`xdlc fix` was pointed at the failing run. The agent found that two Fixes committing inside
+the same second produced identical SHAs, which made the losing push a silent no-op, and
+wrote the patch. That is
+[#51](https://github.com/xdlc-labs/xdlc-agent/pull/51) on this repository, green checks and
+all, for $1.63. Its output, wrapping the agent's summary and showing the default cache
+paths:
 
 ```console
 github auth: GITHUB_TOKEN
@@ -96,6 +102,10 @@ cost: $1.63
 session: xdlc sessions show 20260908T171541Z-xdlc-agent --diff
 PR: https://github.com/xdlc-labs/xdlc-agent/pull/51
 ```
+
+<p align="center">
+  <a href="https://github.com/xdlc-labs/xdlc-agent/pull/51"><img src="docs/assets/pr.png" width="820" alt="Pull request #51 on this repository, opened by xdlc: the title comes from the agent's summary, and the body links the failing run and quotes the verdict"></a>
+</p>
 
 It exits non-zero when the run is not actually red, when the agent committed nothing, or
 when the pull request could not be opened, so a job wrapping it fails visibly instead of
@@ -198,10 +208,11 @@ helm install xdlc-agent deploy/helm/xdlc-agent \
 
 ## How it works
 
-One loop, three gates. Same diagram as the
+The diagram at the top is the logic. This is the deployment it runs in — one daemon beside
+your repos, taking webhooks and polling, from the
 [architecture](https://xdlc.dev/agent/docs/architecture) page.
 
-![One loop, three gates: xdlc-agent → GitHub → DEV → promote → PRODUCTION](https://xdlc.dev/images/architecture.jpg)
+![One daemon beside your repos: xdlc-agent → GitHub → DEV → promote → PRODUCTION](https://xdlc.dev/images/architecture.jpg)
 
 1. GitHub reports a failed `workflow_run` — or you run `xdlc fix` by hand, or enable DEV smoke and prod health later.
 2. The daemon validates the webhook and asks policy what to do.

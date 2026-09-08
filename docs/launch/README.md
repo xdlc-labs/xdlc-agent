@@ -5,9 +5,9 @@ Drafts for the first public push. Nothing here is posted automatically. Edit, th
 ## Before posting (blockers)
 
 1. **Make the GHCR package public.** `docker pull ghcr.io/xdlc-labs/xdlc-agent:<tag>` must work anonymously. Org → Packages → xdlc-agent → Package settings → Change visibility. A broken pull on launch day is the top comment.
-2. **Dogfood, in public.** One down: [#51](https://github.com/xdlc-labs/xdlc-agent/pull/51), a real flaky-test fix on this repo for $1.63, and it is the README hero (`docs/assets/pr.png`, regenerate with `docs/assets/pr.sh`). Get to **five** the same way, across this repo and [airlock](https://github.com/xdlc-labs/airlock), and add each to the "Fixes in the wild" table. Merge them: an open PR from the author reads weaker than a merged one. Receipts beat claims.
+2. **Dogfood, in public.** One down: [#51](https://github.com/xdlc-labs/xdlc-agent/pull/51), a real flaky-test fix on this repo for $1.63, screenshotted under `xdlc fix` in the README (`docs/assets/pr.png`, regenerate with `docs/assets/pr.sh`). Get to **five** the same way, across this repo and [airlock](https://github.com/xdlc-labs/airlock), and add each to the "Fixes in the wild" table. Merge them: an open PR from the author reads weaker than a merged one. Receipts beat claims.
 3. **Cut a release** so the install one-liner and the Action resolve to a tag that has `xdlc fix`. Bump `appVersion` in the Helm chart and the README pins together (`make check-versions`).
-4. **Watch the GIF once more** at `docs/assets/demo.gif`. It is a real `claude` run, not the stub agent, which is the half a skeptic will poke at first. Re-record with the two commands in the header of `docs/assets/demo.sh` if the output changed, and keep the theme identical to [airlock](https://github.com/xdlc-labs/airlock)'s.
+4. **Check the hero renders in both themes.** `docs/assets/loop-light.svg` and `-dark.svg` come from `python3 docs/assets/loop.py`; open the README on GitHub with the theme toggled both ways before posting, since the whole pitch is above the fold. Then watch the GIF once more at `docs/assets/demo.gif`. It is a real `claude` run, not the stub agent, which is the half a skeptic will poke at first. Re-record with the two commands in the header of `docs/assets/demo.sh` if the output changed, and keep the theme identical to [airlock](https://github.com/xdlc-labs/airlock)'s.
 5. **Be online for six hours after posting.** Answer every comment in the first hour.
 
 ## Show HN
@@ -18,7 +18,9 @@ Drafts for the first public push. Nothing here is posted automatically. Edit, th
 
 **Text:**
 
-> The README screenshot is a pull request this thing opened against its own repository, for a flaky concurrency test in its own test suite, for $1.63. That is the honest version of the pitch.
+> The one design decision worth arguing about: the coding agent is not the top of the loop, policy is. Three signals come in (CI conclusion, a DEV smoke probe, a prod SLO breach) and policy returns fix, promote, revert or noop before an agent is reachable at all. Only fix runs an agent. The README's first image is that state machine rather than a screenshot, because "agent opens a PR" is the commoditized part.
+>
+> There is a real receipt in there too: a pull request this opened against its own repository, for a flaky concurrency test in its own suite, for $1.63.
 >
 > I run a small Go daemon next to my repos. When a GitHub Actions run fails, it hands the failing job's logs and the repo's AGENTS.md/CLAUDE.md to whichever coding-agent CLI is on PATH (claude, codex, cursor, gemini), lets the agent commit in its own git worktree, pushes, and opens a PR. The prompt, the agent's output, the diff and the cost are written to disk per run.
 >
@@ -34,7 +36,7 @@ Drafts for the first public push. Nothing here is posted automatically. Edit, th
 
 ## X / Twitter thread
 
-1. CI broke at 3am. I woke up to a green PR. The agent was mine, the keys never left my box, and I could read exactly what it was told. Open-sourced the daemon that does this: xdlc-agent. 🧵 [GIF]
+1. CI broke at 3am. I woke up to a green PR. The agent was mine, the keys never left my box, and I could read exactly what it was told. Open-sourced the daemon that does this: xdlc-agent. 🧵 [loop diagram]
 2. One command, no daemon, no config: `xdlc fix https://github.com/you/repo/actions/runs/123`. Clones, reads the failing job logs + your AGENTS.md, runs claude/codex/cursor/gemini in a worktree, pushes, opens the PR. [screenshot of the CLI output ending in PR: …]
 3. Every Fix gets its own git worktree on an `xdlc/<session>` branch. Two fixes on one repo run side by side. A run killed mid-edit can't dirty your clone. The agent commits; xdlc pushes.
 4. Receipts. Prompt, output, diff, verdict, cost, per run: `xdlc sessions show <id> --diff`. A Fix that committed nothing is recorded as "delivered nothing", not as a success. That one bit me (#34).
