@@ -18,6 +18,7 @@ Do not run bare `go test ./...` after `bun install` — `ui/node_modules` can sh
 
 Docs: [Getting started](https://xdlc.dev/agent/docs/getting-started) (CI Fix) · [Optional profiles](https://xdlc.dev/agent/docs/production-loop). Console **Docs** links out to that site.
 
+## Local demo
 
 ```sh
 export CURSOR_API_KEY="$cursor_agent_key"   # or ANTHROPIC_API_KEY / OPENAI_API_KEY

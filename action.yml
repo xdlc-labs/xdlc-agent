@@ -31,9 +31,6 @@ inputs:
       workflow token works if "Allow GitHub Actions to create and approve pull
       requests" is on for the repo; a PAT or App token also works.
     default: ${{ github.token }}
-  version:
-    description: xdlc release tag to install (e.g. v0.0.1-beta.5). Empty = newest release.
-    default: ""
   install-agent:
     description: Install the agent CLI for `provider` (npm / curl). Set false if the runner already has it.
     default: "true"
@@ -49,12 +46,19 @@ outputs:
 runs:
   using: composite
   steps:
+    # Build from this Action checkout. The last GitHub Release is still the
+    # daemon-only tag, so curling install.sh here would ship a binary with no
+    # `xdlc fix`. No extra script: go build from github.action_path.
+    - uses: actions/setup-go@v5
+      with:
+        go-version: "1.25.x"
+        cache-dependency-path: ${{ github.action_path }}/go.sum
     - name: Install xdlc
       shell: bash
-      env:
-        XDLC_VERSION: ${{ inputs.version }}
+      working-directory: ${{ github.action_path }}
       run: |
-        curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/install.sh | bash
+        mkdir -p "$HOME/.local/bin"
+        go build -o "$HOME/.local/bin/xdlc" ./cmd/xdlc-agent
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
     - name: Install agent CLI

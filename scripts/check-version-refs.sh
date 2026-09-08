@@ -33,7 +33,10 @@ files=(
 )
 
 # Capture group 1 is the version in each release-shaped reference.
-pattern='(?:xdlc-agent:|image\.tag=|XDLC_VERSION=v|^appVersion: "|^version: )\K[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?'
+# perl, not grep -P: macOS grep has no PCRE, and RELEASING.md runs this locally.
+scan_refs() {
+  perl -ne 'while (/(?:xdlc-agent:|image\.tag=|XDLC_VERSION=v|^appVersion: "|^version: )([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?)/g) { print "$.:$1\n" }' "$1"
+}
 
 status=0
 found_any=0
@@ -52,7 +55,7 @@ for f in "${files[@]}"; do
     [ "$found" = "$want" ] && continue
     echo "$f:$line: release reference '$found' != chart appVersion '$want'" >&2
     status=1
-  done < <(grep -noP "$pattern" "$f" || true)
+  done < <(scan_refs "$f")
 done
 
 if [ "$found_any" -eq 0 ]; then
