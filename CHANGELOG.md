@@ -10,7 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **`xdlc fix <run-url>` — one Fix, no daemon** (#50). Point it at a failed GitHub Actions run and it does what the daemon does on a webhook: resolves a token (`GITHUB_TOKEN`, else `gh auth token`), reads the run and its failing job logs, clones the repo under the user cache dir, runs the agent in a per-Fix worktree, pushes, opens a PR against the branch that failed, and records the session. `--mode direct` pushes to the failing branch instead, `-m` passes an operator hint, `--provider` picks the agent. Exits non-zero when the run is not red, the agent delivered nothing, or the PR could not be opened, so a CI job wrapping it fails visibly
 - **A GitHub Action wrapper** (`action.yml`). `uses: xdlc-labs/xdlc-agent@main` on a `workflow_run` failure installs `xdlc` and the chosen agent CLI and runs `xdlc fix` on the triggering run. It is the one-repo on-ramp, not the daemon; the README says which is which
-- **A narrated demo** with a `--pace` flag for recordings. `xdlc demo` now shows the failing test, the diff the agent left, its verdict and the green re-run instead of three status lines, and the README opens with a GIF of it (`docs/media/demo.gif`)
+- **A narrated demo** with a `--pace` flag for recordings. `xdlc demo` now shows the failing test, the diff the agent left, its wrapped verdict and the green re-run instead of three status lines. The README opens with a GIF of it (`docs/assets/demo.gif`), recorded from `docs/assets/demo.sh` against the real `claude` CLI rather than the stub provider, matching airlock's recording theme
 
 ### Changed
 

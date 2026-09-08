@@ -7,7 +7,7 @@ Drafts for the first public push. Nothing here is posted automatically. Edit, th
 1. **Make the GHCR package public.** `docker pull ghcr.io/xdlc-labs/xdlc-agent:<tag>` must work anonymously. Org → Packages → xdlc-agent → Package settings → Change visibility. A broken pull on launch day is the top comment.
 2. **Dogfood, in public.** Point `xdlc fix` (or the daemon) at this repo and at [airlock](https://github.com/xdlc-labs/airlock). Break CI on purpose if you have to. Collect **five merged PRs** whose body ends with "Opened by xdlc", each with its `cost:` line. Add a "Fixes in the wild" section to the README linking them. Receipts beat claims.
 3. **Cut a release** so the install one-liner and the Action resolve to a tag that has `xdlc fix`. Bump `appVersion` in the Helm chart and the README pins together (`make check-versions`).
-4. **Watch the GIF once more** at `docs/media/demo.gif`. Re-record with `asciinema rec --command 'xdlc demo --pace 700ms'` + `agg` if the output changed.
+4. **Watch the GIF once more** at `docs/assets/demo.gif`. It is a real `claude` run, not the stub agent, which is the half a skeptic will poke at first. Re-record with the two commands in the header of `docs/assets/demo.sh` if the output changed, and keep the theme identical to [airlock](https://github.com/xdlc-labs/airlock)'s.
 5. **Be online for six hours after posting.** Answer every comment in the first hour.
 
 ## Show HN

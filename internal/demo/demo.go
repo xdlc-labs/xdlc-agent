@@ -252,7 +252,7 @@ func Run(ctx context.Context, opts Options) error {
 				indent(out, patch)
 			}
 			if metas[0].Summary != "" {
-				say("agent verdict: %s — %s", metas[0].Outcome, metas[0].Summary)
+				say("agent verdict: %s — %s", metas[0].Outcome, wrap(metas[0].Summary, 68, "  "))
 			}
 		}
 		say("$ go test ./...   # on the pushed develop")
@@ -495,6 +495,31 @@ func tail(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// wrap breaks s on word boundaries at width columns, prefixing every
+// line after the first with indent. A coding agent's summary is one
+// long sentence it wrote itself, so without this it wraps mid-word at
+// whatever the terminal happens to be.
+func wrap(s string, width int, indent string) string {
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return s
+	}
+	var b strings.Builder
+	line := words[0]
+	for _, w := range words[1:] {
+		if len(line)+1+len(w) > width {
+			b.WriteString(line)
+			b.WriteString("\n")
+			b.WriteString(indent)
+			line = w
+			continue
+		}
+		line += " " + w
+	}
+	b.WriteString(line)
+	return b.String()
 }
 
 func indent(out io.Writer, s string) {
