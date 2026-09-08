@@ -6,6 +6,13 @@
 repos:
   - name: example-service
     github: xdlc-labs/example-service
+    # branch MUST name the branch your CI runs on — it is the filter for
+    # incoming workflow_run deliveries, and it is never guessed from the
+    # repository. Point it at "main" if that is your trunk: a mismatch
+    # means GitHub reports every delivery as accepted while the daemon
+    # drops it (logged at WARN) and no Fix ever starts.
+    branch: develop
+    # prod_branch: main         # promote/revert target
     gates: [ci]
 
 # github:  # optional — App preferred over GITHUB_TOKEN
@@ -14,9 +21,14 @@ repos:
 #   private_key_env: GITHUB_APP_PRIVATE_KEY
 
 server:
-  addr: ":8080"
+  addr: "127.0.0.1:8080"
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
-  require_webhook_secret: false # local-dev only; daemon refuses non-loopback when false
+  require_webhook_secret: false
+  # Loopback bind, so a webhook secret is not forced. To bind a
+  # non-loopback address (":8080", 0.0.0.0, container, Kubernetes):
+  # set require_webhook_secret: true and export GITHUB_WEBHOOK_SECRET
+  # (plus ARGOCD_WEBHOOK_SECRET / ALERTMANAGER_WEBHOOK_SECRET if used).
+  # The daemon refuses to start on a non-loopback addr while this is false.
   # webhook_rate_per_sec: 20
   # webhook_rate_burst: 40
   # oidc:
@@ -51,6 +63,9 @@ agent:
   #   keep_failed: 24h          # how long a failed Fix's worktree stays for inspection
   # extra_env_keys: [HTTPS_PROXY]
   # rules_file: /etc/xdlc/rules.md  # instructions added to every Fix prompt
+  # committer:                  # git identity Fix commits are attributed to
+  #   name: xdlc-agent          # default; GIT_AUTHOR_NAME / git config user.name win
+  #   email: xdlc-agent@users.noreply.github.com  # default; git config user.email wins
   # sessions:                       # prompt / output / diff per Fix (docs/sessions.md)
   #   enabled: true
   #   dir: sessions

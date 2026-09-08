@@ -321,6 +321,27 @@ type AgentConfig struct {
 	Sessions SessionsConfig `yaml:"sessions"`
 	// Worktree configures per-Fix git worktrees. See docs/fix-modes.md.
 	Worktree WorktreeConfig `yaml:"worktree"`
+	// Committer is the git identity Fix commits are attributed to.
+	Committer CommitterConfig `yaml:"committer"`
+}
+
+// CommitterConfig is the git author/committer identity xdlc hands the
+// coding agent and its own git subprocesses.
+//
+// The coding agent's commit is the only way a Fix delivers work in
+// worktree mode, and `git commit` refuses to run without an author, so
+// an unattended daemon cannot rely on a human's ~/.gitconfig being
+// there — the shipped container has none. Both fields are optional: an
+// identity already in the environment (GIT_AUTHOR_NAME and friends) or
+// in git's own config wins over them, so setting a GitHub App bot
+// identity the usual way keeps working. See internal/repos.CommitterEnv
+// for the precedence and the built-in defaults.
+type CommitterConfig struct {
+	// Name defaults to repos.DefaultCommitterName ("xdlc-agent").
+	Name string `yaml:"name"`
+	// Email defaults to repos.DefaultCommitterEmail
+	// ("xdlc-agent@users.noreply.github.com").
+	Email string `yaml:"email"`
 }
 
 // WorktreeConfig controls whether each Fix gets its own git worktree

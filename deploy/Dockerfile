@@ -64,6 +64,19 @@ RUN apk add --no-cache git ca-certificates curl \
 
 COPY --from=build /out/xdlc /usr/local/bin/xdlc
 
+# Belt and braces for the same problem the daemon solves in code
+# (internal/repos.CommitterEnv): a Fix is delivered by the coding agent
+# running `git commit` in its worktree, and git refuses to commit
+# without an author. This image runs as uid 65532 with no HOME
+# .gitconfig, so without a fallback identity every containerized Fix
+# produced no commit and the run was still recorded as clean.
+#
+# It goes in the *system* config, the lowest-precedence one git reads:
+# a mounted ~/.gitconfig, `git config --global`, GIT_AUTHOR_NAME, or
+# config.yaml's agent.committer all override it, so an operator using a
+# GitHub App bot identity keeps theirs.
+RUN printf '[user]\n\tname = xdlc-agent\n\temail = xdlc-agent@users.noreply.github.com\n' > /etc/gitconfig
+
 # Match distroless/static nonroot (65532) used by example-service.
 RUN addgroup -g 65532 -S nonroot \
  && adduser -u 65532 -S -G nonroot nonroot \

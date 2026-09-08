@@ -311,6 +311,36 @@ func TestFixAttemptsNeedsReverify(t *testing.T) {
 	}
 }
 
+// A bad committer identity surfaces as "the Fix produced no commit"
+// rather than as a config error, so it has to be caught here.
+func TestCommitterIdentity(t *testing.T) {
+	cases := []struct {
+		name, cName, cEmail, wantMsg string
+	}{
+		{name: "unset is fine (defaults apply)"},
+		{name: "explicit is fine", cName: "Fleet Bot", cEmail: "bot@example.test"},
+		{name: "email without @", cEmail: "bot.example.test", wantMsg: "agent.committer.email"},
+		{name: "email with angle brackets", cEmail: "<bot@example.test>", wantMsg: "agent.committer.email"},
+		{name: "email with a space", cEmail: "bot @example.test", wantMsg: "agent.committer.email"},
+		{name: "name with angle brackets", cName: "Bot <bot>", wantMsg: "agent.committer.name"},
+		{name: "name with padding", cName: " Bot ", wantMsg: "agent.committer.name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Repos: []config.Repo{{Name: "svc", GitHub: "o/svc"}}}
+			cfg.Agent.Committer.Name = tc.cName
+			cfg.Agent.Committer.Email = tc.cEmail
+			issues := Config(cfg)
+			switch {
+			case tc.wantMsg == "" && len(issues) > 0:
+				t.Fatalf("want no issues, got %v", issues)
+			case tc.wantMsg != "" && !hasIssueContaining(issues, tc.wantMsg):
+				t.Fatalf("want an issue mentioning %q, got %v", tc.wantMsg, issues)
+			}
+		})
+	}
+}
+
 func hasIssueContaining(issues []Issue, want string) bool {
 	for _, i := range issues {
 		if strings.Contains(i.Message, want) {

@@ -35,6 +35,8 @@ Checks git / agent CLI on PATH, token env presence, config validation,
 and (unless --skip-network) optional Prometheus / reachability probes.
 GitHub auth is required when a repo has a github slug and no local dir,
 or when not --skip-network. Local dir clones warn if GITHUB_TOKEN is unset.
+Also fails when server.addr is non-loopback while server.require_webhook_secret
+is false — the same rule the daemon enforces at startup.
 Exit 1 when any required check fails.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -171,6 +173,29 @@ Exit 1 when any required check fails.`,
 			}
 
 			check("XDLC_API_TOKEN set", os.Getenv("XDLC_API_TOKEN") != "", "required for /api/* console")
+
+			// Same predicate the daemon enforces at startup
+			// (enforceWebhookSecrets) so doctor and daemon can never
+			// disagree: a non-loopback bind without require_webhook_secret
+			// makes the daemon refuse to start, so this is a FAIL here.
+			if cfgErr == nil {
+				addr := cfg.Server.Addr
+				if addr == "" {
+					addr = ":8080"
+				}
+				secretEnv := cfg.Server.GitHubWebhookSecretEnv
+				if secretEnv == "" {
+					secretEnv = "GITHUB_WEBHOOK_SECRET" //nolint:gosec // env var name, not a secret value
+				}
+				if err := enforceWebhookSecrets(cfg); err != nil {
+					check("webhook secret for listen addr", false,
+						fmt.Sprintf("server.addr %q is non-loopback — set server.require_webhook_secret: true and export %s, or bind 127.0.0.1:8080 (daemon refuses to start otherwise)", addr, secretEnv))
+				} else if cfg.Server.RequireWebhookSecret {
+					check("webhook secret for listen addr", true, addr+" with require_webhook_secret=true")
+				} else {
+					check("webhook secret for listen addr", true, addr+" is loopback — require_webhook_secret not needed")
+				}
+			}
 
 			if cfg.Server.RequireWebhookSecret {
 				for _, envName := range []string{

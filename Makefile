@@ -1,4 +1,4 @@
-.PHONY: test lint validate build bench
+.PHONY: test lint validate build bench check-versions
 
 # Exclude ui/node_modules from Go package walk.
 GO_PKGS := $(shell go list ./... | grep -v /node_modules/)
@@ -14,6 +14,9 @@ lint:
 
 validate:
 	go run ./cmd/xdlc-agent validate --config config.example.yaml --gitops-dir ""
+
+check-versions:
+	./scripts/check-version-refs.sh
 
 build:
 	go build -o bin/xdlc ./cmd/xdlc-agent

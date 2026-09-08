@@ -177,7 +177,7 @@ func BuildFixPrompt(req FixRequest) string {
 
 	b.WriteString(fixAction(req.Mode, req.PRBranch, strings.TrimSpace(req.Plan) != "", req.NoPush))
 	b.WriteString("\n\n")
-	b.WriteString(verdictInstruction)
+	b.WriteString(verdictInstruction(req.NoPush))
 	return b.String()
 }
 
@@ -220,13 +220,29 @@ func fixAction(mode, prBranch string, fromPlan, noPush bool) string {
 // alone cannot separate "I pushed a fix" from "I wrote a BACKLOG note
 // and stopped" — both exit 0 — so the retry ladder would re-run an
 // agent that already declared itself blocked. This line closes that gap.
-var verdictInstruction = "When you are finished, print exactly one line of JSON as the LAST line " +
-	"of your output, with no code fence and nothing after it:\n" +
-	`{"` + VerdictKey + `": "fixed", "summary": "<one sentence: what you changed and why>"}` + "\n" +
-	`Use "` + string(OutcomeFixed) + `" only if you committed and pushed a change you believe resolves the failure. ` +
-	`Use "` + string(OutcomeGaveUp) + `" if it cannot be fixed from this repo alone (you left the BACKLOG.md note). ` +
-	`Use "` + string(OutcomeNeedsHuman) + `" if a fix exists but needs a human decision. ` +
-	"This line is machine-read; the summary is shown to the operator and to your next run."
+//
+// noPush must be the same value fixAction was given, because the two
+// have to describe one hand-back. A single sentence cannot: in worktree
+// mode (the default) fixAction forbids pushing and xdlc pushes
+// afterwards, so a verdict that demanded a push would leave an agent
+// that obeyed with no honest way to say "fixed" — the natural fallback
+// is needs_human, which Verdict.Retryable treats as terminal, so
+// dispatch fails a Fix whose commit, push and PR all actually
+// succeeded. The criterion is therefore whatever this mode asked the
+// agent to actually do: commit, or commit and push.
+func verdictInstruction(noPush bool) string {
+	delivered := "committed and pushed"
+	if noPush {
+		delivered = "committed (pushing is xdlc's job here, not yours)"
+	}
+	return "When you are finished, print exactly one line of JSON as the LAST line " +
+		"of your output, with no code fence and nothing after it:\n" +
+		`{"` + VerdictKey + `": "fixed", "summary": "<one sentence: what you changed and why>"}` + "\n" +
+		`Use "` + string(OutcomeFixed) + `" only if you ` + delivered + ` a change you believe resolves the failure. ` +
+		`Use "` + string(OutcomeGaveUp) + `" if it cannot be fixed from this repo alone (you left the BACKLOG.md note). ` +
+		`Use "` + string(OutcomeNeedsHuman) + `" if a fix exists but needs a human decision. ` +
+		"This line is machine-read; the summary is shown to the operator and to your next run."
+}
 
 // frameRetry renders the previous-attempt block, or "" when this is the
 // first attempt.
@@ -236,7 +252,8 @@ func frameRetry(rc *RetryContext) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "This is Fix attempt %d of %d for this failure. "+
-		"An earlier attempt already ran, pushed, and the gate was re-checked and is STILL FAILING.\n",
+		"An earlier attempt already ran, its work landed on the branch, and the "+
+		"gate was re-checked and is STILL FAILING.\n",
 		rc.Attempt, rc.MaxAttempts)
 	if s := strings.TrimSpace(rc.PrevSummary); s != "" {
 		fmt.Fprintf(&b, "What the previous attempt reported doing: %s\n", s)

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Install xdlc CLI from GitHub Releases.
 #
-#   curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/install.sh | bash
+#
+# Pipe into bash, not sh. This script uses `set -o pipefail`, which dash --
+# /bin/sh on Debian and Ubuntu -- rejects with
+# `set: Illegal option -o pipefail` before the first line of work runs.
 #
 # Env:
 #   XDLC_VERSION      release tag (e.g. v0.0.1-beta.1). Default: newest release (incl. prereleases).

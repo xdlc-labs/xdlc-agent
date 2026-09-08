@@ -3,7 +3,17 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/xdlc-labs/xdlc-agent/internal/repos"
 )
+
+// branchNote is the comment written beside every scaffolded
+// repos[].branch. The key is the filter incoming workflow_run
+// deliveries are matched against and it is never inferred from the
+// repository, so a repo whose trunk is not this branch has to say so —
+// otherwise GitHub reports each delivery as accepted and the daemon
+// drops it.
+const branchNote = "  # branch CI runs on; must match — never guessed"
 
 // parseInitProfile accepts ci (default), gitops, or full.
 func parseInitProfile(s string) (string, error) {
@@ -40,9 +50,11 @@ func configFromScan(found []scannedRepo, profile string) string {
 		fmt.Fprintf(&b, "  - name: %s\n", r.Name)
 		fmt.Fprintf(&b, "    github: %s\n", r.GitHub)
 		fmt.Fprintf(&b, "    dir: %s\n", r.Dir)
-		if r.Branch != "" {
-			fmt.Fprintf(&b, "    branch: %s\n", r.Branch)
+		branch := r.Branch
+		if branch == "" {
+			branch = repos.DefaultBranch
 		}
+		fmt.Fprintf(&b, "    branch: %s%s\n", branch, branchNote)
 		switch profile {
 		case "gitops":
 			b.WriteString("    gates: [ci, dev-smoke]\n")
@@ -101,9 +113,14 @@ func scanFooter(profile string) string {
 
 const scanConfigFooterCI = `
 server:
-  addr: ":8080"
+  addr: "127.0.0.1:8080"
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
-  require_webhook_secret: false # loopback only while this is false
+  require_webhook_secret: false
+  # Loopback bind, so a webhook secret is not forced. To bind a
+  # non-loopback address (":8080", 0.0.0.0, container, Kubernetes):
+  # set require_webhook_secret: true and export GITHUB_WEBHOOK_SECRET
+  # (plus ARGOCD_WEBHOOK_SECRET / ALERTMANAGER_WEBHOOK_SECRET if used).
+  # The daemon refuses to start on a non-loopback addr while this is false.
 
 gates:
   ci:
@@ -121,10 +138,15 @@ agent:
 
 const scanConfigFooterGitops = `
 server:
-  addr: ":8080"
+  addr: "127.0.0.1:8080"
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
   argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
-  require_webhook_secret: false # loopback only while this is false
+  require_webhook_secret: false
+  # Loopback bind, so a webhook secret is not forced. To bind a
+  # non-loopback address (":8080", 0.0.0.0, container, Kubernetes):
+  # set require_webhook_secret: true and export GITHUB_WEBHOOK_SECRET
+  # (plus ARGOCD_WEBHOOK_SECRET / ALERTMANAGER_WEBHOOK_SECRET if used).
+  # The daemon refuses to start on a non-loopback addr while this is false.
 
 gates:
   ci:
@@ -142,11 +164,16 @@ agent:
 
 const scanConfigFooterFull = `
 server:
-  addr: ":8080"
+  addr: "127.0.0.1:8080"
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
   argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
   alertmanager_webhook_secret_env: ALERTMANAGER_WEBHOOK_SECRET
-  require_webhook_secret: false # loopback only while this is false
+  require_webhook_secret: false
+  # Loopback bind, so a webhook secret is not forced. To bind a
+  # non-loopback address (":8080", 0.0.0.0, container, Kubernetes):
+  # set require_webhook_secret: true and export GITHUB_WEBHOOK_SECRET
+  # (plus ARGOCD_WEBHOOK_SECRET / ALERTMANAGER_WEBHOOK_SECRET if used).
+  # The daemon refuses to start on a non-loopback addr while this is false.
 
 gates:
   ci:
@@ -177,6 +204,7 @@ const starterConfigCI = `# yaml-language-server: $schema=./schema/config.schema.
 repos:
   - name: example-service
     github: xdlc-labs/example-service
+    branch: ` + repos.DefaultBranch + branchNote + `
     gates: [ci]
 
 # github:  # App preferred; GITHUB_TOKEN is PAT fallback
@@ -185,9 +213,14 @@ repos:
 #   private_key_env: GITHUB_APP_PRIVATE_KEY
 
 server:
-  addr: ":8080"
+  addr: "127.0.0.1:8080"
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
-  require_webhook_secret: false # loopback only while this is false
+  require_webhook_secret: false
+  # Loopback bind, so a webhook secret is not forced. To bind a
+  # non-loopback address (":8080", 0.0.0.0, container, Kubernetes):
+  # set require_webhook_secret: true and export GITHUB_WEBHOOK_SECRET
+  # (plus ARGOCD_WEBHOOK_SECRET / ALERTMANAGER_WEBHOOK_SECRET if used).
+  # The daemon refuses to start on a non-loopback addr while this is false.
 
 gates:
   ci:
@@ -205,6 +238,7 @@ const starterConfigGitops = `# yaml-language-server: $schema=./schema/config.sch
 repos:
   - name: example-service
     github: xdlc-labs/example-service
+    branch: ` + repos.DefaultBranch + branchNote + `
     gates: [ci, dev-smoke]
     argocd_app: dev-example-service
     probe_job: smoke-e2e
@@ -215,10 +249,15 @@ repos:
 #   private_key_env: GITHUB_APP_PRIVATE_KEY
 
 server:
-  addr: ":8080"
+  addr: "127.0.0.1:8080"
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
   argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
-  require_webhook_secret: false # loopback only while this is false
+  require_webhook_secret: false
+  # Loopback bind, so a webhook secret is not forced. To bind a
+  # non-loopback address (":8080", 0.0.0.0, container, Kubernetes):
+  # set require_webhook_secret: true and export GITHUB_WEBHOOK_SECRET
+  # (plus ARGOCD_WEBHOOK_SECRET / ALERTMANAGER_WEBHOOK_SECRET if used).
+  # The daemon refuses to start on a non-loopback addr while this is false.
 
 gates:
   ci:
@@ -240,6 +279,7 @@ const starterConfigFull = `# yaml-language-server: $schema=./schema/config.schem
 repos:
   - name: example-service
     github: xdlc-labs/example-service
+    branch: ` + repos.DefaultBranch + branchNote + `
     gates: [ci, dev-smoke, prod-health]
     argocd_app: dev-example-service
     probe_job: smoke-e2e
@@ -250,11 +290,16 @@ repos:
 #   private_key_env: GITHUB_APP_PRIVATE_KEY
 
 server:
-  addr: ":8080"
+  addr: "127.0.0.1:8080"
   github_webhook_secret_env: GITHUB_WEBHOOK_SECRET
   argocd_webhook_secret_env: ARGOCD_WEBHOOK_SECRET
   alertmanager_webhook_secret_env: ALERTMANAGER_WEBHOOK_SECRET
-  require_webhook_secret: false # loopback only while this is false
+  require_webhook_secret: false
+  # Loopback bind, so a webhook secret is not forced. To bind a
+  # non-loopback address (":8080", 0.0.0.0, container, Kubernetes):
+  # set require_webhook_secret: true and export GITHUB_WEBHOOK_SECRET
+  # (plus ARGOCD_WEBHOOK_SECRET / ALERTMANAGER_WEBHOOK_SECRET if used).
+  # The daemon refuses to start on a non-loopback addr while this is false.
 
 gates:
   ci:

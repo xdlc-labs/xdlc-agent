@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -739,5 +740,63 @@ func TestDedupe(t *testing.T) {
 	}
 	if !d.seenBefore("d") {
 		t.Error("re-recorded id not remembered")
+	}
+}
+
+// TestHandleGitHubLogsBranchMismatch is the release-blocker regression:
+// repos[].branch defaults to "develop", so pointing xdlc at a repo whose
+// trunk is "main" used to drop every delivery with GitHub reporting 204
+// success and the daemon logging nothing at all — indistinguishable from
+// "CI has not run yet". The drop is correct; the silence was not.
+func TestHandleGitHubLogsBranchMismatch(t *testing.T) {
+	var logs bytes.Buffer
+	ch := make(chan orchestrator.Signal, 1)
+	srv := githubServer(ch, func(string) string { return "develop" })
+	srv.Log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	if code := postGitHub(t, srv, wfRun{branch: "main"}.body(), "d1"); code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", code, http.StatusNoContent)
+	}
+	select {
+	case sig := <-ch:
+		t.Fatalf("mismatched branch must not emit a signal: %+v", sig)
+	default:
+	}
+
+	got := logs.String()
+	if !strings.Contains(got, "level=WARN") {
+		t.Errorf("branch mismatch must be audible at WARN, got:\n%s", got)
+	}
+	// The operator has to be able to see both branches to fix the config.
+	for _, want := range []string{
+		"branch mismatch",
+		"repo=example-service",
+		"head_branch=main",
+		"configured_branch=develop",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// A delivery on the configured branch is the happy path and must stay
+// quiet — otherwise the new Warn is noise on every CI run.
+func TestHandleGitHubMatchingBranchDoesNotWarn(t *testing.T) {
+	var logs bytes.Buffer
+	ch := make(chan orchestrator.Signal, 1)
+	srv := githubServer(ch, func(string) string { return "main" })
+	srv.Log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	if code := postGitHub(t, srv, wfRun{branch: "main"}.body(), "d1"); code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
+	}
+	select {
+	case <-ch:
+	default:
+		t.Fatal("configured branch must emit a signal")
+	}
+	if strings.Contains(logs.String(), "branch mismatch") {
+		t.Errorf("matching branch must not warn:\n%s", logs.String())
 	}
 }

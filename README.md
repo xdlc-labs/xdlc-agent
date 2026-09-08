@@ -36,7 +36,7 @@ The CLI is called **`xdlc`**. The container image, Helm chart, and this repo are
 One command. No cluster required.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/xdlc-labs/xdlc-agent/main/scripts/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"   # if needed
 xdlc demo --provider fake
 ```
@@ -56,9 +56,16 @@ xdlc daemon --config config.yaml
 
 Open http://127.0.0.1:8080/ → **Settings** → paste the same `XDLC_API_TOKEN`. Full walkthrough: **[Getting started](https://xdlc.dev/agent/docs/getting-started)**.
 
-**Docker** (console embedded; tag must exist on GHCR):
+**Docker** (console embedded). If `docker pull` returns `unauthorized`, the GHCR package is not public — run `docker login ghcr.io` with an account that has access, or build from source:
+
+A container always binds a non-loopback address, so the container path needs
+`server.require_webhook_secret: true` in `config.yaml` plus a
+`GITHUB_WEBHOOK_SECRET` in the environment. The daemon refuses to start
+without it. The local loopback run above (`127.0.0.1:8080`) does not need either.
 
 ```sh
+# config.yaml for the container: addr: ":8080" + require_webhook_secret: true
+export GITHUB_WEBHOOK_SECRET=...                  # same secret as the GitHub webhook
 docker run --rm -p 8080:8080 \
   -v "$PWD/config.yaml:/etc/xdlc-agent/config.yaml:ro" \
   -e XDLC_API_TOKEN -e GITHUB_TOKEN -e GITHUB_WEBHOOK_SECRET \
@@ -126,7 +133,7 @@ Shipping prompts, skills, MCP, or model pins? [Airlock](https://github.com/xdlc-
 
 ## Contribute
 
-[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Changelog](CHANGELOG.md)
+[Contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md) · [Releasing](RELEASING.md) · [Security](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Changelog](CHANGELOG.md)
 
 ## License
 
