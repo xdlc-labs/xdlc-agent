@@ -1,9 +1,15 @@
 package gatebuild
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
+	"github.com/xdlc-labs/xdlc-agent/internal/gate"
 	"github.com/xdlc-labs/xdlc-agent/internal/ghclient"
 )
 
@@ -114,5 +120,60 @@ func TestBranchByGitHub(t *testing.T) {
 	}
 	if got := resolve("org/never-heard-of-it"); got != "" {
 		t.Errorf("unknown repo = %q, want \"\"", got)
+	}
+}
+
+// TestProdHealthNoDataReachesTheGate: gatebuild is the only production
+// caller of promclient.Query — it wires it into ProdHealthGate.Query
+// for both the daemon and `xdlc gate check`. A query that matched no
+// series has to arrive at the gate as an error, so the gate returns no
+// verdict and the runner emits orchestrator.Blocked. Before issue #48
+// it arrived as 0, which this gate reads as a perfectly healthy
+// service.
+func TestProdHealthNoDataReachesTheGate(t *testing.T) {
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+	}))
+	t.Cleanup(empty.Close)
+
+	cfg := &config.Config{Gates: config.GatesConfig{ProdHealth: config.ProdHealthGateConfig{
+		MetricsURL:     empty.URL,
+		Thresholds:     config.Thresholds{P95MS: 500, ErrorRate: 0.01},
+		P95Query:       `p95{service="{{repo}}"}`,
+		ErrorRateQuery: "err",
+	}}}
+
+	_, err := ProdHealth(cfg).Check(context.Background(), "api")
+	if err == nil {
+		t.Fatal("empty result set produced a verdict")
+	}
+	for _, want := range []string{"p95_query", "matched no series", strconv.Quote(`p95{service="api"}`)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+// TestProdHealthGenuineZeroReachesTheGate: the counterpart. A series
+// that exists and reads 0 is still a pass through the same wiring.
+func TestProdHealthGenuineZeroReachesTheGate(t *testing.T) {
+	zero := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1,"0"]}]}}`))
+	}))
+	t.Cleanup(zero.Close)
+
+	cfg := &config.Config{Gates: config.GatesConfig{ProdHealth: config.ProdHealthGateConfig{
+		MetricsURL:     zero.URL,
+		Thresholds:     config.Thresholds{P95MS: 500, ErrorRate: 0.01},
+		P95Query:       "p95",
+		ErrorRateQuery: "err",
+	}}}
+
+	res, err := ProdHealth(cfg).Check(context.Background(), "api")
+	if err != nil {
+		t.Fatalf("genuine zero errored: %v", err)
+	}
+	if res.Status != gate.StatusPass {
+		t.Fatalf("status = %v, want pass", res.Status)
 	}
 }
