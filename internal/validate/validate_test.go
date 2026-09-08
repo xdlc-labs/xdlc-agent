@@ -311,6 +311,47 @@ func TestFixAttemptsNeedsReverify(t *testing.T) {
 	}
 }
 
+// pr mode plus reverify can never pass: the fix lands on a PR branch while
+// the re-check reads the tracked branch, which stays red until the PR merges.
+// Rejecting it at startup beats failing every Fix with escalate=reverify_failed.
+func TestPRModeRejectsReverify(t *testing.T) {
+	const want = "cannot be used with agent.fix_mode"
+
+	base := func() *config.Config {
+		return &config.Config{Repos: []config.Repo{{Name: "svc", GitHub: "o/svc"}}}
+	}
+
+	cfg := base()
+	cfg.Agent.FixMode = "pr"
+	cfg.Agent.FixReverify = true
+	if !hasIssueContaining(Config(cfg), want) {
+		t.Fatalf("pr + fix_reverify should be rejected, got %v", Config(cfg))
+	}
+
+	// Each half on its own is a supported configuration.
+	cfg = base()
+	cfg.Agent.FixMode = "pr"
+	if issues := Config(cfg); hasIssueContaining(issues, want) {
+		t.Fatalf("pr mode alone is valid: %v", issues)
+	}
+
+	cfg = base()
+	cfg.Agent.FixReverify = true
+	if issues := Config(cfg); hasIssueContaining(issues, want) {
+		t.Fatalf("fix_reverify alone is valid: %v", issues)
+	}
+
+	// "" means direct, so it must not be swept up with "pr".
+	for _, mode := range []string{"", "direct"} {
+		cfg = base()
+		cfg.Agent.FixMode = mode
+		cfg.Agent.FixReverify = true
+		if issues := Config(cfg); hasIssueContaining(issues, want) {
+			t.Fatalf("fix_mode %q with fix_reverify is valid: %v", mode, issues)
+		}
+	}
+}
+
 // A bad committer identity surfaces as "the Fix produced no commit"
 // rather than as a config error, so it has to be caught here.
 func TestCommitterIdentity(t *testing.T) {

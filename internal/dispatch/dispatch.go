@@ -141,7 +141,12 @@ func (d *Dispatcher) repoFixSem(repo string) chan struct{} {
 
 // Fix runs a per-repo subagent with the failure evidence, expecting it
 // to commit+push a fix or leave a note in BACKLOG.md if it can't.
-func (d *Dispatcher) Fix(ctx context.Context, s orchestrator.Signal) error {
+//
+// The returned orchestrator.FixResult says whether anything was actually
+// delivered. A nil error alone does not: an agent can exit 0 having
+// committed nothing, and the orchestrator must not record that commit as
+// fixed (issue #34).
+func (d *Dispatcher) Fix(ctx context.Context, s orchestrator.Signal) (orchestrator.FixResult, error) {
 	d.fixWaiting.Add(1)
 	if d.Metrics != nil {
 		d.Metrics.FixQueueDepth.Add(ctx, 1)
@@ -155,7 +160,7 @@ func (d *Dispatcher) Fix(ctx context.Context, s orchestrator.Signal) error {
 			d.Metrics.FixQueueDepth.Add(ctx, -1)
 			d.Metrics.FixQueueWait.Record(ctx, wait.Seconds())
 		}
-		return err
+		return orchestrator.FixResult{}, err
 	}
 	d.fixInflight.Add(1)
 	if d.Metrics != nil {
@@ -176,9 +181,9 @@ func (d *Dispatcher) Fix(ctx context.Context, s orchestrator.Signal) error {
 	}
 
 	start := time.Now()
-	err = d.fixInner(ctx, s)
+	res, err := d.fixInner(ctx, s)
 	d.observe("fix", start, err)
-	return err
+	return res, err
 }
 
 // acquireFixSlot takes per-repo (cap 1) then global fixSem. release frees both.
@@ -224,9 +229,9 @@ func (d *Dispatcher) SetWorktree(enabled bool, keepFailed time.Duration) {
 	d.WorktreeKeepFailed = keepFailed
 }
 
-func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (err error) {
+func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res orchestrator.FixResult, err error) {
 	if err := d.Repos.EnsureCloned(ctx, s.Repo); err != nil {
-		return fmt.Errorf("dispatch: fix: %w", err)
+		return res, fmt.Errorf("dispatch: fix: %w", err)
 	}
 	dir := d.Repos.Dir(s.Repo)
 	evidence := s.Evidence
@@ -320,7 +325,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (err e
 		d.pruneWorktrees(ctx, s.Repo)
 		created, werr := d.Repos.Worktree(ctx, s.Repo, runID)
 		if werr != nil {
-			return fmt.Errorf("dispatch: fix: %w", werr)
+			return res, fmt.Errorf("dispatch: fix: %w", werr)
 		}
 		wt = created
 		dir = wt.Dir
@@ -391,7 +396,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (err e
 		plan, err = d.runPlanPass(ctx, s, sess, dir, reason, evidence, teamRules, runner, authEnv)
 		if err != nil {
 			d.recordLesson(s, "error", reason)
-			return err
+			return res, err
 		}
 	}
 
@@ -413,6 +418,16 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (err e
 		retry    *subagent.RetryContext
 		attempt  int
 		ranAgent bool
+		// delivered is whether this Fix put code on the target branch.
+		// In worktree mode the daemon owns the push, so it knows; in
+		// shared-clone mode the agent pushes on its own and the daemon
+		// has nothing of its own to observe, so a clean run is taken at
+		// its word — the pre-#34 behavior for that mode.
+		//
+		// Sticky across the retry ladder: attempt 1 can push and attempt
+		// 2 add nothing, which leaves HasCommits false even though this
+		// Fix did deliver.
+		delivered = wt == nil
 	)
 
 	for attempt = 1; ; attempt++ {
@@ -473,10 +488,12 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (err e
 			if prBranch != "" {
 				target = prBranch
 			}
-			if perr := d.pushWorktree(ctx, s, wt, target); perr != nil {
+			pushed, perr := d.pushWorktree(ctx, s, wt, target)
+			if perr != nil {
 				fixErr = perr
 				break
 			}
+			delivered = delivered || pushed
 		}
 
 		// The agent declared itself blocked. Both outcomes exit 0, so
@@ -530,17 +547,33 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (err e
 
 	// PR bookkeeping runs on the failure path too: a pr-mode Fix that
 	// could not turn the gate green still pushed a branch, and the
-	// operator reviewing it needs the PR link either way.
+	// operator reviewing it needs the PR link either way. The line that
+	// matters is pushed vs not pushed, not errored vs clean — asking
+	// GitHub to open a PR whose head ref was never pushed earns a 422
+	// (#37), which used to be swallowed as a warning under a green
+	// audit row.
 	if ranAgent && d.FixMode == "pr" && s.Evidence != nil {
-		d.finishPR(ctx, s, sess, prBranch)
+		if !delivered {
+			d.Log.Warn("fix_mode pr: nothing pushed; not requesting a PR",
+				"repo", s.Repo, "branch", prBranch)
+		} else if perr := d.finishPR(ctx, s, sess, prBranch); perr != nil && fixErr == nil {
+			fixErr = perr
+		}
 	}
+
+	if !delivered && s.Evidence != nil {
+		// Visible in BACKLOG.md / the audit row, so a green Fix that
+		// shipped nothing does not read as a landed one.
+		s.Evidence["fix_delivered"] = false
+	}
+	res.Delivered = delivered
 
 	if fixErr != nil {
 		d.recordLesson(s, "error", lessonSymptom(reason, verdict, fixErr))
-		return fixErr
+		return res, fixErr
 	}
 	d.recordLesson(s, "ok", lessonSymptom(reason, verdict, nil))
-	return nil
+	return res, nil
 }
 
 // runPlanPass executes the diagnose-only first pass and returns the plan
@@ -586,15 +619,24 @@ func (d *Dispatcher) runPlanPass(
 
 // finishPR looks up (or opens) the PR a pr-mode Fix pushed, recording it
 // on the signal and the session.
-func (d *Dispatcher) finishPR(ctx context.Context, s orchestrator.Signal, sess *session.Session, prBranch string) {
+//
+// Only call this once the branch is on the remote: a PR request for a
+// head ref that does not exist is a 422 (#37).
+//
+// A failing PR call is returned rather than only logged, so a Fix whose
+// PR never opened stops being recorded as a success. Finding no PR at
+// all is still just a warning: CreatePR is optional, and a deployment
+// that opens PRs by some other means (a workflow on push) leaves
+// nothing here to look up.
+func (d *Dispatcher) finishPR(ctx context.Context, s orchestrator.Signal, sess *session.Session, prBranch string) error {
 	ownerRepo := d.Repos.GitHub(s.Repo)
 	base := d.Repos.Branch(s.Repo)
 	var pr *PRRef
+	var findErr error
 	if d.FindPR != nil {
-		var perr error
-		pr, perr = d.FindPR(ctx, ownerRepo, prBranch)
-		if perr != nil {
-			d.Log.Warn("pr lookup failed", "repo", s.Repo, "branch", prBranch, "error", perr)
+		pr, findErr = d.FindPR(ctx, ownerRepo, prBranch)
+		if findErr != nil {
+			d.Log.Warn("pr lookup failed", "repo", s.Repo, "branch", prBranch, "error", findErr)
 		}
 	}
 	if pr == nil && d.CreatePR != nil {
@@ -603,19 +645,25 @@ func (d *Dispatcher) finishPR(ctx context.Context, s orchestrator.Signal, sess *
 		created, cerr := d.CreatePR(ctx, ownerRepo, prBranch, base, title, body)
 		if cerr != nil {
 			d.Log.Warn("pr create failed", "repo", s.Repo, "branch", prBranch, "error", cerr)
-		} else {
-			pr = created
+			return fmt.Errorf("dispatch: fix: create pr for %s: %w", prBranch, cerr)
 		}
+		pr = created
 	}
 	if pr == nil {
 		d.Log.Warn("fix_mode pr: no PR after subagent run", "repo", s.Repo, "branch", prBranch)
-		return
+		if findErr != nil {
+			// The lookup is all there was and it failed, so nobody knows
+			// whether the pushed branch has a PR.
+			return fmt.Errorf("dispatch: fix: find pr for %s: %w", prBranch, findErr)
+		}
+		return nil
 	}
 	sess.SetPR(pr.URL)
 	s.Evidence["pr_number"] = pr.Number
 	s.Evidence["pr_url"] = pr.URL
 	s.Evidence["pr_state"] = pr.State
 	s.Evidence["pr_branch"] = prBranch
+	return nil
 }
 
 // refreshEvidence folds the re-check's gate evidence into what the next
@@ -719,23 +767,30 @@ func (d *Dispatcher) releaseWorktree(ctx context.Context, repo string, wt *repos
 	}
 }
 
-// pushWorktree sends the agent's commits to the branch this Fix targets.
-// Nothing committed means nothing to push — that is not an error here,
-// because an agent that decided the failure was unfixable is expected to
-// leave the tree alone, and the verdict is what reports that.
-func (d *Dispatcher) pushWorktree(ctx context.Context, s orchestrator.Signal, wt *repos.Worktree, target string) error {
+// pushWorktree sends the agent's commits to the branch this Fix targets
+// and reports whether anything was pushed. Nothing committed means
+// nothing to push — that is not an error here, because an agent that
+// decided the failure was unfixable is expected to leave the tree alone,
+// and the verdict is what reports that. It is not a delivered fix
+// either, though, which is what the bool is for: the caller must not
+// open a PR for an unpushed branch (#37) or let the orchestrator record
+// the commit as fixed (#34).
+//
+// HasCommits is a git subprocess, so its answer is returned rather than
+// asked for a second time downstream.
+func (d *Dispatcher) pushWorktree(ctx context.Context, s orchestrator.Signal, wt *repos.Worktree, target string) (bool, error) {
 	if wt == nil {
-		return nil
+		return false, nil
 	}
 	if !d.Repos.HasCommits(ctx, wt) {
 		d.Log.Info("fix produced no commits; nothing to push", "repo", s.Repo, "branch", wt.Branch)
-		return nil
+		return false, nil
 	}
 	if err := d.Repos.Push(ctx, wt, target); err != nil {
-		return fmt.Errorf("dispatch: fix: %w", err)
+		return false, fmt.Errorf("dispatch: fix: %w", err)
 	}
 	d.Log.Info("pushed fix", "repo", s.Repo, "from", wt.Branch, "to", target)
-	return nil
+	return true, nil
 }
 
 func (d *Dispatcher) recordLesson(s orchestrator.Signal, outcome, symptom string) {

@@ -16,11 +16,25 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/backlog"
 )
 
+// FixResult is what a Fix run delivered, as opposed to whether it
+// errored. The two are not the same thing: an agent that timed out, was
+// OOM-killed, or edited files without ever committing exits 0 and leaves
+// the Dispatcher nothing to report but a nil error (issue #34).
+//
+// Delivered means code actually reached the branch this Fix targets —
+// the daemon pushed the agent's commits, or (in the shared-clone mode
+// where the agent does its own pushing) the daemon has no push of its
+// own to judge and takes the run's own word for it. Only a delivered
+// Fix marks the SHA fixed; see finishFixSHA.
+type FixResult struct {
+	Delivered bool
+}
+
 // Dispatcher performs the side-effecting part of an Action: running a
 // subagent, reverting, or promoting. Kept as an interface so loop.go
 // stays testable without shelling out to git/claude for real.
 type Dispatcher interface {
-	Fix(ctx context.Context, s Signal) error
+	Fix(ctx context.Context, s Signal) (FixResult, error)
 	Revert(ctx context.Context, s Signal) error
 	Promote(ctx context.Context, s Signal) error
 }
@@ -57,11 +71,11 @@ type Orchestrator struct {
 	reranMu sync.Mutex
 	reran   map[string]struct{}
 
-	// fixSHA is one successful Fix per repo+SHA this process lifetime.
+	// fixSHA is one delivered Fix per repo+SHA this process lifetime.
 	// A flake-ladder rerun of the same commit used to open a second PR
 	// after the first Fix already succeeded. Empty SHA (manual Fix) is
-	// never claimed. A failed Fix clears inflight so a later delivery
-	// can retry.
+	// never claimed. A failed Fix — or one that delivered nothing —
+	// clears inflight without latching ok, so a later delivery can retry.
 	fixSHAMu sync.Mutex
 	fixSHA   map[string]fixSHAState
 
@@ -210,8 +224,9 @@ func (o *Orchestrator) handle(ctx context.Context, s Signal) {
 			o.Log.Info("skipping duplicate Fix for SHA",
 				"repo", s.Repo, "sha", s.SHA, "reason", skip)
 		} else {
-			err = o.Dispatcher.Fix(ctx, s)
-			o.finishFixSHA(s, err)
+			var res FixResult
+			res, err = o.Dispatcher.Fix(ctx, s)
+			o.finishFixSHA(s, res, err)
 		}
 	case ActionRevert:
 		err = o.Dispatcher.Revert(ctx, s)
@@ -360,7 +375,13 @@ func (o *Orchestrator) claimFixSHA(s Signal) string {
 	return ""
 }
 
-func (o *Orchestrator) finishFixSHA(s Signal, err error) {
+// finishFixSHA releases the claim and records whether this SHA is now
+// fixed. st.ok means "a fix was delivered for this SHA", not "Fix
+// returned no error": a run that committed nothing left the commit
+// exactly as broken as it found it, so it must stay retryable (#34).
+// A delivered Fix still latches ok, which is what keeps a flake-ladder
+// workflow_run for the same commit from opening a second PR (d75b2c2).
+func (o *Orchestrator) finishFixSHA(s Signal, res FixResult, err error) {
 	sha := strings.TrimSpace(s.SHA)
 	if sha == "" {
 		return
@@ -373,7 +394,7 @@ func (o *Orchestrator) finishFixSHA(s Signal, err error) {
 	}
 	st := o.fixSHA[key]
 	st.inflight = false
-	if err == nil {
+	if err == nil && res.Delivered {
 		st.ok = true
 	}
 	o.fixSHA[key] = st

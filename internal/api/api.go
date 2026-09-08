@@ -58,9 +58,13 @@ type Server struct {
 
 // PRLiveStatus is the live GitHub view of a Fix PR (issue #14).
 type PRLiveStatus struct {
-	State    string
-	Merged   bool
-	Title    string
+	State  string
+	Merged bool
+	Title  string
+	// CI aggregates check runs and commit statuses on the PR head:
+	// "success", "pending", "failure", or "" when neither system
+	// reports anything (no CI configured, or the lookup failed).
+	// Empty is deliberately distinct from "pending" — see #35.
 	CI       string
 	Reviewer string
 }

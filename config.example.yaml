@@ -55,6 +55,9 @@ agent:
   # fix_budget: 5m              # soft Fix deadline; 0 = unlimited (#9)
   # fix_mode: direct # or pr
   # fix_reverify: true          # require gate green after Fix (#2)
+  #   Not with fix_mode "pr": the fix lands on a PR branch while the
+  #   re-check reads the tracked branch, which stays red until the PR
+  #   merges, so every Fix would fail. The daemon refuses that pair.
   # fix_attempts: 2             # re-run the agent when the gate is still red; needs fix_reverify
   # ci_rerun_before_fix: true  # flake ladder before agent (#3); default on
   # fix_plan: true              # diagnose then patch (#23); default off

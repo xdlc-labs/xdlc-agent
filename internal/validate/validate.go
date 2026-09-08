@@ -62,6 +62,20 @@ func Config(cfg *config.Config) []Issue {
 		issues = append(issues, Issue{Message: fmt.Sprintf("agent.fix_mode %q unknown; use \"direct\", \"pr\", or omit", cfg.Agent.FixMode)})
 	}
 
+	// pr mode lands the fix on its own xdlc-fix-* branch, but re-verification
+	// re-reads the latest run on the tracked branch, which is still red while
+	// the fix sits in an unmerged PR. So the combination cannot ever pass: every
+	// Fix ends escalate=reverify_failed, and with a retry ladder the agent is
+	// paid again per attempt for a fix that was already correct. Both flags are
+	// off by default, so reaching here means someone opted into both, and
+	// refusing to start beats failing every Fix in a way that looks like the
+	// agent's fault.
+	if cfg.Agent.FixMode == "pr" && cfg.Agent.FixReverify {
+		issues = append(issues, Issue{Message: "agent.fix_reverify cannot be used with agent.fix_mode \"pr\": " +
+			"the fix lands on a PR branch while the re-check reads the tracked branch, which stays red until the PR " +
+			"merges, so every Fix would fail with escalate=reverify_failed. Turn fix_reverify off, or use fix_mode \"direct\""})
+	}
+
 	// A retry ladder needs a gate re-check to learn that the previous
 	// attempt failed. Without one the daemon clamps back to a single
 	// attempt, so say that here rather than at 3am in a log line.

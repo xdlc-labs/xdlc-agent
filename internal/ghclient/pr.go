@@ -15,7 +15,7 @@ type PRRef struct {
 	State    string // "open" or "closed" (go-github's two PR states)
 	Merged   bool
 	Title    string
-	CI       string // combined commit status: success|pending|failure|error|""
+	CI       string // aggregate CI state: success|pending|failure|"" (unknown); see ciState
 	Reviewer string // first requested reviewer login, if any
 }
 
@@ -42,12 +42,11 @@ func (c *Client) GetPR(ctx context.Context, repo string, number int) (*PRRef, er
 	if rs := pr.RequestedReviewers; len(rs) > 0 && rs[0] != nil {
 		ref.Reviewer = rs[0].GetLogin()
 	}
-	// Best-effort CI: combined status on head SHA. Failures leave CI empty.
+	// Best-effort CI on the head SHA: check runs + commit statuses,
+	// aggregated by ciState. Lookup failures leave CI unknown ("").
 	if head := pr.GetHead(); head != nil {
 		if sha := head.GetSHA(); sha != "" {
-			if st, _, err := c.gh.Repositories.GetCombinedStatus(ctx, owner, name, sha, &github.ListOptions{PerPage: 1}); err == nil {
-				ref.CI = st.GetState()
-			}
+			ref.CI = c.ciState(ctx, owner, name, sha)
 		}
 	}
 	return ref, nil
