@@ -220,9 +220,19 @@ type ProdHealthGateConfig struct {
 	MetricsURL string `yaml:"metrics_url"`
 	// PrometheusURL is a legacy alias for MetricsURL; used only when
 	// MetricsURL is empty.
-	PrometheusURL  string        `yaml:"prometheus_url"`
-	Thresholds     Thresholds    `yaml:"thresholds"`
-	Interval       time.Duration `yaml:"interval"`
+	PrometheusURL string        `yaml:"prometheus_url"`
+	Thresholds    Thresholds    `yaml:"thresholds"`
+	Interval      time.Duration `yaml:"interval"`
+	// Timeout bounds one poll tick — the PromQL queries for every repo
+	// share it. 0 → 80% of Interval, so a tick always ends before the
+	// next is due. Set it lower for a metrics backend that is slow but
+	// worth waiting for; it must stay under Interval.
+	//
+	// This is the bound that keeps a hung Prometheus from disabling the
+	// gate: without it the queries inherited the daemon's root context
+	// and an http.Client with no Timeout, so one unanswered request
+	// blocked the ticker loop for the life of the process.
+	Timeout        time.Duration `yaml:"timeout"`
 	P95Query       string        `yaml:"p95_query"`
 	ErrorRateQuery string        `yaml:"error_rate_query"`
 }

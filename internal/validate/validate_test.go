@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
 )
@@ -57,11 +58,76 @@ func TestConfig(t *testing.T) {
 			wantMsg: "duplicate repo name",
 		},
 		{
-			name: "prod-health needs metrics_url",
+			// Webhook-only prod-health: breaches arrive on
+			// /webhooks/alertmanager, so there is no endpoint to poll
+			// and no query to poll it with. Requiring metrics_url here
+			// made that deployment unconfigurable.
+			name: "prod-health webhook-only needs no metrics_url",
 			cfg: &config.Config{
 				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc", Gates: []string{"prod-health"}}},
 			},
-			wantMsg: "metrics_url is empty",
+			wantMsg: "",
+		},
+		{
+			name: "polled prod-health needs p95_query",
+			cfg: &config.Config{
+				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc", Gates: []string{"prod-health"}}},
+				Gates: config.GatesConfig{ProdHealth: config.ProdHealthGateConfig{
+					MetricsURL:     "http://prom.local",
+					ErrorRateQuery: "err",
+				}},
+			},
+			wantMsg: "p95_query is empty",
+		},
+		{
+			name: "polled prod-health needs error_rate_query",
+			cfg: &config.Config{
+				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc", Gates: []string{"prod-health"}}},
+				Gates: config.GatesConfig{ProdHealth: config.ProdHealthGateConfig{
+					MetricsURL: "http://prom.local",
+					P95Query:   "p95",
+				}},
+			},
+			wantMsg: "error_rate_query is empty",
+		},
+		{
+			name: "fully configured polled prod-health ok",
+			cfg: &config.Config{
+				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc", Gates: []string{"prod-health"}}},
+				Gates: config.GatesConfig{ProdHealth: config.ProdHealthGateConfig{
+					MetricsURL:     "http://prom.local",
+					P95Query:       "p95",
+					ErrorRateQuery: "err",
+					Interval:       30 * time.Second,
+					Timeout:        10 * time.Second,
+				}},
+			},
+			wantMsg: "",
+		},
+		{
+			// Queries with nothing to run them against: the poller
+			// never starts, which reads as a typo'd metrics_url rather
+			// than an intentional webhook-only setup.
+			name: "prod-health queries without metrics_url flagged",
+			cfg: &config.Config{
+				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc", Gates: []string{"prod-health"}}},
+				Gates: config.GatesConfig{ProdHealth: config.ProdHealthGateConfig{P95Query: "p95"}},
+			},
+			wantMsg: "metrics_url is empty, so the prod-health poller will not run",
+		},
+		{
+			name: "prod-health timeout must be under interval",
+			cfg: &config.Config{
+				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc", Gates: []string{"prod-health"}}},
+				Gates: config.GatesConfig{ProdHealth: config.ProdHealthGateConfig{
+					MetricsURL:     "http://prom.local",
+					P95Query:       "p95",
+					ErrorRateQuery: "err",
+					Interval:       10 * time.Second,
+					Timeout:        30 * time.Second,
+				}},
+			},
+			wantMsg: "must be shorter than interval",
 		},
 		{
 			name: "agent.mode sdk rejected",

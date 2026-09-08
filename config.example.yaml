@@ -104,5 +104,9 @@ agent:
 #       p95_ms: 500
 #       error_rate: 0.01
 #     interval: 30s
+#     # Per-tick deadline for the PromQL queries. Omit for 80% of
+#     # interval; a metrics endpoint that stops answering then logs
+#     # "poller tick timed out" instead of silently disabling the gate.
+#     timeout: 10s
 #     p95_query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{{repo}}"}[5m])) by (le)) * 1000
 #     error_rate_query: sum(rate(http_requests_total{service="{{repo}}",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="{{repo}}"}[5m]))

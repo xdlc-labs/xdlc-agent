@@ -1,10 +1,12 @@
 package poller
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -227,4 +229,144 @@ type recordingGate struct {
 func (g recordingGate) Check(ctx context.Context, repo string) (gate.Result, error) {
 	g.onCheck()
 	return g.Gate.Check(ctx, repo)
+}
+
+// hangingGate blocks until its context is cancelled — a Prometheus (or
+// ArgoCD) that accepts the connection and never answers.
+type hangingGate struct {
+	name  string
+	mu    sync.Mutex
+	calls int
+}
+
+func (h *hangingGate) Name() string              { return h.name }
+func (h *hangingGate) Trigger() gate.TriggerKind { return gate.Continuous }
+func (h *hangingGate) Check(ctx context.Context, _ string) (gate.Result, error) {
+	h.mu.Lock()
+	h.calls++
+	h.mu.Unlock()
+	<-ctx.Done()
+	return gate.Result{}, ctx.Err()
+}
+
+func (h *hangingGate) callCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.calls
+}
+
+func TestTickTimeout(t *testing.T) {
+	cases := []struct {
+		name     string
+		timeout  time.Duration
+		interval time.Duration
+		want     time.Duration
+	}{
+		{"explicit timeout wins", 5 * time.Second, 30 * time.Second, 5 * time.Second},
+		{"derived from interval", 0, 30 * time.Second, 24 * time.Second},
+		{"derived from a short interval", 0, 3 * time.Second, 2400 * time.Millisecond},
+		{"no interval falls back", 0, 0, defaultTickTimeout},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := &Poller{Timeout: c.timeout}
+			got := p.tickTimeout(c.interval)
+			if got != c.want {
+				t.Fatalf("tickTimeout(%v) = %v, want %v", c.interval, got, c.want)
+			}
+			// The derived default has to stay under the interval, or
+			// ticks overrun each other.
+			if c.timeout == 0 && c.interval > 0 && got >= c.interval {
+				t.Fatalf("derived timeout %v is not under the interval %v", got, c.interval)
+			}
+		})
+	}
+}
+
+// TestPollerTickBoundedByTimeout is the "hung Prometheus silently
+// disables the gate" regression. Gate.Check used to inherit the daemon
+// root context, and tick is called synchronously from the ticker loop,
+// so one unanswered query parked the loop for the life of the process:
+// exactly one query ever, no further ticks, and nothing logged (the
+// "tick slow" warn sits after the wait).
+func TestPollerTickBoundedByTimeout(t *testing.T) {
+	hg := &hangingGate{name: "prod-health"}
+	var logs bytes.Buffer
+	p := &Poller{
+		Gate:    hg,
+		Repos:   []string{"svc"},
+		Source:  orchestrator.SourceProdHealth,
+		Signals: make(chan orchestrator.Signal, 1),
+		Log:     slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Timeout: 50 * time.Millisecond,
+	}
+
+	start := time.Now()
+	p.tick(context.Background(), time.Second)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("tick was not bounded by Timeout: took %v", elapsed)
+	}
+	if hg.callCount() != 1 {
+		t.Fatalf("gate calls = %d, want 1", hg.callCount())
+	}
+
+	// The whole point: the operator can see it. A tick whose verdict is
+	// "unknown" must not look like a healthy one.
+	out := logs.String()
+	if !strings.Contains(out, "poller tick timed out") {
+		t.Errorf("no tick-timeout signal in the log:\n%s", out)
+	}
+	if !strings.Contains(out, "gate check failed") {
+		t.Errorf("no per-repo check failure in the log:\n%s", out)
+	}
+
+	// And the next tick still runs, rather than the gate being dead.
+	p.tick(context.Background(), time.Second)
+	if hg.callCount() != 2 {
+		t.Fatalf("gate calls after a second tick = %d, want 2", hg.callCount())
+	}
+}
+
+// TestPollerRunKeepsTickingThroughAHang: end to end through Run, the
+// loop a hung gate used to wedge.
+func TestPollerRunKeepsTickingThroughAHang(t *testing.T) {
+	hg := &hangingGate{name: "prod-health"}
+	p := &Poller{
+		Gate:     hg,
+		Repos:    []string{"svc"},
+		Interval: 20 * time.Millisecond,
+		Source:   orchestrator.SourceProdHealth,
+		Signals:  make(chan orchestrator.Signal, 1),
+		Log:      silentLogger(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	p.Run(ctx)
+	if got := hg.callCount(); got < 3 {
+		t.Fatalf("gate calls in 300ms of 20ms ticks = %d, want several (the loop was wedged)", got)
+	}
+}
+
+// TestPollerTickTimeoutIgnoredOnShutdown: a cancelled parent context is
+// a shutdown, not a gate problem, and must not log a timeout.
+func TestPollerTickTimeoutIgnoredOnShutdown(t *testing.T) {
+	hg := &hangingGate{name: "prod-health"}
+	var logs bytes.Buffer
+	p := &Poller{
+		Gate:    hg,
+		Repos:   []string{"svc"},
+		Source:  orchestrator.SourceProdHealth,
+		Signals: make(chan orchestrator.Signal, 1),
+		Log:     slog.New(slog.NewTextHandler(&logs, nil)),
+		Timeout: 5 * time.Second,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	p.tick(ctx, time.Minute)
+	if strings.Contains(logs.String(), "poller tick timed out") {
+		t.Errorf("reported a tick timeout for a daemon shutdown:\n%s", logs.String())
+	}
 }

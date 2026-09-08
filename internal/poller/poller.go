@@ -47,6 +47,20 @@ type Poller struct {
 	// cannot inherit the probe's verdict (the promote then fails the pin
 	// check rather than shipping it untested).
 	SHA func(ctx context.Context, repo string) (string, error)
+	// Timeout bounds one whole tick — every Gate.Check (and SHA lookup)
+	// it starts shares the deadline. 0 → tickTimeoutRatio × Interval.
+	//
+	// A gate that can block indefinitely is not just a slow gate, it is
+	// a *disabled* one: Run calls tick synchronously, so a Check with no
+	// deadline (promclient used to inherit the daemon's root context and
+	// http.DefaultClient, neither of which has one) parks the ticker
+	// loop forever. The next tick never happens, nothing is logged
+	// because the "tick slow" warn sits after the wait, and the gate
+	// stops working while looking healthy.
+	//
+	// Keeping the default under Interval also means ticks cannot stack:
+	// a tick is always finished (or cancelled) before the next is due.
+	Timeout time.Duration
 
 	mu   sync.Mutex
 	last map[string]edgeState // repo → last emitted Kind + SHA
@@ -61,6 +75,11 @@ type edgeState struct {
 
 // Run blocks, ticking every p.Interval until ctx is cancelled. Each tick
 // checks every configured repo and emits a Signal only on Kind change.
+//
+// Ticks are serial: tick is called synchronously and bounded by
+// p.Timeout (see tickTimeout), which defaults to under one interval, so
+// a tick always ends before the next is due and slow ticks can neither
+// stack up nor wedge the loop.
 func (p *Poller) Run(ctx context.Context) {
 	interval := p.Interval
 	if interval <= 0 {
@@ -79,8 +98,37 @@ func (p *Poller) Run(ctx context.Context) {
 	}
 }
 
+// tickTimeoutRatio is the fraction of Interval a tick gets to finish in
+// when Timeout is unset. It is deliberately the same fraction the "tick
+// slow" warn already used: the point at which a tick was considered too
+// slow to be healthy is now also the point at which it is abandoned, so
+// an overrun is both bounded and logged instead of silent.
+const tickTimeoutRatio = 0.8
+
+// defaultTickTimeout bounds a tick when neither Timeout nor a positive
+// interval is available (a direct tick call in a test, say).
+const defaultTickTimeout = 30 * time.Second
+
+// tickTimeout is the deadline one tick gets.
+func (p *Poller) tickTimeout(interval time.Duration) time.Duration {
+	if p.Timeout > 0 {
+		return p.Timeout
+	}
+	if interval > 0 {
+		return time.Duration(float64(interval) * tickTimeoutRatio)
+	}
+	return defaultTickTimeout
+}
+
 func (p *Poller) tick(ctx context.Context, interval time.Duration) {
 	start := time.Now()
+	timeout := p.tickTimeout(interval)
+	// One deadline for the whole tick, shared by every Check it starts:
+	// without it a gate that never returns blocks Run's ticker loop and
+	// the gate stops polling entirely.
+	tickCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	n := p.Parallelism
 	if n <= 0 {
 		n = 8
@@ -94,15 +142,25 @@ func (p *Poller) tick(ctx context.Context, interval time.Duration) {
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
-			case <-ctx.Done():
+			case <-tickCtx.Done():
 				return
 			}
-			p.checkOne(ctx, repo)
+			p.checkOne(tickCtx, repo)
 		}(repo)
 	}
 	wg.Wait()
 	elapsed := time.Since(start)
-	if interval > 0 && elapsed > time.Duration(float64(interval)*0.8) {
+	switch {
+	case ctx.Err() != nil:
+		// Daemon shutdown, not a gate problem.
+	case tickCtx.Err() != nil:
+		// The loud case. A Prometheus (or ArgoCD, or probe Job) that
+		// stops answering has to be visible to an operator, because the
+		// gate's verdict for this tick is "unknown", not "healthy".
+		p.Log.Error("poller tick timed out",
+			"gate", p.Gate.Name(), "timeout", timeout, "elapsed", elapsed,
+			"interval", interval, "repos", len(p.Repos))
+	case interval > 0 && elapsed > time.Duration(float64(interval)*tickTimeoutRatio):
 		p.Log.Warn("poller tick slow",
 			"gate", p.Gate.Name(), "elapsed", elapsed, "interval", interval, "repos", len(p.Repos))
 	}
