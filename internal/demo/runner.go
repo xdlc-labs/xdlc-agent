@@ -14,16 +14,29 @@ import (
 // pushing develop — same shape as dispatch_test's fakeRunner.
 type fakeRunner struct{}
 
-func (f *fakeRunner) Run(ctx context.Context, dir, _ string, _ []string) (string, error) {
+// extraEnv is the same environment a real coding agent gets from
+// dispatch (repos.Manager.AuthEnv: the git credential plus the
+// committer identity), and it is applied rather than ignored on
+// purpose — a demo that committed under an identity xdlc did not supply
+// would pass on a laptop with a ~/.gitconfig and hide the fact that a
+// daemon without one cannot commit at all.
+func (f *fakeRunner) Run(ctx context.Context, dir, _ string, extraEnv []string) (string, error) {
 	path := filepath.Join(dir, "add.go")
 	const fixed = "package demo\n\nfunc Add(a, b int) int { return a + b }\n"
 	if err := os.WriteFile(path, []byte(fixed), 0o644); err != nil { //nolint:gosec // G306: demo fixture tree
 		return "", err
 	}
-	if out, err := exec.CommandContext(ctx, "git", "-C", dir, "add", "add.go").CombinedOutput(); err != nil { //nolint:gosec // G204: fixed git args
+	git := func(args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // G204: fixed git args
+		if len(extraEnv) > 0 {
+			cmd.Env = append(os.Environ(), extraEnv...)
+		}
+		return cmd.CombinedOutput()
+	}
+	if out, err := git("add", "add.go"); err != nil {
 		return string(out), fmt.Errorf("fake runner: git add: %w: %s", err, out)
 	}
-	if out, err := exec.CommandContext(ctx, "git", "-C", dir, "commit", "-m", "fix: Add returns a+b").CombinedOutput(); err != nil { //nolint:gosec // G204: fixed git args
+	if out, err := git("commit", "-m", "fix: Add returns a+b"); err != nil {
 		return string(out), fmt.Errorf("fake runner: git commit: %w: %s", err, out)
 	}
 	// No push: the demo runs with per-Fix worktrees on, like a real

@@ -141,6 +141,11 @@ func daemonCmd() *cobra.Command {
 			audit.Metrics = &metrics
 
 			repoMgr := repos.NewManager("repos", cfg.Repos, tokens)
+			// Without this the coding agent's `git commit` — the only way
+			// a Fix hands work back in worktree mode — fails outright
+			// wherever the daemon has no git identity of its own, which
+			// includes the shipped container (uid 65532, empty HOME).
+			repoMgr.SetCommitter(cfg.Agent.Committer.Name, cfg.Agent.Committer.Email)
 			runner := subagent.NewSubprocessRunner(subagent.Provider(cfg.Agent.Provider), cfg.Agent.Binary, cfg.Agent.Args, cfg.Agent.Timeout, cfg.Agent.ExtraEnvKeys)
 			disp := dispatch.New(repoMgr, runner, log)
 			disp.Metrics = &metrics
@@ -930,7 +935,7 @@ type scannedRepo struct {
 	Name   string // config short name (directory name)
 	GitHub string // owner/repo from the origin remote
 	Dir    string // absolute path to the checkout
-	Branch string // current branch, when it is not the default
+	Branch string // branch to watch; "" → repos.DefaultBranch
 }
 
 // scanRepos finds Git checkouts one level under root that have a GitHub
@@ -962,14 +967,39 @@ func scanRepos(ctx context.Context, root string) ([]scannedRepo, error) {
 		if err != nil {
 			abs = dir
 		}
-		branch, _ := gitOutput(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
-		if branch == "develop" || branch == "HEAD" {
-			branch = "" // develop is the daemon default; detached HEAD is not a branch
-		}
-		out = append(out, scannedRepo{Name: ent.Name(), GitHub: ownerRepo, Dir: abs, Branch: branch})
+		out = append(out, scannedRepo{
+			Name: ent.Name(), GitHub: ownerRepo, Dir: abs,
+			Branch: defaultBranchOf(ctx, dir),
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// defaultBranchOf reports the branch a scanned checkout's CI runs on:
+// the remote's own default (origin/HEAD, recorded by `git clone`) when
+// git knows it, else whatever is currently checked out, else the
+// daemon's repos.DefaultBranch.
+//
+// The answer is written into the generated config unconditionally, even
+// when it equals the default. A visible guess an operator can correct
+// beats an absent key: repos[].branch is the filter every workflow_run
+// delivery is matched against, and a repo whose trunk is "main" under
+// the "develop" default drops every delivery with nothing to show for
+// it but a 204 on GitHub's side.
+func defaultBranchOf(ctx context.Context, dir string) string {
+	if ref, err := gitOutput(ctx, dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		if b := strings.TrimPrefix(ref, "origin/"); b != "" && b != "HEAD" {
+			return b
+		}
+	}
+	// symbolic-ref rather than `rev-parse --abbrev-ref`: it answers on a
+	// branch with no commits yet, and fails outright on a detached HEAD
+	// instead of reporting the literal "HEAD" as if it were a branch.
+	if b, err := gitOutput(ctx, dir, "symbolic-ref", "--short", "HEAD"); err == nil && b != "" && b != "HEAD" {
+		return b
+	}
+	return repos.DefaultBranch
 }
 
 func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {

@@ -138,11 +138,22 @@
         },
         "fix_reverify": { "type": "boolean" },
         "fix_reverify_attempts": { "type": "integer" },
+        "fix_budget": { "type": "string", "description": "Soft deadline for one Fix run (Go duration). 0 or unset = unlimited." },
         "fix_reverify_interval": { "type": "string" },
         "ci_rerun_before_fix": { "type": "boolean" },
         "fix_plan": { "type": "boolean" },
         "rules_file": { "type": "string" },
-        "sessions": { "$ref": "#/$defs/Sessions" }
+        "sessions": { "$ref": "#/$defs/Sessions" },
+        "committer": { "$ref": "#/$defs/Committer" }
+      }
+    },
+    "Committer": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Git identity Fix commits are attributed to. Both optional: an identity in the environment (GIT_AUTHOR_NAME etc.) or in git's own config wins. Defaults to xdlc-agent <xdlc-agent@users.noreply.github.com>.",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" }
       }
     },
     "Sessions": {

@@ -69,8 +69,14 @@ type Server struct {
 	BranchFor func(repo string) string
 	// DefaultBranch is the branch filter used when BranchFor is nil or
 	// returns "". Empty means "no branch configured", and workflow_run
-	// deliveries are then rejected rather than defaulted — this handler
-	// does not get to guess which branch is a repo's trunk.
+	// deliveries are then rejected rather than defaulted.
+	//
+	// It is not a guess at the repo's trunk, and the handler never makes
+	// one: the wired-up daemon passes repos.DefaultBranch ("develop"),
+	// which is a *configuration* default that repos[].branch overrides,
+	// and a delivery on any other branch is dropped with a WARN naming
+	// both branches. `xdlc init` therefore scaffolds repos[].branch
+	// explicitly — a repo on "main" must say so.
 	DefaultBranch string
 	// CIWorkflows is an allowlist of GitHub Actions workflow names or
 	// file basenames. Empty means every completed push workflow_run on
@@ -238,6 +244,17 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if evt.WorkflowRun.HeadBranch != branch {
+		// Warn, not Debug: this is the one rejection here that is far
+		// more often a misconfiguration than a routine skip. GitHub
+		// reports the delivery as accepted, so a repo whose trunk is
+		// "main" while repos[].branch still says "develop" is otherwise
+		// indistinguishable from "CI has not run yet" — no signal, no
+		// history row, and nothing in the log to look at.
+		s.Log.Warn("github webhook: branch mismatch, dropping delivery",
+			"repo", repo,
+			"repository", evt.Repository.FullName,
+			"head_branch", evt.WorkflowRun.HeadBranch,
+			"configured_branch", branch)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
+	"github.com/xdlc-labs/xdlc-agent/internal/repos"
 	"github.com/xdlc-labs/xdlc-agent/internal/validate"
 )
 
@@ -155,4 +156,148 @@ func initRepo(t *testing.T, dir, remote string) {
 	if remote != "" {
 		run("remote", "add", "origin", remote)
 	}
+}
+
+// Every scaffolded config must be one the daemon will actually start on:
+// the profiles pair addr with require_webhook_secret: false, so addr has to
+// be loopback or enforceWebhookSecrets rejects it on `xdlc daemon`.
+func TestScaffoldedConfigsAreStartable(t *testing.T) {
+	found := []scannedRepo{{Name: "api", GitHub: "acme/api", Dir: "/src/api"}}
+	for _, profile := range []string{"ci", "gitops", "full"} {
+		bodies := map[string]string{
+			"starter": starterYAML(profile),
+			"scan":    configFromScan(found, profile),
+		}
+		for kind, body := range bodies {
+			name := profile + "/" + kind
+			if !strings.Contains(body, `addr: "127.0.0.1:8080"`) {
+				t.Errorf("%s: want loopback addr in scaffolded config:\n%s", name, body)
+			}
+			if strings.Contains(body, `addr: ":8080"`) {
+				t.Errorf("%s: scaffolded addr must not be all-interfaces:\n%s", name, body)
+			}
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Errorf("%s load: %v", name, err)
+				continue
+			}
+			if err := enforceWebhookSecrets(cfg); err != nil {
+				t.Errorf("%s: daemon would refuse to start: %v", name, err)
+			}
+		}
+	}
+}
+
+// TestScaffoldedConfigsSetBranchExplicitly is the release-blocker
+// regression: `xdlc init` used to write a repos[] entry with no
+// `branch:` key at all, so the "develop" default applied silently. A
+// repo whose trunk is "main" then had every workflow_run delivery
+// dropped while GitHub reported 204 success. The key must be present
+// (and commented) in every scaffold so the mismatch is visible before
+// it costs anyone a day.
+func TestScaffoldedConfigsSetBranchExplicitly(t *testing.T) {
+	found := []scannedRepo{{Name: "api", GitHub: "acme/api", Dir: "/src/api", Branch: "main"}}
+	for _, profile := range []string{"ci", "gitops", "full"} {
+		bodies := map[string]string{
+			"starter": starterYAML(profile),
+			"scan":    configFromScan(found, profile),
+		}
+		for kind, body := range bodies {
+			name := profile + "/" + kind
+			if !strings.Contains(body, "branch:") {
+				t.Errorf("%s: repos[] entry has no explicit branch key:\n%s", name, body)
+				continue
+			}
+			if !strings.Contains(body, branchNote) {
+				t.Errorf("%s: branch key is not annotated with why it matters:\n%s", name, body)
+			}
+			// The key has to land inside the repos[] entry, not somewhere
+			// under gates: or agent:.
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Errorf("%s load: %v", name, err)
+				continue
+			}
+			if len(cfg.Repos) == 0 || cfg.Repos[0].Branch == "" {
+				t.Errorf("%s: parsed repos[0].branch is empty:\n%s", name, body)
+			}
+		}
+	}
+
+	// A scan of a checkout on "main" must write main, not the default.
+	scan := configFromScan(found, "ci")
+	if !strings.Contains(scan, "branch: main") {
+		t.Errorf("--scan must carry the checkout's own branch:\n%s", scan)
+	}
+	// And a checkout whose branch could not be determined still gets an
+	// explicit key rather than none.
+	blank := configFromScan([]scannedRepo{{Name: "api", GitHub: "acme/api", Dir: "/src/api"}}, "ci")
+	if !strings.Contains(blank, "branch: "+repos.DefaultBranch) {
+		t.Errorf("--scan must fall back to an explicit default branch:\n%s", blank)
+	}
+}
+
+// TestDefaultBranchOfPrefersRemoteDefault: the branch written into the
+// scaffold should be the branch CI runs on, which is the remote's
+// default — not whatever the operator happens to have checked out.
+func TestDefaultBranchOfPrefersRemoteDefault(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	ctx := context.Background()
+
+	// No origin/HEAD and no commits: falls back to the initial branch.
+	plain := filepath.Join(t.TempDir(), "plain")
+	if out, err := exec.CommandContext(ctx, "git", "init", "-q", "-b", "trunk", plain).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if got := defaultBranchOf(ctx, plain); got != "trunk" {
+		t.Errorf("defaultBranchOf(no origin/HEAD) = %q, want the checked-out branch", got)
+	}
+
+	// With origin/HEAD recorded (what `git clone` leaves behind), that
+	// wins over the currently checked-out branch.
+	run := func(dir string, args ...string) {
+		t.Helper()
+		if out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+	}
+	run(plain, "remote", "add", "origin", "https://github.com/acme/api.git")
+	run(plain, "update-ref", "refs/remotes/origin/main", emptyCommit(t, plain))
+	run(plain, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	run(plain, "checkout", "-q", "-b", "feature/local")
+	if got := defaultBranchOf(ctx, plain); got != "main" {
+		t.Errorf("defaultBranchOf = %q, want the remote default \"main\"", got)
+	}
+
+	// Not a git repo at all: the daemon default, never "".
+	if got := defaultBranchOf(ctx, t.TempDir()); got != repos.DefaultBranch {
+		t.Errorf("defaultBranchOf(non-repo) = %q, want %q", got, repos.DefaultBranch)
+	}
+}
+
+// emptyCommit creates one commit in dir and returns its SHA, supplying
+// the identity so it works on a machine with no git config of its own.
+func emptyCommit(t *testing.T, dir string) string {
+	t.Helper()
+	cmd := exec.CommandContext(context.Background(), "git", "-C", dir,
+		"commit", "-q", "--allow-empty", "-m", "init")
+	cmd.Env = append(os.Environ(), repos.CommitterEnv("", "")...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, out)
+	}
+	sha, err := gitOutput(context.Background(), dir, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sha
 }

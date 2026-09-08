@@ -6,6 +6,33 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The coding agent could not commit in the published container**, so a containerized Fix delivered nothing and was still recorded as clean. With `agent.worktree` on (the default) the agent's own `git commit` is the entire delivery mechanism, but the image has no git identity: as uid 65532 with no `.gitconfig`, `git commit` fails with `Author identity unknown`. The daemon now supplies `GIT_AUTHOR_*` / `GIT_COMMITTER_*` to the agent subprocess and its own git calls, configurable as `agent.committer.name` / `.email` and defaulting to `xdlc-agent <xdlc-agent@users.noreply.github.com>`. An identity already present in the environment or in git's own config still wins, so a bot identity is never overridden. Both images also carry a system `/etc/gitconfig` default. `xdlc demo` had been hiding this by setting a repo-local identity for its own throwaway repos
+- **A branch mismatch dropped every webhook delivery silently.** `repos[].branch` defaults to `develop` and `xdlc init` wrote no `branch:` key, so pointing xdlc at a `main`-trunk repository produced: GitHub reporting each delivery as accepted, no log line, no signal, and no way to tell it apart from "CI has not run yet". The mismatch is now logged at warn with both branches, `xdlc init` scaffolds an explicit `branch:` (`--scan` detects the checkout's real default), and `config.example.yaml` says it must match the branch CI runs on and is never guessed. The default value is unchanged
+- **A Fix that succeeded could be recorded as failed.** In worktree mode the prompt tells the agent not to push, while the verdict contract said to report `fixed` "only if you committed and pushed". An agent that followed both landed on `needs_human`, which is non-retryable, so the Fix failed with `escalate=agent_needs_human` even though the commit, push and PR had all worked. The verdict criterion now matches the hand-back each mode actually asks for, and a test asserts the two can never drift apart again
+- **The documented first run could not start.** `xdlc init` scaffolded `server.addr: ":8080"` with `require_webhook_secret: false`, `xdlc doctor` reported "all checks passed", and then `xdlc daemon` refused to boot: `require_webhook_secret must be true when listening on ":8080" (non-loopback)`. All six `init` scaffolds and `config.example.yaml` now bind `127.0.0.1:8080`, which is what the README already tells you to open, and the comment spells out what to change before binding a non-loopback address
+- `xdlc doctor` gained a **webhook secret for listen addr** check so doctor and the daemon can no longer disagree about whether a config will start. It calls the daemon's own predicate rather than restating the rule
+- A flaky `internal/session` test. `Start` fires a rate-limited background prune that is ungated on a fresh store, so it raced `TestPruneDropsOldSessions` for the stale directory and the explicit `Prune()` then had nothing to remove (`want 1 pruned, got 0`, roughly once per 30 package runs). Test-only: the daemon tolerates a concurrent prune. The test now claims the rate limit so it owns the only prune
+- The documented curl install is piped into **bash**, not `sh`. `scripts/install.sh` uses `set -o pipefail`, which dash rejects outright, so `curl … | sh` died with `set: Illegal option -o pipefail` before doing anything on Debian and Ubuntu, where `/bin/sh` is dash. The script itself was fine; only the documented invocation was wrong
+- Console **Settings** no longer reads as one coding-agent control and a broken echo of it. The browser-local Manual Fix override and the daemon's `agent.provider` default are now two labelled, visually distinct cards, the daemon one explicitly read-only with the "edit config.yaml and restart" instruction. When the two differ, a calm note says which one wins for a Manual Fix from this browser instead of leaving what looked like a failed save (#29)
+
+### Added
+
+- `agent.committer.name` / `agent.committer.email` — the git identity Fix commits are attributed to
+- A schema-coverage test asserting every yaml key the daemon accepts appears in `schema/config.schema.json`. The existing drift test compared only top-level keys, so it could not see a nested one: `agent.fix_budget` was documented in `config.example.yaml` and read by the daemon while the schema's `additionalProperties: false` rejected it, meaning an editor flagged a config the daemon loads happily. `fix_budget` is now in the schema
+- `scripts/check-version-refs.sh`, run in CI: every copy-pasteable release reference in the README and the hosted install / deployment / getting-started guides must match the Helm chart's `appVersion`. The install snippets had drifted to `0.0.1-beta.1` and `0.0.1-beta.2` while the README was on `0.0.1-beta.4`, so a new user's first `docker run` pulled a stale image
+- Airlock runs on pull requests (`.github/workflows/airlock.yml`)
+- [ROADMAP.md](ROADMAP.md) — what is planned next, and what is deliberately out of scope; linked from the README
+- [RELEASING.md](RELEASING.md) — the release checklist, including the manual GHCR package-visibility step that CI cannot do and the from-source image build's disk and podman requirements
+
+### Changed
+
+- Install and deployment guides pin the current release (`0.0.1-beta.4`) consistently
+- The container and Kubernetes paths document that they need `server.require_webhook_secret: true` plus a `GITHUB_WEBHOOK_SECRET`, since a container never binds loopback. The Helm chart already set it
+- The README no longer explains a GHCR `unauthorized` as a missing tag; the tags exist, the package is not public
+- `deploy/Dockerfile.release` no longer points at `scripts/bootstrap-local.sh`, which does not exist
+
 ## [0.0.1-beta.4] - 2026-09-07
 
 ### Fixed

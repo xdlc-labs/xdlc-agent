@@ -19,7 +19,10 @@ type Outcome string
 
 // The Outcome values a Fix agent may report.
 const (
-	// OutcomeFixed: the agent believes it fixed the failure and pushed.
+	// OutcomeFixed: the agent believes it fixed the failure and handed
+	// the change back the way its prompt asked — committed and pushed,
+	// or (worktree mode) committed for xdlc to push. See
+	// verdictInstruction.
 	OutcomeFixed Outcome = "fixed"
 	// OutcomeGaveUp: not fixable from this repo alone; BACKLOG note left.
 	OutcomeGaveUp Outcome = "gave_up"

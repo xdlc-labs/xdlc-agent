@@ -222,3 +222,78 @@ func TestBuildFixPromptRetryWithoutPrevSummary(t *testing.T) {
 		t.Fatalf("missing no-summary wording:\n%s", p)
 	}
 }
+
+// TestVerdictCriterionMatchesHandBack is the release-blocker
+// regression: the action and the verdict contract are two halves of one
+// instruction, and they used to disagree. In worktree mode fixAction
+// forbids pushing ("xdlc pushes your commits where they belong") while
+// the verdict said `fixed` required "committed and pushed" — so an
+// agent that obeyed had no honest way to claim success, fell back to
+// needs_human, and dispatch failed a Fix whose commit, push and PR had
+// all actually worked.
+//
+// The invariant, asserted per mode: whenever the action forbids pushing,
+// the verdict must not require one, and whenever the action demands a
+// push, the verdict must say so.
+func TestVerdictCriterionMatchesHandBack(t *testing.T) {
+	ev := map[string]any{"x": 1}
+	cases := []struct {
+		name string
+		req  FixRequest
+	}{
+		{"direct", FixRequest{Repo: "svc", Reason: "fail", Evidence: ev}},
+		{"direct-explicit", FixRequest{Repo: "svc", Reason: "fail", Evidence: ev, Mode: "direct"}},
+		{"pr", FixRequest{Repo: "svc", Reason: "fail", Evidence: ev, Mode: "pr", PRBranch: "xdlc-fix-1"}},
+		{"worktree-direct", FixRequest{Repo: "svc", Reason: "fail", Evidence: ev, NoPush: true}},
+		{"worktree-pr", FixRequest{Repo: "svc", Reason: "fail", Evidence: ev, Mode: "pr", PRBranch: "xdlc-fix-1", NoPush: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			action := fixAction(tc.req.Mode, tc.req.PRBranch, false, tc.req.NoPush)
+			verdict := verdictInstruction(tc.req.NoPush)
+			prompt := BuildFixPrompt(tc.req)
+
+			if !strings.Contains(prompt, action) || !strings.Contains(prompt, verdict) {
+				t.Fatalf("prompt does not carry both halves:\n%s", prompt)
+			}
+			// The criterion for "fixed" must always include committing:
+			// that is the hand-back in every mode.
+			if !strings.Contains(verdict, "committed") {
+				t.Errorf("verdict does not name committing as the criterion:\n%s", verdict)
+			}
+
+			forbidsPush := strings.Contains(action, "Do NOT push, do NOT create")
+			demandsPush := !forbidsPush
+			requiresPush := strings.Contains(verdict, "committed and pushed")
+
+			switch {
+			case forbidsPush && requiresPush:
+				t.Errorf("action forbids pushing but the verdict requires it — an "+
+					"obedient agent cannot report %q:\naction: %s\nverdict: %s",
+					OutcomeFixed, action, verdict)
+			case demandsPush && !requiresPush:
+				t.Errorf("action demands a push but the verdict does not — a Fix that "+
+					"only committed would be reported as fixed:\naction: %s\nverdict: %s",
+					action, verdict)
+			}
+			if forbidsPush && !strings.Contains(verdict, "xdlc's job") {
+				t.Errorf("worktree verdict should say who does push:\n%s", verdict)
+			}
+		})
+	}
+}
+
+// The retry block is written for every mode, so it must not claim the
+// previous attempt did something that mode forbade.
+func TestRetryBlockDoesNotClaimTheAgentPushed(t *testing.T) {
+	p := BuildFixPrompt(FixRequest{
+		Repo: "svc", Reason: "fail", Evidence: map[string]any{"x": 1}, NoPush: true,
+		Retry: &RetryContext{Attempt: 2, MaxAttempts: 2, GateFailure: "still red"},
+	})
+	if strings.Contains(p, "already ran, pushed") {
+		t.Errorf("retry block credits the agent with a push it was told not to make:\n%s", p)
+	}
+	if !strings.Contains(p, "its work landed on the branch") {
+		t.Errorf("retry block should still say the previous attempt's work reached the branch:\n%s", p)
+	}
+}

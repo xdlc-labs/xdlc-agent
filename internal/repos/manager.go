@@ -55,6 +55,13 @@ type Manager struct {
 	baseMu   sync.Mutex
 	baseLock map[string]*sync.Mutex
 
+	// committerName/committerEmail are config.yaml's agent.committer,
+	// the fallback git identity AuthEnv hands every git subprocess and
+	// the coding agent. Empty means "use the package defaults"; see
+	// CommitterEnv for the full precedence.
+	committerName  string
+	committerEmail string
+
 	// live marks worktree directories belonging to a Fix that is still
 	// running, so PruneWorktrees cannot sweep one out from under it.
 	liveMu sync.Mutex
@@ -103,6 +110,19 @@ func NewManager(root string, cfgRepos []config.Repo, tokens ghclient.TokenProvid
 		m.repos[r.Name] = r
 	}
 	return m
+}
+
+// SetCommitter sets the git identity (config.yaml's agent.committer)
+// used for commits xdlc or its coding agent make. Either argument may be
+// empty to keep the DefaultCommitterName / DefaultCommitterEmail
+// fallback; an identity already present in the environment or in git's
+// own config still wins over both (see CommitterEnv).
+//
+// A setter rather than a NewManager parameter: every caller that does
+// not care about commit authorship — the pollers, the console, the
+// tests — should not have to name it.
+func (m *Manager) SetCommitter(name, email string) {
+	m.committerName, m.committerEmail = name, email
 }
 
 // Resolve maps a GitHub full name (org/repo) or config short name to
@@ -224,18 +244,24 @@ func (m *Manager) AgentInstructions(repo string) string {
 	return m.repos[repo].AgentInstructions
 }
 
-// AuthEnv returns the extra environment variables that authenticate git
-// against GitHub, for any git command that touches the network (clone,
-// fetch, push). See AuthEnv (package-level) for how the credential is
-// carried — never in argv or the remote URL, so it can't leak into `ps`,
-// `git remote -v`, or a git error message. Refreshes App installation
-// tokens when needed.
+// AuthEnv returns the extra environment variables to hand any git
+// subprocess — and the coding agent, which runs git itself: the
+// credential that authenticates against GitHub for commands that touch
+// the network (clone, fetch, push), plus the committer identity every
+// command that *writes* a commit needs (the agent's Fix commit, revert,
+// the promote tag carry).
+//
+// See AuthEnv (package-level) for how the credential is carried — never
+// in argv or the remote URL, so it can't leak into `ps`, `git remote
+// -v`, or a git error message. App installation tokens are refreshed
+// when needed. Unauthenticated use still gets the identity: a missing
+// token means "can't reach GitHub", not "can't commit".
 func (m *Manager) AuthEnv() []string {
-	tok, err := m.tokens.Token()
-	if err != nil || tok == "" {
-		return nil
+	var env []string
+	if tok, err := m.tokens.Token(); err == nil && tok != "" {
+		env = AuthEnv(tok)
 	}
-	return AuthEnv(tok)
+	return append(env, CommitterEnv(m.committerName, m.committerEmail)...)
 }
 
 // AuthEnv builds git config-via-environment variables that inject an

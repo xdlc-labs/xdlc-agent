@@ -76,6 +76,21 @@ func Config(cfg *config.Config) []Issue {
 			"agent.fix_attempts %d is negative; use 1 (single shot) or higher", cfg.Agent.FixAttempts)})
 	}
 
+	// A malformed committer identity is not caught until the coding
+	// agent's `git commit` fails inside a worktree, which reads as "the
+	// Fix produced nothing" rather than "the config is wrong".
+	if name := cfg.Agent.Committer.Name; name != strings.TrimSpace(name) || strings.ContainsAny(name, "<>\n") {
+		issues = append(issues, Issue{Message: fmt.Sprintf(
+			"agent.committer.name %q is not usable as a git author name "+
+				"(no angle brackets, newlines, or leading/trailing spaces)", name)})
+	}
+	if email := cfg.Agent.Committer.Email; email != "" {
+		if email != strings.TrimSpace(email) || strings.ContainsAny(email, "<> \n") || !strings.Contains(email, "@") {
+			issues = append(issues, Issue{Message: fmt.Sprintf(
+				"agent.committer.email %q is not an email address git will accept", email)})
+		}
+	}
+
 	if cfg.Server.OIDC.Enabled() {
 		// Static checks only — authn.New (network-dependent: discovery +
 		// JWKS) does the rest at daemon startup and fails closed there.

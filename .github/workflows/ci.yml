@@ -28,6 +28,8 @@ jobs:
           go test ./internal/api -run TestOpenAPI -count=1
           go test ./internal/config -run TestSchema -count=1
       - run: go run ./cmd/xdlc-agent validate --config config.example.yaml
+      - name: Release reference drift (docs vs chart appVersion)
+        run: ./scripts/check-version-refs.sh
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest $GO_PKGS
 

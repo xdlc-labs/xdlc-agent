@@ -182,6 +182,15 @@ func TestPruneDropsOldSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Start fires `go pruneAsync()`, which is rate-limited by lastPrune but
+	// ungated on a fresh store, so that goroutine would race the explicit
+	// Prune below for the stale directory and leave it with nothing to
+	// remove. Claim the rate limit up front so this test owns the only
+	// prune, and the returned count is the one being asserted.
+	st.pruneMu.Lock()
+	st.lastPrune = time.Now()
+	st.pruneMu.Unlock()
+
 	old, err := st.Start(Meta{Repo: "svc"})
 	if err != nil {
 		t.Fatal(err)

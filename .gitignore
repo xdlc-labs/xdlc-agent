@@ -66,4 +66,4 @@ secrets.yml
 
 # Go vendoring — this project uses modules, not a committed vendor tree
 /vendor/
-PLAN.md
+plan.md
