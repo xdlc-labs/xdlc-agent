@@ -16,6 +16,7 @@ import (
 
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/xdlc-labs/xdlc-agent/internal/fixstate"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/otel"
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
@@ -60,6 +61,9 @@ type Dispatcher struct {
 	// Sessions records each Fix's prompt, output and diff to disk.
 	// nil (or a nil *session.Store) disables recording.
 	Sessions *session.Store
+	// Fixes publishes what each in-flight Fix is doing, for the console's
+	// live view. nil disables the reporting and changes nothing else.
+	Fixes *fixstate.Tracker
 	// PriorFixes is how many earlier finished sessions for this repo and
 	// source are summarized into the Fix prompt. 0 disables the block;
 	// it needs Sessions, since the recordings on disk are what it reads.
@@ -152,6 +156,15 @@ func (d *Dispatcher) repoFixSem(repo string) chan struct{} {
 // committed nothing, and the orchestrator must not record that commit as
 // fixed (issue #34).
 func (d *Dispatcher) Fix(ctx context.Context, s orchestrator.Signal) (orchestrator.FixResult, error) {
+	// The live row opens here, before the queue wait, because "queued
+	// behind two other Fixes" is exactly what fix_queue_depth could not
+	// say. The id is dispatch's own and outlives the session id, which
+	// does not exist until the recording starts further in.
+	track := &fixTrack{tracker: d.Fixes, id: newRunID(s.Repo)}
+	track.to(fixstate.Queued, fixstate.Fix{
+		Repo: s.Repo, Source: string(s.Source), Provider: d.DefaultProvider,
+	})
+
 	d.fixWaiting.Add(1)
 	if d.Metrics != nil {
 		d.Metrics.FixQueueDepth.Add(ctx, 1)
@@ -165,6 +178,7 @@ func (d *Dispatcher) Fix(ctx context.Context, s orchestrator.Signal) (orchestrat
 			d.Metrics.FixQueueDepth.Add(ctx, -1)
 			d.Metrics.FixQueueWait.Record(ctx, wait.Seconds())
 		}
+		track.done(err)
 		return orchestrator.FixResult{}, err
 	}
 	d.fixInflight.Add(1)
@@ -186,9 +200,42 @@ func (d *Dispatcher) Fix(ctx context.Context, s orchestrator.Signal) (orchestrat
 	}
 
 	start := time.Now()
-	res, err := d.fixInner(ctx, s)
+	res, err := d.fixInner(ctx, s, track)
 	d.observe("fix", start, err)
+	track.done(err)
 	return res, err
+}
+
+// fixTrack is one Fix's handle on the live-state tracker. It exists so
+// the seven transition points inside Fix read as one line each and none
+// of them has to restate the repo, the source or the provider.
+//
+// A zero tracker makes every method a no-op, which is the case when the
+// console is not wired up.
+type fixTrack struct {
+	tracker *fixstate.Tracker
+	id      string
+}
+
+// to publishes a state change. patch carries only the fields this
+// transition learned — a session id, a provider chosen by routing, an
+// attempt number; the tracker keeps the rest.
+func (ft *fixTrack) to(state fixstate.State, patch fixstate.Fix) {
+	if ft == nil || ft.tracker == nil {
+		return
+	}
+	patch.ID = ft.id
+	patch.State = state
+	ft.tracker.Set(patch)
+}
+
+// done closes the row with the outcome the audit row will record.
+func (ft *fixTrack) done(err error) {
+	state := fixstate.OK
+	if err != nil {
+		state = fixstate.Error
+	}
+	ft.to(state, fixstate.Fix{})
 }
 
 // acquireFixSlot takes per-repo (cap 1) then global fixSem. release frees both.
@@ -234,7 +281,8 @@ func (d *Dispatcher) SetWorktree(enabled bool, keepFailed time.Duration) {
 	d.WorktreeKeepFailed = keepFailed
 }
 
-func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res orchestrator.FixResult, err error) {
+func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track *fixTrack) (res orchestrator.FixResult, err error) {
+	track.to(fixstate.Cloning, fixstate.Fix{})
 	if err := d.Repos.EnsureCloned(ctx, s.Repo); err != nil {
 		return res, fmt.Errorf("dispatch: fix: %w", err)
 	}
@@ -283,6 +331,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res o
 	if s.Evidence != nil {
 		s.Evidence["agent_provider"] = provider
 	}
+	track.to(fixstate.Cloning, fixstate.Fix{Provider: provider})
 
 	// Session recording: the prompt the agent got, everything it printed,
 	// and the patch it left behind. Best-effort throughout — a recorder
@@ -311,6 +360,10 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res o
 			if s.Evidence != nil && sess.ID() != "" {
 				s.Evidence["session_id"] = sess.ID()
 			}
+			// The row keeps its own id, so the console does not lose the
+			// Fix it has been watching; the session id rides along as the
+			// link to the recording.
+			track.to(fixstate.Cloning, fixstate.Fix{SessionID: sess.ID()})
 		}
 	}
 	runID := sess.ID()
@@ -399,6 +452,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res o
 	// would pay for the same diagnosis twice.
 	plan := ""
 	if d.FixPlan {
+		track.to(fixstate.Planning, fixstate.Fix{})
 		plan, err = d.runPlanPass(ctx, s, sess, dir, reason, evidence, teamRules, runner, authEnv)
 		if err != nil {
 			d.recordLesson(s, "error", reason)
@@ -454,6 +508,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res o
 			d.Log.Warn("session prompt write failed", "repo", s.Repo, "error", werr)
 		}
 
+		track.to(fixstate.Fixing, fixstate.Fix{Attempt: attempt})
 		subStart := time.Now()
 		// Inject git AuthEnv (GIT_CONFIG_* http.extraHeader) so the subagent
 		// can `git push` without GITHUB_TOKEN in its allowlist — same credential
@@ -498,6 +553,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res o
 		// daemon's, so it happens here — before the gate re-check, which
 		// has nothing to look at until the code is on the branch.
 		if wt != nil {
+			track.to(fixstate.Pushing, fixstate.Fix{Attempt: attempt})
 			target := d.Repos.Branch(s.Repo)
 			if prBranch != "" {
 				target = prBranch
@@ -525,6 +581,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res o
 		if d.Reverify == nil {
 			break
 		}
+		track.to(fixstate.Verifying, fixstate.Fix{Attempt: attempt})
 		revEvidence, rerr := d.Reverify(ctx, s)
 		if rerr == nil {
 			if s.Evidence != nil {
@@ -788,9 +845,12 @@ func lessonSymptom(reason string, v subagent.Verdict, err error) string {
 // which would otherwise collide for two Fixes started in the same second.
 var runIDSeq atomic.Int64
 
-// newRunID names a Fix run when session recording is off. With recording
-// on the session store allocates the id instead, so the worktree and the
-// recording share one name.
+// newRunID names a Fix run when session recording is off, and keys the
+// console's live row from the moment the Fix is queued — before a
+// session directory exists. With recording on the session store
+// allocates its own id, so the worktree and the recording share one
+// name; the live row keeps this one and carries the session id as a
+// field, rather than changing key mid-run and splitting into two rows.
 func newRunID(repo string) string {
 	return fmt.Sprintf("%s-%d", session.NewID(time.Now().UTC(), repo), runIDSeq.Add(1))
 }

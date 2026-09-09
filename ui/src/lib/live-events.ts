@@ -21,6 +21,13 @@ export function useLiveEvents(queryClient: QueryClient) {
       const tok = getToken();
       const url = tok ? `${eventsURL()}?access_token=${encodeURIComponent(tok)}` : eventsURL();
       es = new EventSource(url);
+      // Fix state transitions ride the same stream under a named event.
+      // The live list is small and cheap to refetch, so a transition
+      // just invalidates it rather than patching a local copy that
+      // could drift from what the daemon actually has.
+      es.addEventListener("fix_state", () => {
+        void queryClient.invalidateQueries({ queryKey: ["fixes-active"] });
+      });
       es.onmessage = () => {
         void queryClient.invalidateQueries({ queryKey: ["overview"] });
         void queryClient.invalidateQueries({ queryKey: ["history"] });
@@ -28,6 +35,7 @@ export function useLiveEvents(queryClient: QueryClient) {
         void queryClient.invalidateQueries({ queryKey: ["backlog"] });
         void queryClient.invalidateQueries({ queryKey: ["kpis"] });
         void queryClient.invalidateQueries({ queryKey: ["repo"] });
+        void queryClient.invalidateQueries({ queryKey: ["fixes-active"] });
       };
       es.onerror = () => {
         es?.close();

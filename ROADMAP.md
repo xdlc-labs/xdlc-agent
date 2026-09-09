@@ -37,26 +37,7 @@ The pieces the open items below build on:
 
 Ordered by value ÷ effort.
 
-### 1. Live Fix states in the console (S, high)
-
-**Today:** `FixQueueStats()` returns two integers and the console shows `fix_queue_depth`. A
-Fix that is running is indistinguishable from one that is nearly done. The wedged case is
-already handled — `agent.stall_timeout` (and `xdlc fix --stall-timeout`) kills an agent that
-has gone silent and records `escalate=stalled` — but that is an audit row after the fact, not
-a live view.
-
-**Change:**
-
-- Emit `queued | cloning | planning | fixing | pushing | verifying | ok | error` over the
-  existing SSE hub, keyed by session id so the console collapses them into one row.
-- `GET /api/fixes/active` → `[{session_id, repo, source, provider, state, since}]`.
-- Overview gets an "in flight" strip; Actions shows the same during a Manual Fix.
-
-The streaming provider output format this needed has shipped: `agent.stall_timeout` switches
-the `claude` argv to `stream-json`, so per-event progress is already on stdout to key states
-off, rather than one result object at exit.
-
-### 2. Console view of a session (S, medium)
+### 1. Console view of a session (S, medium)
 
 The recordings exist but are reachable only from the CLI. Add operator-token endpoints
 (`GET /api/sessions`, `/{id}`, `/{id}/diff`, `/{id}/prompt`) and let a `/repos/$id` timeline
@@ -66,7 +47,7 @@ output.
 Serving unscrubbed prompts over HTTP is a real exposure step, unlike writing them to a 0600
 file: gate it on the operator role and document that in [SECURITY.md](SECURITY.md).
 
-### 3. Context on demand: `xdlc mcp` (L, high)
+### 2. Context on demand: `xdlc mcp` (L, high)
 
 **Today:** the dispatcher inlines failed-job logs and metrics, trimmed to 32 KB. On a large CI
 matrix the one useful line is often the one that got cut, and the agent has no way to ask for
@@ -82,18 +63,21 @@ agent pulls detail when it needs it. Behind `agent.mcp.enabled`, default off unt
 Every tool call is appended to the session recording, so "what did it look at" stays
 answerable after the fact.
 
-### 4. Grid view of live Fixes (M, low)
+### 3. Grid view of live Fixes (M, low)
 
-A read-only `/fixes` route: one card per in-flight Fix with its output tail streamed over SSE,
-for watching a fleet-wide burst of Fixes at once. Needs item 1 first.
+A read-only `/fixes` route: one card per in-flight Fix with its **output tail** streamed over
+SSE, for watching a fleet-wide burst of Fixes at once. The phase and its age already stream as
+`fix_state` and show in the console's "in flight" strip; what this adds is the agent's live
+output, which means fanning the subprocess's stream-json events out over the hub rather than
+only buffering them for the session recording.
 
 ## Sequencing
 
-1. Item 1 can now use `stream-json` output, which the stall watchdog already switches on.
-2. Item 3 next: prior sessions now reach the prompt as a fixed block, and `prior_sessions`
+1. Item 2 next: prior sessions now reach the prompt as a fixed block, and `prior_sessions`
    as an MCP tool is the version of that the agent can ask for more of.
-3. Item 4 needs item 1 first.
-4. Each of these touches the hosted guides — [architecture](https://xdlc.dev/agent/docs/architecture),
+2. Item 3 builds on the `fix_state` stream and on `stream-json`, both of which have shipped;
+   it is last because a fleet-wide burst of Fixes is not yet many operators' problem.
+3. Each of these touches the hosted guides — [architecture](https://xdlc.dev/agent/docs/architecture),
    [Fix modes](https://xdlc.dev/agent/docs/fix-modes),
    [Fix sessions](https://xdlc.dev/agent/docs/sessions), configuration and the API reference —
    plus [CHANGELOG.md](CHANGELOG.md).

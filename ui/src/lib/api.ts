@@ -202,6 +202,43 @@ export async function fetchFixPRs(all = false): Promise<FixPR[]> {
   return data.prs ?? [];
 }
 
+/**
+ * Phase an in-flight Fix is in. A run skips what it does not do: no
+ * "planning" without agent.fix_plan, no "pushing" outside worktree
+ * mode, no "verifying" without agent.fix_reverify. "ok" and "error" are
+ * terminal and only ever arrive as an event — a finished Fix is not in
+ * /api/fixes/active.
+ */
+export type FixState =
+  | "queued"
+  | "cloning"
+  | "planning"
+  | "fixing"
+  | "pushing"
+  | "verifying"
+  | "ok"
+  | "error";
+
+export interface ActiveFix {
+  /** Stable for the whole run, including the queued phase. */
+  id: string;
+  /** The recording this Fix is writing; absent while queued. */
+  session_id?: string;
+  repo: string;
+  source: string;
+  provider?: string;
+  state: FixState;
+  /** When the Fix entered this state, not when it started. */
+  since: string;
+  attempt?: number;
+}
+
+/** Fixes running right now. Empty is the normal answer, not an error. */
+export async function fetchActiveFixes(): Promise<ActiveFix[]> {
+  const data = await getJSON<{ fixes: ActiveFix[] }>("/api/fixes/active");
+  return data.fixes ?? [];
+}
+
 export interface CostKPIs {
   totals: {
     repo?: string;

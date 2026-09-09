@@ -19,6 +19,7 @@ import (
 
 	"github.com/xdlc-labs/xdlc-agent/internal/backlog"
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
+	"github.com/xdlc-labs/xdlc-agent/internal/fixstate"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
@@ -54,6 +55,11 @@ type Server struct {
 	RepoDir func(name string) string
 	// FixQueueStats optional live Fix queue depth (issue #9).
 	FixQueueStats func() (waiting, inflight int)
+	// Fixes optionally reports what each in-flight Fix is doing, for
+	// /api/fixes/active and the fix_state SSE events. nil → the endpoint
+	// answers with an empty list and no state events are streamed, which
+	// is what a daemon built without the tracker should say.
+	Fixes *fixstate.Tracker
 }
 
 // PRLiveStatus is the live GitHub view of a Fix PR (issue #14).
@@ -81,6 +87,7 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	mux.Handle("GET /api/prs", s.requireAuth(http.HandlerFunc(s.handlePRs)))
 	mux.Handle("GET /api/kpis", s.requireAuth(http.HandlerFunc(s.handleKPIs)))
 	mux.Handle("GET /api/events", s.requireAuth(http.HandlerFunc(s.handleEvents)))
+	mux.Handle("GET /api/fixes/active", s.requireAuth(http.HandlerFunc(s.handleActiveFixes)))
 	mux.Handle("POST /api/actions/fix", s.requireOperator(http.HandlerFunc(s.handleActionFix)))
 	mux.Handle("POST /api/actions/promote", s.requireOperator(http.HandlerFunc(s.handleActionPromote)))
 	mux.Handle("POST /api/actions/revert", s.requireOperator(http.HandlerFunc(s.handleActionRevert)))
@@ -398,7 +405,27 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"repo": repo, "timeline": events})
 }
 
-// handleEvents streams audit appends as text/event-stream (issue #6).
+// handleActiveFixes reports what each in-flight Fix is doing right now
+// — the live half of the audit trail. An empty list is a valid answer
+// and means no Fix is running (or that the daemon has no tracker), not
+// an error, so callers can render it without special-casing.
+func (s *Server) handleActiveFixes(w http.ResponseWriter, r *http.Request) {
+	active := s.Fixes.Active()
+	if active == nil {
+		active = []fixstate.Fix{}
+	}
+	writeJSON(w, map[string]any{"fixes": active})
+}
+
+// handleEvents streams audit appends as text/event-stream (issue #6),
+// plus Fix state transitions as a named "fix_state" event.
+//
+// The two share one connection because the console already holds
+// exactly one, and a second EventSource would double the auth surface
+// and the reconnect logic for the same data. They are told apart by the
+// SSE event name: audit records stay on the default (unnamed) event, so
+// a client written before fix_state existed keeps working untouched —
+// its onmessage never fires for the new frames.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -408,6 +435,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Send the headers before waiting for anything to report. Without
+	// this an idle daemon leaves the client waiting on a response that
+	// has been decided but not written, so the stream reads as
+	// still-connecting until the first event happens to arrive.
+	flusher.Flush()
 
 	var after uint64
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
@@ -417,6 +449,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, rec := range s.Audit.ReplaySinceSeq(after) {
 		writeSSE(w, rec)
+		flusher.Flush()
+	}
+	// A console that connects mid-Fix has to see the Fixes already
+	// running, not just the next transition — otherwise a long agent run
+	// is invisible until it finishes.
+	fixes, unsubFixes := s.Fixes.Subscribe()
+	defer unsubFixes()
+	for _, f := range s.Fixes.Active() {
+		writeFixStateSSE(w, f)
 		flusher.Flush()
 	}
 
@@ -437,6 +478,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			writeSSE(w, rec)
 			flusher.Flush()
 			after = rec.Seq
+		case f, ok := <-fixes:
+			if !ok {
+				// The tracker is gone (or was never wired up); audit
+				// events are still worth streaming.
+				fixes = nil
+				continue
+			}
+			writeFixStateSSE(w, f)
+			flusher.Flush()
 		}
 	}
 }
@@ -447,6 +497,18 @@ func writeSSE(w http.ResponseWriter, rec store.Record) {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", rec.Seq, payload)
+}
+
+// writeFixStateSSE emits one Fix transition. Deliberately without an
+// SSE id: ids on this stream are audit sequence numbers, and a client
+// that reconnected with a Fix id in Last-Event-ID would ask the audit
+// store to replay from a number that means nothing.
+func writeFixStateSSE(w http.ResponseWriter, f fixstate.Fix) {
+	payload, err := json.Marshal(f)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "event: fix_state\ndata: %s\n\n", payload)
 }
 
 // handlePRs is the Fix-PR work queue: every fix_mode: pr

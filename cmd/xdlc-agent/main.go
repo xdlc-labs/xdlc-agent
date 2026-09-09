@@ -29,6 +29,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
 	"github.com/xdlc-labs/xdlc-agent/internal/console"
 	"github.com/xdlc-labs/xdlc-agent/internal/dispatch"
+	"github.com/xdlc-labs/xdlc-agent/internal/fixstate"
 	"github.com/xdlc-labs/xdlc-agent/internal/gate"
 	"github.com/xdlc-labs/xdlc-agent/internal/gatebuild"
 	"github.com/xdlc-labs/xdlc-agent/internal/ghclient"
@@ -163,6 +164,11 @@ func daemonCmd() *cobra.Command {
 			}
 			disp.Sessions = sessions
 			disp.PriorFixes = cfg.Agent.PriorFixes()
+			// Live Fix states for the console. Shared with the API server
+			// below: the dispatcher writes transitions, /api/fixes/active
+			// and the SSE stream read them.
+			fixTracker := fixstate.New()
+			disp.Fixes = fixTracker
 			disp.DefaultProvider = cfg.Agent.Provider
 			disp.Route = cfg.Agent.Route
 			disp.Providers = append([]string(nil), cfg.Agent.Providers...)
@@ -440,6 +446,7 @@ func daemonCmd() *cobra.Command {
 				},
 				RepoDir:       repoMgr.Dir,
 				FixQueueStats: disp.FixQueueStats,
+				Fixes:         fixTracker,
 			}
 			if cfg.Server.OIDC.Enabled() {
 				oidcAuth, err := setupOIDC(cmd.Context(), cfg.Server.OIDC)

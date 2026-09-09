@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
+	"github.com/xdlc-labs/xdlc-agent/internal/fixstate"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/store"
 )
@@ -735,5 +738,220 @@ func TestBlockedRecordIsNotShownAsHealthyOrIdle(t *testing.T) {
 	}
 	if got := mapHealth(store.Record{Source: "ci", Kind: "pass"}); got != "healthy" {
 		t.Errorf("pass = %q", got)
+	}
+}
+
+// openTestAudit returns an empty audit store for a handler test.
+func openTestAudit(t *testing.T) *store.AuditStore {
+	t.Helper()
+	audit, err := store.Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = audit.Close() })
+	return audit
+}
+
+func TestActiveFixesReportsWhatIsRunning(t *testing.T) {
+	tracker := fixstate.New()
+	tracker.Set(fixstate.Fix{
+		ID: "run-1", SessionID: "20260909T000000Z-svc", Repo: "svc",
+		Source: "ci", Provider: "claude", State: fixstate.Fixing, Attempt: 2,
+	})
+	srv := &Server{Cfg: &config.Config{}, Audit: openTestAudit(t), Started: time.Now(), Token: "op", Fixes: tracker}
+	mux := http.NewServeMux()
+	srv.Mount(mux)
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/fixes/active", nil)
+	req.Header.Set("Authorization", "Bearer op")
+	mux.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d", res.Code)
+	}
+	var body struct {
+		Fixes []fixstate.Fix `json:"fixes"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Fixes) != 1 {
+		t.Fatalf("want one in-flight Fix, got %+v", body.Fixes)
+	}
+	got := body.Fixes[0]
+	if got.ID != "run-1" || got.State != fixstate.Fixing || got.Repo != "svc" || got.Attempt != 2 {
+		t.Fatalf("unexpected row: %+v", got)
+	}
+	if got.SessionID != "20260909T000000Z-svc" {
+		t.Fatalf("session link missing: %+v", got)
+	}
+}
+
+// No Fix running, and a daemon with no tracker at all, both have to
+// answer with an empty list — a console cannot render a null.
+func TestActiveFixesEmptyIsAList(t *testing.T) {
+	for name, tracker := range map[string]*fixstate.Tracker{
+		"nothing running": fixstate.New(),
+		"no tracker":      nil,
+	} {
+		srv := &Server{Cfg: &config.Config{}, Audit: openTestAudit(t), Started: time.Now(), Token: "op", Fixes: tracker}
+		mux := http.NewServeMux()
+		srv.Mount(mux)
+
+		res := httptest.NewRecorder()
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/fixes/active", nil)
+		req.Header.Set("Authorization", "Bearer op")
+		mux.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", name, res.Code)
+		}
+		var body struct {
+			Fixes *[]fixstate.Fix `json:"fixes"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if body.Fixes == nil {
+			t.Fatalf("%s: fixes was null; a console cannot render that", name)
+		}
+		if len(*body.Fixes) != 0 {
+			t.Fatalf("%s: want an empty list, got %+v", name, *body.Fixes)
+		}
+	}
+}
+
+func TestActiveFixesRequiresAuth(t *testing.T) {
+	srv := &Server{Cfg: &config.Config{}, Audit: openTestAudit(t), Started: time.Now(), Token: "op", Fixes: fixstate.New()}
+	mux := http.NewServeMux()
+	srv.Mount(mux)
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/fixes/active", nil)
+	mux.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", res.Code)
+	}
+}
+
+// Fix transitions ride the console's existing SSE connection under a
+// named event, so a client written before they existed is untouched: an
+// audit record must stay on the default event with its sequence id, and
+// a state frame must carry neither.
+func TestEventsStreamsFixStateUnderANamedEvent(t *testing.T) {
+	audit := openTestAudit(t)
+	tracker := fixstate.New()
+	tracker.Set(fixstate.Fix{ID: "run-1", Repo: "svc", Source: "ci", State: fixstate.Cloning})
+	srv := &Server{Cfg: &config.Config{}, Audit: audit, Started: time.Now(), Token: "op", Fixes: tracker}
+	mux := http.NewServeMux()
+	srv.Mount(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	stream, stop := openEventStream(t, ts.URL)
+	defer stop()
+
+	// What is already running has to arrive on connect, or a long agent
+	// run stays invisible until it ends.
+	if frame := stream.next(t); !strings.Contains(frame, "event: fix_state") || !strings.Contains(frame, "run-1") {
+		t.Fatalf("in-flight Fix not replayed on connect:\n%s", frame)
+	}
+
+	tracker.Set(fixstate.Fix{ID: "run-1", State: fixstate.Fixing})
+	frame := stream.next(t)
+	if !strings.Contains(frame, `"state":"fixing"`) {
+		t.Fatalf("transition not streamed:\n%s", frame)
+	}
+	if strings.Contains(frame, "id: ") {
+		t.Fatalf("a fix_state frame carried an SSE id, which would poison audit replay:\n%s", frame)
+	}
+
+	if err := audit.Append(store.Record{At: time.Now().UTC(), Repo: "svc", Source: "ci", Kind: "fail", Action: "fix"}); err != nil {
+		t.Fatal(err)
+	}
+	frame = stream.next(t)
+	if strings.Contains(frame, "event:") {
+		t.Fatalf("audit record left the default SSE event:\n%s", frame)
+	}
+	if !strings.Contains(frame, "id: 1") || !strings.Contains(frame, `"repo":"svc"`) {
+		t.Fatalf("audit frame lost its shape:\n%s", frame)
+	}
+}
+
+// A daemon with no tracker must still stream audit events rather than
+// spinning on a closed channel.
+func TestEventsWithoutATrackerStillStreamsAudit(t *testing.T) {
+	audit := openTestAudit(t)
+	srv := &Server{Cfg: &config.Config{}, Audit: audit, Started: time.Now(), Token: "op"}
+	mux := http.NewServeMux()
+	srv.Mount(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	stream, stop := openEventStream(t, ts.URL)
+	defer stop()
+
+	if err := audit.Append(store.Record{At: time.Now().UTC(), Repo: "svc", Source: "ci", Kind: "fail", Action: "fix"}); err != nil {
+		t.Fatal(err)
+	}
+	frame := stream.next(t)
+	if !strings.Contains(frame, `"repo":"svc"`) {
+		t.Fatalf("audit event not streamed:\n%s", frame)
+	}
+	if strings.Contains(frame, "fix_state") {
+		t.Fatal("no tracker means no state frames")
+	}
+}
+
+// eventStream reads SSE frames from a live test server. A recorder
+// cannot be used here: the handler only returns when the request is
+// canceled, so reading its buffer while it writes is a data race.
+type eventStream struct {
+	body io.ReadCloser
+	buf  *bufio.Reader
+}
+
+func openEventStream(t *testing.T, baseURL string) (*eventStream, func()) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/events", nil)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer op")
+	// The body is a stream the test reads across several assertions, so
+	// it is closed by the returned stop function that every caller
+	// defers, not here.
+	res, err := http.DefaultClient.Do(req) //nolint:bodyclose
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		_ = res.Body.Close()
+		cancel()
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	return &eventStream{body: res.Body, buf: bufio.NewReader(res.Body)}, func() {
+		_ = res.Body.Close()
+		cancel()
+	}
+}
+
+// next returns the next complete SSE frame (up to the blank line).
+func (s *eventStream) next(t *testing.T) string {
+	t.Helper()
+	var frame strings.Builder
+	for {
+		line, err := s.buf.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read stream: %v (so far: %q)", err, frame.String())
+		}
+		if line == "\n" {
+			return frame.String()
+		}
+		frame.WriteString(line)
 	}
 }
