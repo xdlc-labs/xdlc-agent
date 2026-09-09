@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"slices"
@@ -267,6 +268,124 @@ func TestWithModelIsPerProvider(t *testing.T) {
 		last := r.Args[len(r.Args)-2:]
 		if last[0] != "--model" || last[1] != "m" {
 			t.Errorf("%s: tail = %v", p, last)
+		}
+	}
+}
+
+// The watchdog exists for the failure agent.timeout cannot describe: a
+// process that is alive, has budget left, and has stopped working.
+func TestRunKillsAStalledAgent(t *testing.T) {
+	r := NewSubprocessRunner(ProviderClaude, "sh", []string{"-c", "echo starting; sleep 30"}, time.Minute, nil)
+	r.StallTimeout = 500 * time.Millisecond
+
+	start := time.Now()
+	out, err := r.Run(context.Background(), t.TempDir(), "prompt", nil)
+	if err == nil {
+		t.Fatal("a silent agent must not report success")
+	}
+	if !errors.Is(err, ErrStalled) {
+		t.Fatalf("want ErrStalled, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 20*time.Second {
+		t.Fatalf("watchdog waited for the run timeout instead of the stall timeout: %s", elapsed)
+	}
+	// Whatever the agent managed to say before going quiet is still the
+	// operator's best clue, so the killed run keeps its output.
+	if !strings.Contains(out, "starting") {
+		t.Fatalf("output collected before the stall was dropped: %q", out)
+	}
+}
+
+// A long Fix that keeps narrating is healthy, and killing it would be
+// worse than the stall the watchdog is there for.
+func TestRunLetsAChattyAgentFinish(t *testing.T) {
+	script := "for i in 1 2 3 4 5 6; do echo working; sleep 0.2; done; echo done"
+	r := NewSubprocessRunner(ProviderClaude, "sh", []string{"-c", script}, time.Minute, nil)
+	r.StallTimeout = 600 * time.Millisecond
+
+	out, err := r.Run(context.Background(), t.TempDir(), "prompt", nil)
+	if err != nil {
+		t.Fatalf("a streaming agent was killed: %v (%q)", err, out)
+	}
+	if !strings.Contains(out, "done") {
+		t.Fatalf("run did not finish: %q", out)
+	}
+}
+
+// Progress on stderr counts: several CLIs narrate there and print the
+// result on stdout only at the end.
+func TestRunTreatsStderrAsActivity(t *testing.T) {
+	script := "for i in 1 2 3 4 5 6; do echo tool call >&2; sleep 0.2; done; echo '{\"ok\":true}'"
+	r := NewSubprocessRunner(ProviderClaude, "sh", []string{"-c", script}, time.Minute, nil)
+	r.StallTimeout = 600 * time.Millisecond
+
+	out, err := r.Run(context.Background(), t.TempDir(), "prompt", nil)
+	if err != nil {
+		t.Fatalf("an agent narrating on stderr was killed as stalled: %v", err)
+	}
+	if !strings.Contains(out, `{"ok":true}`) {
+		t.Fatalf("stdout lost: %q", out)
+	}
+}
+
+func TestRunWithoutStallTimeoutHasNoWatchdog(t *testing.T) {
+	r := NewSubprocessRunner(ProviderClaude, "sh", []string{"-c", "sleep 0.4; echo late"}, time.Minute, nil)
+	out, err := r.Run(context.Background(), t.TempDir(), "prompt", nil)
+	if err != nil {
+		t.Fatalf("silent run without a watchdog must succeed: %v", err)
+	}
+	if !strings.Contains(out, "late") {
+		t.Fatalf("output lost: %q", out)
+	}
+}
+
+// A watchdog with nothing to watch would kill every healthy run, so
+// opting in has to switch the buffered argv to a streaming one.
+func TestWithStallTimeoutSwitchesToStreamingArgv(t *testing.T) {
+	r := NewSubprocessRunner(ProviderClaude, "", nil, time.Minute, nil)
+	got := r.WithStallTimeout(2 * time.Minute)
+
+	if got.StallTimeout != 2*time.Minute {
+		t.Fatalf("stall timeout not set: %s", got.StallTimeout)
+	}
+	argv := strings.Join(got.Args, " ")
+	if !strings.Contains(argv, "--output-format stream-json") || !strings.Contains(argv, "--verbose") {
+		t.Fatalf("claude argv not switched to streaming: %v", got.Args)
+	}
+	if strings.Contains(argv, "--output-format json") {
+		t.Fatalf("buffered output format left on argv: %v", got.Args)
+	}
+	// The flags a Fix cannot work without must survive the rewrite.
+	for _, want := range []string{"-p", "--dangerously-skip-permissions"} {
+		if !strings.Contains(argv, want) {
+			t.Fatalf("rewrite dropped %s: %v", want, got.Args)
+		}
+	}
+	// The original is untouched, so a second provider built from the
+	// same defaults is unaffected.
+	if strings.Contains(strings.Join(r.Args, " "), "stream-json") {
+		t.Fatalf("WithStallTimeout mutated the receiver: %v", r.Args)
+	}
+}
+
+func TestWithStallTimeoutZeroChangesNothing(t *testing.T) {
+	r := NewSubprocessRunner(ProviderClaude, "", nil, time.Minute, nil)
+	if got := r.WithStallTimeout(0); got != r {
+		t.Fatal("an unset stall timeout must pass the runner through unchanged")
+	}
+}
+
+// The three CLIs that already stream need no rewrite; touching their
+// argv could only break an invocation that works.
+func TestWithStallTimeoutLeavesStreamingProvidersAlone(t *testing.T) {
+	for _, p := range []Provider{ProviderCodex, ProviderCursor, ProviderGemini} {
+		base := NewSubprocessRunner(p, "", nil, time.Minute, nil)
+		got := base.WithStallTimeout(time.Minute)
+		if strings.Join(got.Args, " ") != strings.Join(base.Args, " ") {
+			t.Fatalf("%s argv rewritten: %v -> %v", p, base.Args, got.Args)
+		}
+		if got.StallTimeout != time.Minute {
+			t.Fatalf("%s watchdog not enabled", p)
 		}
 	}
 }

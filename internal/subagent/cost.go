@@ -25,8 +25,17 @@ type cliCostJSON struct {
 	} `json:"usage"`
 }
 
-// ParseCost extracts Claude-style cost/token fields from CLI stdout JSON.
+// ParseCost extracts Claude-style cost/token fields from CLI stdout.
 // Malformed or non-JSON stdout → nil (no-op). Best-effort only.
+//
+// Three stdout shapes reach here. One JSON object (`--output-format
+// json`); that object with git or wrapper chatter around it; and a
+// stream of events, one JSON object per line (`--output-format
+// stream-json`, which the stall watchdog switches on), where the
+// billing totals live on the final `result` event and every earlier
+// line has no cost fields at all. Whole-document parsing fails outright
+// on the third — several objects are not one document — so a stream
+// would have recorded a Fix as costing nothing.
 func ParseCost(stdout string) map[string]any {
 	data := []byte(strings.TrimSpace(stdout))
 	if len(data) == 0 {
@@ -34,6 +43,9 @@ func ParseCost(stdout string) map[string]any {
 	}
 	var parsed cliCostJSON
 	if err := json.Unmarshal(data, &parsed); err != nil {
+		if fields := parseCostLines(data); fields != nil {
+			return fields
+		}
 		// ponytail: strip prefix/suffix noise (git chatter) then retry once
 		i, j := bytes.IndexByte(data, '{'), bytes.LastIndexByte(data, '}')
 		if i < 0 || j <= i {
@@ -43,6 +55,34 @@ func ParseCost(stdout string) map[string]any {
 			return nil
 		}
 	}
+	return costFieldsOf(parsed)
+}
+
+// parseCostLines reads a JSON-lines stream backwards for the last event
+// that actually carries billing fields. Backwards because the totals
+// are emitted last, and because a stream's early lines parse fine but
+// hold nothing — taking the first parseable line would report zero.
+func parseCostLines(data []byte) map[string]any {
+	lines := bytes.Split(data, []byte("\n"))
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := bytes.TrimSpace(lines[i])
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var parsed cliCostJSON
+		if err := json.Unmarshal(line, &parsed); err != nil {
+			continue
+		}
+		if fields := costFieldsOf(parsed); fields != nil {
+			return fields
+		}
+	}
+	return nil
+}
+
+// costFieldsOf renders one parsed envelope as the audit-row keys. Nil
+// when the envelope carried no cost or usage at all.
+func costFieldsOf(parsed cliCostJSON) map[string]any {
 	out := make(map[string]any, 4)
 	if parsed.TotalCostUSD != nil {
 		out["total_cost_usd"] = *parsed.TotalCostUSD

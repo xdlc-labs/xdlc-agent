@@ -37,6 +37,14 @@ inputs:
   timeout:
     description: Agent wall-clock limit.
     default: 20m
+  stall-timeout:
+    description: >-
+      Kill the agent when it has printed nothing for this long while still
+      running, and fail the job with escalate=stalled. Empty (the default)
+      disables the watchdog. Worth setting here: a wedged agent otherwise
+      bills runner minutes until `timeout` expires. Switches the agent CLI to
+      streaming output.
+    default: ""
 
 outputs:
   pr-url:
@@ -85,10 +93,12 @@ runs:
         MODE: ${{ inputs.mode }}
         MESSAGE: ${{ inputs.message }}
         TIMEOUT: ${{ inputs.timeout }}
+        STALL_TIMEOUT: ${{ inputs.stall-timeout }}
       run: |
         set -o pipefail
         args=(fix "$RUN_URL" --provider "$PROVIDER" --mode "$MODE" --timeout "$TIMEOUT" --dir "$RUNNER_TEMP/xdlc")
         if [ -n "$MESSAGE" ]; then args+=(-m "$MESSAGE"); fi
+        if [ -n "$STALL_TIMEOUT" ]; then args+=(--stall-timeout "$STALL_TIMEOUT"); fi
         xdlc "${args[@]}" | tee "$RUNNER_TEMP/xdlc-fix.log"
         pr="$(sed -n 's/^PR: //p' "$RUNNER_TEMP/xdlc-fix.log" | tail -1)"
         echo "pr-url=$pr" >> "$GITHUB_OUTPUT"

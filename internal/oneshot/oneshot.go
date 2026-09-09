@@ -45,8 +45,14 @@ type Options struct {
 	WorkDir      string        // clones + sessions live here; default os.UserCacheDir()/xdlc
 	Instructions string        // optional operator hint, joins the prompt's trusted block
 	Timeout      time.Duration // agent wall clock; default 20m
-	Out          io.Writer     // progress lines; default os.Stdout
-	Log          *slog.Logger  // dispatcher log; default: warnings to Out
+	// StallTimeout kills the agent when it has printed nothing for this
+	// long while still alive. 0 (default) disables the watchdog. Worth
+	// setting in CI, where a wedged agent burns billed minutes until the
+	// wall clock runs out; see subagent.SubprocessRunner.WithStallTimeout
+	// for why opting in also switches the CLI to streaming output.
+	StallTimeout time.Duration
+	Out          io.Writer    // progress lines; default os.Stdout
+	Log          *slog.Logger // dispatcher log; default: warnings to Out
 
 	// Seams for tests. Zero values mean "the real thing".
 	GitHub  GitHub
@@ -143,7 +149,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		if _, err := exec.LookPath(sub.Binary); err != nil {
 			return res, fmt.Errorf("oneshot: provider %s: %q not on PATH — install it, or pick another with --provider (%s)", provider, sub.Binary, providerList())
 		}
-		runner = sub.WithModel(strings.TrimSpace(opts.Model))
+		runner = sub.WithModel(strings.TrimSpace(opts.Model)).WithStallTimeout(opts.StallTimeout)
 	}
 
 	workdir := opts.WorkDir

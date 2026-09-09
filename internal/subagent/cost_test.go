@@ -156,3 +156,59 @@ func TestAddCostSumsCacheTokensAcrossRuns(t *testing.T) {
 		t.Errorf("total_cost_usd = %v, want ~3.2592", got)
 	}
 }
+
+// `--output-format stream-json` prints one event per line: several JSON
+// objects, which is not one JSON document. Whole-document parsing fails
+// on it, so before ParseCost read lines a streamed Fix was recorded as
+// having cost nothing at all.
+const sampleClaudeStreamJSON = `{"type":"system","subtype":"init","session_id":"abc"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"reading the failing test"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":8210,"total_cost_usd":1.63,"usage":{"input_tokens":514,"output_tokens":9012,"cache_creation_input_tokens":49801,"cache_read_input_tokens":843579}}
+`
+
+func TestParseCostReadsStreamJSON(t *testing.T) {
+	got := ParseCost(sampleClaudeStreamJSON)
+	if got == nil {
+		t.Fatal("streamed events yielded no cost at all")
+	}
+	if got["total_cost_usd"] != 1.63 {
+		t.Fatalf("total_cost_usd = %v", got["total_cost_usd"])
+	}
+	for k, want := range map[string]int64{
+		"input_tokens": 514, "output_tokens": 9012,
+		"cache_write_tokens": 49801, "cache_read_tokens": 843579,
+	} {
+		if got[k] != want {
+			t.Fatalf("%s = %v, want %d", k, got[k], want)
+		}
+	}
+	if got["duration_ms"] != int64(8210) {
+		t.Fatalf("duration_ms = %v", got["duration_ms"])
+	}
+}
+
+// The totals are on the last event. Reading forwards would stop at the
+// first parseable line and report a Fix as free.
+func TestParseCostIgnoresEarlierStreamEvents(t *testing.T) {
+	stream := `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"thinking"}]}}
+{"type":"result","total_cost_usd":0.45}
+`
+	got := ParseCost(stream)
+	if got == nil || got["total_cost_usd"] != 0.45 {
+		t.Fatalf("want the result event's cost, got %v", got)
+	}
+}
+
+// A stream that never reached a result event (killed as stalled, or the
+// CLI died) has no billing totals to report, and inventing zeros would
+// put a free Fix in the audit row.
+func TestParseCostOnStreamWithoutResultEvent(t *testing.T) {
+	stream := `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}
+`
+	if got := ParseCost(stream); got != nil {
+		t.Fatalf("want nil for a stream with no totals, got %v", got)
+	}
+}

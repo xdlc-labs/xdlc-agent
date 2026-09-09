@@ -185,6 +185,50 @@ func TestConfig(t *testing.T) {
 			wantMsg: `agent.fix_mode "branch" unknown`,
 		},
 		{
+			name: "agent.stall_timeout shorter than timeout ok",
+			cfg: &config.Config{
+				Agent: config.AgentConfig{Timeout: 10 * time.Minute, StallTimeout: 4 * time.Minute},
+				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc"}},
+			},
+			wantMsg: "",
+		},
+		{
+			name: "agent.stall_timeout unset ok",
+			cfg: &config.Config{
+				Agent: config.AgentConfig{Timeout: 10 * time.Minute},
+				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc"}},
+			},
+			wantMsg: "",
+		},
+		{
+			// The watchdog would never fire: the run's own deadline
+			// arrives first, so this is a slower duplicate of the timeout.
+			name: "agent.stall_timeout not shorter than timeout flagged",
+			cfg: &config.Config{
+				Agent: config.AgentConfig{Timeout: 5 * time.Minute, StallTimeout: 5 * time.Minute},
+				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc"}},
+			},
+			wantMsg: "is not shorter than agent.timeout",
+		},
+		{
+			// Agents pause for tens of seconds between tool calls, so a
+			// few seconds of silence is normal, not a wedge.
+			name: "agent.stall_timeout of seconds flagged",
+			cfg: &config.Config{
+				Agent: config.AgentConfig{Timeout: 10 * time.Minute, StallTimeout: 5 * time.Second},
+				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc"}},
+			},
+			wantMsg: "shorter than a coding agent's normal pause",
+		},
+		{
+			name: "agent.stall_timeout negative rejected",
+			cfg: &config.Config{
+				Agent: config.AgentConfig{Timeout: 10 * time.Minute, StallTimeout: -time.Minute},
+				Repos: []config.Repo{{Name: "svc", GitHub: "org/svc"}},
+			},
+			wantMsg: "is negative; use 0 to disable the watchdog",
+		},
+		{
 			name: "oidc enabled with client_id and redirect_url ok",
 			cfg: &config.Config{
 				Server: config.ServerConfig{OIDC: config.OIDCConfig{
