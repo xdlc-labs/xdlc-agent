@@ -125,6 +125,7 @@
         "binary": { "type": "string" },
         "args": { "type": "array", "items": { "type": "string" } },
         "timeout": { "type": "string" },
+        "stall_timeout": { "type": "string", "description": "Kill a Fix whose agent has printed nothing for this long while still alive, recording escalate=stalled. Unset disables the watchdog. Opting in switches a buffered --output-format json argv to stream-json." },
         "max_concurrent_fixes": { "type": "integer" },
         "fix_mode": { "type": "string", "enum": ["direct", "pr", ""] },
         "providers": { "type": "array", "items": { "type": "string" } },

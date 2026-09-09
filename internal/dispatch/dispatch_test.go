@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
 	"github.com/xdlc-labs/xdlc-agent/internal/session"
+	"github.com/xdlc-labs/xdlc-agent/internal/subagent"
 )
 
 // runGit runs git in dir, failing the test on error. Used only to build
@@ -1848,5 +1850,57 @@ func TestFixFeedsPriorSessionIntoNextPrompt(t *testing.T) {
 	}
 	if !strings.Contains(block, "app.txt") {
 		t.Fatalf("the earlier patch did not reach the prompt:\n%s", block)
+	}
+}
+
+// stalledRunner is an agent the watchdog killed: alive, in budget, and
+// silent, so its error is neither a timeout nor a crash.
+type stalledRunner struct{}
+
+func (stalledRunner) Run(context.Context, string, string, []string) (string, error) {
+	return "partial output\n", fmt.Errorf("subagent: claude in /tmp/x: %w of 5m", subagent.ErrStalled)
+}
+
+// A wedged Fix must be distinguishable in the audit row from one that
+// failed on its own, because the operator response is different: look
+// for what the agent is waiting on, not for what it got wrong.
+func TestFixRecordsStalledEscalation(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	d := New(mgr, stalledRunner{}, silentLogger())
+
+	sig := orchestrator.Signal{
+		Repo:     "svc",
+		Source:   orchestrator.SourceCI,
+		Kind:     orchestrator.KindFail,
+		Evidence: map[string]any{"run_url": "http://ci/123"},
+	}
+	if _, err := d.Fix(context.Background(), sig); err == nil {
+		t.Fatal("a killed run must not report success")
+	}
+	if got := sig.Evidence["escalate"]; got != "stalled" {
+		t.Fatalf("escalate = %v, want stalled", got)
+	}
+}
+
+// An ordinary agent failure keeps its own reporting: reading every
+// error as a stall would send the operator hunting a wedge that is not
+// there.
+func TestFixDoesNotCallEveryFailureAStall(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	d := New(mgr, errRunner{}, silentLogger())
+
+	sig := orchestrator.Signal{
+		Repo:     "svc",
+		Source:   orchestrator.SourceCI,
+		Kind:     orchestrator.KindFail,
+		Evidence: map[string]any{"run_url": "http://ci/123"},
+	}
+	if _, err := d.Fix(context.Background(), sig); err == nil {
+		t.Fatal("want the agent's error")
+	}
+	if got := sig.Evidence["escalate"]; got == "stalled" {
+		t.Fatal("a crashed agent was recorded as stalled")
 	}
 }

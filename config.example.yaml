@@ -51,6 +51,12 @@ agent:
   mode: subprocess
   provider: claude # claude | codex | cursor | gemini
   timeout: 10m
+  # stall_timeout: 3m           # kill a Fix that has printed nothing for this long
+  #   while its process is still alive, recording escalate=stalled. Off by
+  #   default. A timeout catches a Fix that is slow; this catches one that
+  #   stopped working and would hold its worktree and Fix slot until the
+  #   full timeout. Opting in switches the claude argv to stream-json, so
+  #   the session's output.txt becomes one JSON event per line.
   # max_concurrent_fixes: 2
   # fix_budget: 5m              # soft Fix deadline; 0 = unlimited (#9)
   # fix_mode: direct # or pr

@@ -9,12 +9,26 @@ package subagent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// ErrStalled is returned when the agent produced no output for
+// StallTimeout while its process was still alive, and xdlc killed it.
+//
+// It is a distinct error because a stall is not a timeout and not a
+// crash: the run had budget left and the process was healthy enough to
+// keep holding a worktree, an API session and the repo's Fix slot. An
+// operator who sees "timeout" looks for a slow build; one who sees
+// "stalled" looks for an agent waiting on something that will never
+// come. Dispatch maps it to escalate=stalled.
+var ErrStalled = errors.New("subagent: no output for the stall timeout")
 
 // allowlistEnvKeys are the only env vars passed to the coding-agent
 // subprocess. Keeps PATH/locale basics plus the provider API keys the
@@ -180,6 +194,15 @@ type SubprocessRunner struct {
 	Binary   string
 	Args     []string // promptPlaceholder stripped; prompt goes on stdin
 	Timeout  time.Duration
+	// StallTimeout kills the run when the CLI has printed nothing for
+	// this long while still alive. 0 disables the watchdog.
+	//
+	// It only means anything with a CLI that streams: `claude -p
+	// --output-format json` prints its whole result at exit, so every
+	// healthy long run looks stalled to a byte-counting watchdog. Set it
+	// through WithStallTimeout, which switches that argv to stream-json
+	// at the same time.
+	StallTimeout time.Duration
 	// ExtraEnvKeys widens the subprocess env allowlist — see ExtractEnv.
 	ExtraEnvKeys []string
 }
@@ -244,10 +267,56 @@ func (r *SubprocessRunner) WithModel(name string) *SubprocessRunner {
 	return &clone
 }
 
+// WithStallTimeout returns a copy of r that kills a run which has
+// printed nothing for d, and — because a watchdog that cannot see
+// output is worse than none — switches a buffered `--output-format
+// json` argv to `stream-json --verbose` so there is output to watch.
+//
+// The two travel together on purpose. Streaming changes what lands in
+// the session's output.txt (JSON events, one per line, instead of one
+// result object), so an operator who never asked for the watchdog keeps
+// the output they had. d <= 0 returns r unchanged, so a call site can
+// pass an unset config value straight through.
+//
+// The rewrite is by argv shape, not by provider, so an operator who
+// spelled out `--output-format json` in agent.args gets the same
+// switch. Any other argv is passed through untouched — the other three
+// CLIs already print as they work, so their watchdog needs nothing. A
+// CLI that buffers behind some flag xdlc does not recognize would have
+// every healthy run killed as stalled; that is what agent.args is for.
+func (r *SubprocessRunner) WithStallTimeout(d time.Duration) *SubprocessRunner {
+	if d <= 0 {
+		return r
+	}
+	clone := *r
+	clone.StallTimeout = d
+	clone.Args = streamingArgs(r.Args)
+	return &clone
+}
+
+// streamingArgs rewrites the one argv shape that buffers its whole
+// output to exit — Claude Code's `--output-format json` — into its
+// streaming form. `--verbose` is required alongside stream-json in
+// headless mode, or the CLI refuses to start. Anything else is returned
+// untouched: the other three CLIs already print as they work.
+func streamingArgs(args []string) []string {
+	out := make([]string, 0, len(args)+1)
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--output-format" && i+1 < len(args) && args[i+1] == "json" {
+			out = append(out, "--output-format", "stream-json", "--verbose")
+			i++
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
 // Run invokes the configured CLI in repoDir with prompt on stdin (never
-// argv), bounded by r.Timeout. On timeout the whole process group is
-// killed. extraEnv is appended after the allowlist filter — use it for
-// git AuthEnv (GIT_CONFIG_*), never for GITHUB_*.
+// argv), bounded by r.Timeout. On timeout, and on a stall (see
+// StallTimeout), the whole process group is killed. extraEnv is
+// appended after the allowlist filter — use it for git AuthEnv
+// (GIT_CONFIG_*), never for GITHUB_*.
 func (r *SubprocessRunner) Run(ctx context.Context, repoDir, prompt string, extraEnv []string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
 	defer cancel()
@@ -264,13 +333,106 @@ func (r *SubprocessRunner) Run(ctx context.Context, repoDir, prompt string, extr
 	configureKillGroup(cmd)
 
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Both streams feed the watchdog: a CLI that is narrating its
+	// progress on stderr is working, whatever stdout is doing.
+	activity := &activityWriter{}
+	cmd.Stdout = io.MultiWriter(&stdout, activity)
+	cmd.Stderr = io.MultiWriter(&stderr, activity)
 
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("subagent: %s start in %s: %w", r.Binary, repoDir, err)
+	}
+	activity.touch()
+	stopWatchdog, stalled := r.watchStall(cmd, activity)
+	err := cmd.Wait()
+	stopWatchdog()
+
+	if stalled.Load() {
+		// The kill is why Wait returned, so its "signal: killed" says
+		// nothing an operator needs; the stall is the finding.
+		return stdout.String(), fmt.Errorf("subagent: %s in %s: %w of %s: %s",
+			r.Binary, repoDir, ErrStalled, r.StallTimeout, strings.TrimSpace(lastLines(stderr.String(), 5)))
+	}
+	if err != nil {
 		return stdout.String(), fmt.Errorf("subagent: %s run in %s: %w: %s", r.Binary, repoDir, err, stderr.String())
 	}
 	return stdout.String(), nil
+}
+
+// watchStall starts the stall watchdog for a running cmd. It returns a
+// stop function the caller must call once Wait returns, and the flag
+// that says whether the watchdog is what ended the run.
+//
+// A no-op when StallTimeout is unset, so the ordinary path adds one
+// branch and no goroutine.
+func (r *SubprocessRunner) watchStall(cmd *exec.Cmd, activity *activityWriter) (stop func(), stalled *atomic.Bool) {
+	stalled = &atomic.Bool{}
+	if r.StallTimeout <= 0 {
+		return func() {}, stalled
+	}
+	done := make(chan struct{})
+	// Check several times per window: the granularity is how long a
+	// wedged agent keeps its worktree and its Fix slot after the
+	// deadline, and a ticker at the full window could double the wait.
+	interval := r.StallTimeout / 4
+	if interval > 15*time.Second {
+		interval = 15 * time.Second
+	}
+	if interval < time.Second {
+		interval = time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if activity.idleFor() < r.StallTimeout {
+					continue
+				}
+				stalled.Store(true)
+				_ = killProcessGroup(cmd)
+				return
+			}
+		}
+	}()
+	return func() { close(done) }, stalled
+}
+
+// activityWriter records when the subprocess last wrote anything. It
+// keeps no bytes: the output itself is buffered elsewhere, and all the
+// watchdog needs is a timestamp it can read without locking.
+type activityWriter struct {
+	lastNanos atomic.Int64
+}
+
+func (w *activityWriter) Write(p []byte) (int, error) {
+	w.touch()
+	return len(p), nil
+}
+
+func (w *activityWriter) touch() { w.lastNanos.Store(time.Now().UnixNano()) }
+
+// idleFor is how long since the last write. Zero before the first
+// touch, so a watchdog can never fire on an unstarted process.
+func (w *activityWriter) idleFor() time.Duration {
+	last := w.lastNanos.Load()
+	if last == 0 {
+		return 0
+	}
+	return time.Since(time.Unix(0, last))
+}
+
+// lastLines returns the final n lines of s, for an error message that
+// should carry the agent's last words without its whole transcript.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // stripPromptPlaceholder drops {{prompt}} from argv; content goes on stdin.

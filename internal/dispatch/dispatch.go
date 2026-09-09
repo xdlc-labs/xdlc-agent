@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -482,6 +483,13 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res o
 		recordVerdict(s.Evidence, verdict)
 
 		if runErr != nil {
+			// A stall is the one run failure that names its own cause: the
+			// agent went silent while healthy, so neither "timeout" nor a
+			// crash describes it, and an operator needs to know the run
+			// was killed rather than that it failed on its own.
+			if errors.Is(runErr, subagent.ErrStalled) && s.Evidence != nil {
+				s.Evidence["escalate"] = "stalled"
+			}
 			fixErr = fmt.Errorf("dispatch: fix: subagent: %w", runErr)
 			break
 		}

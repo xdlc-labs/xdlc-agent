@@ -116,7 +116,9 @@ reporting a Fix that never happened.
 `--provider` picks the agent CLI and `--model` picks the model it asks for, which is the
 lever that actually moves the bill. `--mode direct` pushes to the failing branch instead of
 opening a pull request. `-m "the flake is in the seed data"` adds a hint to the prompt's
-trusted block.
+trusted block. `--stall-timeout 3m` kills an agent that has printed nothing for that long
+while still running, which in CI is the difference between a failed job and billed minutes
+spent on a wedged run.
 
 ```bash
 xdlc fix <run-url> --provider claude --model claude-sonnet-5
