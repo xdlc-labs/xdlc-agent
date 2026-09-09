@@ -297,3 +297,53 @@ func TestRetryBlockDoesNotClaimTheAgentPushed(t *testing.T) {
 		t.Errorf("retry block should still say the previous attempt's work reached the branch:\n%s", p)
 	}
 }
+
+func TestBuildFixPromptIncludesPriorSessions(t *testing.T) {
+	p := BuildFixPrompt(FixRequest{
+		Repo: "svc", Reason: "fail", Evidence: map[string]any{"x": 1},
+		PriorSessions: "Fix 20260901T000000Z-svc (2h ago, run error)\n  agent said: bumped the pin\n",
+	})
+	if !strings.Contains(p, priorBegin) || !strings.Contains(p, priorEnd) {
+		t.Fatalf("missing prior-fix delimiters:\n%s", p)
+	}
+	if !strings.Contains(p, "bumped the pin") {
+		t.Fatalf("prior summary missing:\n%s", p)
+	}
+	// Trusted context, so outside the untrusted evidence block — and
+	// labeled as a record, since a past patch is not an instruction.
+	if strings.Index(p, priorBegin) > strings.Index(p, evidenceBegin) {
+		t.Fatal("prior sessions must sit before the untrusted evidence block")
+	}
+	if !strings.Contains(p, "records") {
+		t.Fatalf("prior block must be framed as records, not instructions:\n%s", p)
+	}
+}
+
+func TestBuildFixPromptNoPriorBlockWhenEmpty(t *testing.T) {
+	for _, in := range []string{"", "   \n\t "} {
+		p := BuildFixPrompt(FixRequest{Repo: "svc", Reason: "fail", PriorSessions: in})
+		if strings.Contains(p, priorBegin) {
+			t.Fatalf("empty prior sessions must emit no block (input %q)", in)
+		}
+	}
+}
+
+// History must never crowd out the failure that is red now, so the
+// block is capped well below the evidence budget.
+func TestBuildFixPromptCapsPriorSessions(t *testing.T) {
+	p := BuildFixPrompt(FixRequest{
+		Repo: "svc", Reason: "fail",
+		Evidence:      map[string]any{"log": "FAIL: TestFoo"},
+		PriorSessions: strings.Repeat("+old patch line\n", 4000),
+	})
+	block := p[strings.Index(p, priorBegin):strings.Index(p, priorEnd)]
+	if len(block) > maxPriorBytes+len(priorBegin)+len(evidenceTruncation)+2 {
+		t.Fatalf("prior block not capped: %d bytes", len(block))
+	}
+	if !strings.Contains(block, "truncated") {
+		t.Fatal("a clipped prior block must say it was clipped")
+	}
+	if !strings.Contains(p, "FAIL: TestFoo") {
+		t.Fatal("current evidence lost behind prior sessions")
+	}
+}

@@ -440,3 +440,87 @@ func Diff(ctx context.Context, repoDir, baseSHA string) (patch string, changed i
 	}
 	return patch, changed
 }
+
+// DefaultPriorDiffLines is how much of an earlier Fix's patch travels
+// in the next prompt. Enough to show which files it touched and the
+// shape of the change; not enough to reproduce it line by line, which
+// is not the point — the next run has the repo itself for that.
+const DefaultPriorDiffLines = 40
+
+// PriorFix is a compact record of an earlier Fix on the same repo, for
+// the next Fix's prompt. The recording on disk is far richer than this;
+// what a following run needs is only what was tried and whether it
+// worked, so a whole session is reduced to its head.
+type PriorFix struct {
+	ID        string
+	StartedAt time.Time
+	// Status is the daemon's own verdict — "ok" or "error".
+	Status string
+	// Outcome and Summary are the agent's self-report ("fixed",
+	// "bumped the pinned version"), empty when it emitted no verdict.
+	Outcome string
+	Summary string
+	// Changed is how many files the patch touched.
+	Changed int
+	// Diff is the first diffLines lines of diff.patch, "" when the run
+	// delivered nothing — which is itself worth telling the next run.
+	Diff string
+	// DiffTruncated reports that Diff is only the head of the patch.
+	DiffTruncated bool
+}
+
+// Recent returns up to limit finished sessions for repo with the same
+// source, newest first, excluding excludeID (the caller's own,
+// still-running session). diffLines <= 0 uses DefaultPriorDiffLines.
+//
+// Unfinished sessions are skipped: a Fix running right now in another
+// worktree has an empty diff and no status, so it can only mislead.
+// Errors are swallowed — a Fix must not fail because an old recording
+// was hand-deleted mid-read.
+func (s *Store) Recent(repo, source, excludeID string, limit, diffLines int) []PriorFix {
+	if s == nil || limit <= 0 {
+		return nil
+	}
+	if diffLines <= 0 {
+		diffLines = DefaultPriorDiffLines
+	}
+	metas, err := s.List(repo, 0)
+	if err != nil {
+		return nil
+	}
+	out := make([]PriorFix, 0, limit)
+	for _, m := range metas {
+		if m.ID == excludeID || m.EndedAt.IsZero() {
+			continue
+		}
+		if source != "" && m.Source != source {
+			continue
+		}
+		p := PriorFix{
+			ID: m.ID, StartedAt: m.StartedAt, Status: m.Status,
+			Outcome: m.Outcome, Summary: m.Summary, Changed: m.Changed,
+		}
+		if patch, err := s.ReadFile(m.ID, FileDiff); err == nil {
+			p.Diff, p.DiffTruncated = headLines(patch, diffLines)
+		}
+		out = append(out, p)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out
+}
+
+// headLines returns the first n lines of text and whether anything was
+// dropped.
+func headLines(text string, n int) (string, bool) {
+	text = strings.TrimRight(text, "\n")
+	if text == "" {
+		return "", false
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) <= n {
+		return text, false
+	}
+	return strings.Join(lines[:n], "\n"), true
+}

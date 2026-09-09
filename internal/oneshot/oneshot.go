@@ -200,6 +200,9 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return res, fmt.Errorf("oneshot: sessions: %w", err)
 	}
 	disp.Sessions = sessions
+	// The one-shot path keeps its recordings in the user cache dir, so a
+	// second `xdlc fix` on the same repo can read what the first tried.
+	disp.PriorFixes = config.DefaultPriorFixes
 	res.SessionDir = sessionDir
 
 	sig := orchestrator.Signal{
