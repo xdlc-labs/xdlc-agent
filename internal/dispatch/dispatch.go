@@ -59,6 +59,10 @@ type Dispatcher struct {
 	// Sessions records each Fix's prompt, output and diff to disk.
 	// nil (or a nil *session.Store) disables recording.
 	Sessions *session.Store
+	// PriorFixes is how many earlier finished sessions for this repo and
+	// source are summarized into the Fix prompt. 0 disables the block;
+	// it needs Sessions, since the recordings on disk are what it reads.
+	PriorFixes int
 	// Lessons optional past-Fix inject (issue #19). nil skips.
 	Lessons interface {
 		Record(repo, source, outcome, symptom string) error
@@ -387,6 +391,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res o
 	if d.Lessons != nil {
 		lessons = d.Lessons.ForRepo(s.Repo, 5)
 	}
+	priorSessions := d.priorSessionsBlock(s, sess.ID())
 
 	// The diagnose pass runs once, ahead of the ladder: its subject is
 	// the failure, not any one patch attempt, so re-planning per attempt
@@ -432,16 +437,17 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal) (res o
 
 	for attempt = 1; ; attempt++ {
 		prompt := subagent.BuildFixPrompt(subagent.FixRequest{
-			Repo:      s.Repo,
-			Reason:    reason,
-			Evidence:  evidence,
-			Mode:      d.FixMode,
-			PRBranch:  prBranch,
-			TeamRules: teamRules,
-			Lessons:   lessons,
-			Plan:      plan,
-			Retry:     retry,
-			NoPush:    wt != nil,
+			Repo:          s.Repo,
+			Reason:        reason,
+			Evidence:      evidence,
+			Mode:          d.FixMode,
+			PRBranch:      prBranch,
+			TeamRules:     teamRules,
+			Lessons:       lessons,
+			PriorSessions: priorSessions,
+			Plan:          plan,
+			Retry:         retry,
+			NoPush:        wt != nil,
 		})
 		if werr := sess.Write(session.AttemptFile(session.FilePrompt, attempt), prompt); werr != nil {
 			d.Log.Warn("session prompt write failed", "repo", s.Repo, "error", werr)
@@ -843,6 +849,72 @@ func (d *Dispatcher) pushWorktree(ctx context.Context, s orchestrator.Signal, wt
 	}
 	d.Log.Info("pushed fix", "repo", s.Repo, "from", wt.Branch, "to", target)
 	return true, nil
+}
+
+// priorSessionsBlock renders the last d.PriorFixes finished Fixes for
+// this repo and source into the text BuildFixPrompt frames. Empty when
+// the feature is off, recording is off, or this is the repo's first Fix.
+//
+// Same source only: a Fix for a red CI run and a Fix for a prod-metrics
+// breach have almost nothing to teach each other, and mixing them
+// spends the block's budget on the less relevant history.
+//
+// excludeID is this run's own session, which is already open and has an
+// empty diff — including it would tell the agent its own Fix delivered
+// nothing before it had started.
+func (d *Dispatcher) priorSessionsBlock(s orchestrator.Signal, excludeID string) string {
+	if d.PriorFixes <= 0 || d.Sessions == nil {
+		return ""
+	}
+	prior := d.Sessions.Recent(s.Repo, string(s.Source), excludeID, d.PriorFixes, 0)
+	if len(prior) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, p := range prior {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "Fix %s (%s ago", p.ID, prettyAge(time.Since(p.StartedAt)))
+		if p.Status != "" {
+			fmt.Fprintf(&b, ", run %s", p.Status)
+		}
+		b.WriteString(")\n")
+		if p.Outcome != "" {
+			fmt.Fprintf(&b, "  agent verdict: %s\n", p.Outcome)
+		}
+		if sum := strings.TrimSpace(p.Summary); sum != "" {
+			fmt.Fprintf(&b, "  agent said: %s\n", sum)
+		}
+		if p.Diff == "" {
+			b.WriteString("  changed nothing (no patch recorded)\n")
+			continue
+		}
+		head := "  patch"
+		if p.DiffTruncated {
+			head = fmt.Sprintf("  patch (first %d lines of %d files)",
+				session.DefaultPriorDiffLines, p.Changed)
+		}
+		fmt.Fprintf(&b, "%s:\n%s\n", head, p.Diff)
+	}
+	d.Log.Debug("prior sessions in fix prompt", "repo", s.Repo, "count", len(prior))
+	return b.String()
+}
+
+// prettyAge renders a duration the way an operator reads one, because
+// a raw time.Duration in a prompt ("2h13m41.9s") spends tokens on
+// precision the agent cannot use.
+func prettyAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "under a minute"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
 }
 
 func (d *Dispatcher) recordLesson(s orchestrator.Signal, outcome, symptom string) {

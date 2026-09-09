@@ -74,6 +74,8 @@ agent:
   #   dir: sessions
   #   retain: 720h
   #   max_file_bytes: 2097152
+  #   prior_fixes: 2                # earlier Fixes (same repo + source) summarized
+  #                                 # into the next Fix prompt; 0 sends none
 
 # fleet:
 #   flap_max_cycles: 3

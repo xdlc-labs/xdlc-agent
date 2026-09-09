@@ -37,21 +37,7 @@ The pieces the open items below build on:
 
 Ordered by value ÷ effort.
 
-### 1. Feed past sessions into the next Fix prompt (S, high)
-
-**Today:** `LESSONS.md` keeps one 200-character line per outcome, now carrying the agent's own
-verdict summary rather than just the symptom. The sessions on disk are far richer than that
-line and the agent never sees them, so a second Fix on the same repo re-derives what the first
-one already worked out.
-
-**Change:** `FixPrompt` gains a `priorSessions` block after `lessons`: for the last 2–3
-sessions on this repo with the same `source`, the first ~40 lines of `diff.patch` plus the
-run's status. Cap the block at 8 KB, place it in a trusted block. Optionally a `summary.md`
-written by a cheap second pass (`agent.sessions.summarize`, default off).
-
-**Measure before keeping:** Fix success rate on the demo repo, before and after.
-
-### 2. Live Fix states and a stall watchdog (S, high)
+### 1. Live Fix states and a stall watchdog (S, high)
 
 **Today:** `FixQueueStats()` returns two integers and the console shows `fix_queue_depth`. A
 Fix that is running is indistinguishable from one that is wedged.
@@ -68,7 +54,7 @@ Fix that is running is indistinguishable from one that is wedged.
   format (`claude -p --output-format json` prints nothing until it exits), so it stays opt-in
   and ships together with a switch to `stream-json`, not before.
 
-### 3. Console view of a session (S, medium)
+### 2. Console view of a session (S, medium)
 
 The recordings exist but are reachable only from the CLI. Add operator-token endpoints
 (`GET /api/sessions`, `/{id}`, `/{id}/diff`, `/{id}/prompt`) and let a `/repos/$id` timeline
@@ -78,7 +64,7 @@ output.
 Serving unscrubbed prompts over HTTP is a real exposure step, unlike writing them to a 0600
 file: gate it on the operator role and document that in [SECURITY.md](SECURITY.md).
 
-### 4. Context on demand: `xdlc mcp` (L, high)
+### 3. Context on demand: `xdlc mcp` (L, high)
 
 **Today:** the dispatcher inlines failed-job logs and metrics, trimmed to 32 KB. On a large CI
 matrix the one useful line is often the one that got cut, and the agent has no way to ask for
@@ -94,19 +80,18 @@ agent pulls detail when it needs it. Behind `agent.mcp.enabled`, default off unt
 Every tool call is appended to the session recording, so "what did it look at" stays
 answerable after the fact.
 
-### 5. Grid view of live Fixes (M, low)
+### 4. Grid view of live Fixes (M, low)
 
 A read-only `/fixes` route: one card per in-flight Fix with its output tail streamed over SSE,
-for watching a fleet-wide burst of Fixes at once. Needs item 2 first.
+for watching a fleet-wide burst of Fixes at once. Needs item 1 first.
 
 ## Sequencing
 
-1. Item 1 first — it is small and reuses what already lands on disk. Worktrees have shipped,
-   so a prior session's diff now describes an isolated run rather than a shared clone.
-2. Item 2 only alongside the switch to a streaming provider output format.
-3. Item 4 after item 1, since `prior_sessions` is one of its tools.
-4. Item 5 needs item 2 first.
-5. Each of these touches the hosted guides — [architecture](https://xdlc.dev/agent/docs/architecture),
+1. Item 1 only alongside the switch to a streaming provider output format.
+2. Item 3 next: prior sessions now reach the prompt as a fixed block, and `prior_sessions`
+   as an MCP tool is the version of that the agent can ask for more of.
+3. Item 4 needs item 1 first.
+4. Each of these touches the hosted guides — [architecture](https://xdlc.dev/agent/docs/architecture),
    [Fix modes](https://xdlc.dev/agent/docs/fix-modes),
    [Fix sessions](https://xdlc.dev/agent/docs/sessions), configuration and the API reference —
    plus [CHANGELOG.md](CHANGELOG.md).

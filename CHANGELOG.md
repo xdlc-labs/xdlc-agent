@@ -8,6 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **The last few Fix recordings now reach the next Fix prompt.** `LESSONS.md` keeps one 200-character line per outcome; the sessions on disk hold the prompt, the output and the patch, and the agent never saw any of it — so a second Fix on a repo re-derived what the first one had already worked out, and could repeat an approach that was measured to fail. The Fix prompt gains a `---BEGIN PRIOR FIX RECORD---` block after the lessons: for the last `agent.sessions.prior_fixes` finished sessions on this repo with the same `source`, each entry carries the session id and age, the run's status, the agent's own verdict and summary, and the first 40 lines of `diff.patch` — or an explicit "changed nothing" for a run that delivered no patch, which is the entry most likely to stop a repeat. Same `source` only, because a red CI run and a prod-metrics breach have close to nothing to teach each other and mixing them spends the budget on the less relevant history. The block is trusted content (it is xdlc's own recording of its own runs, not gate output) but is framed as records rather than instructions, and capped at 8 KB — a quarter of the evidence budget, so history can never crowd out the failure that is red now. Default 2 entries; `agent.sessions.prior_fixes: 0` sends none, and recording being off implies none. `xdlc fix` gets the same block from its own recordings under the user cache dir
+
 ### Changed
 
 ### Fixed

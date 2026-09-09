@@ -161,6 +161,7 @@ func daemonCmd() *cobra.Command {
 				log.Info("session recording", "dir", sessions.Root, "retain", sessions.Retain)
 			}
 			disp.Sessions = sessions
+			disp.PriorFixes = cfg.Agent.PriorFixes()
 			disp.DefaultProvider = cfg.Agent.Provider
 			disp.Route = cfg.Agent.Route
 			disp.Providers = append([]string(nil), cfg.Agent.Providers...)

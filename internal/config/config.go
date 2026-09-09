@@ -393,12 +393,43 @@ type SessionsConfig struct {
 	Retain time.Duration `yaml:"retain"`
 	// MaxFileBytes caps one artifact (prompt, output, diff). 0 → 2 MiB.
 	MaxFileBytes int64 `yaml:"max_file_bytes"`
+	// PriorFixes is how many earlier finished Fixes for the same repo
+	// and source are summarized into the next Fix prompt — what each one
+	// changed and whether it worked. Nil → DefaultPriorFixes; 0 turns
+	// the block off. Pointer so `prior_fixes: 0` is distinguishable
+	// from an operator who never mentioned it.
+	//
+	// The recordings are already on disk; without this the agent never
+	// sees them, so a second Fix on one repo re-derives what the first
+	// one worked out. Each entry costs input tokens, and the prompt caps
+	// the whole block at 8 KB, so more than a handful buys nothing.
+	PriorFixes *int `yaml:"prior_fixes"`
 }
+
+// DefaultPriorFixes is how many earlier sessions reach the Fix prompt
+// when agent.sessions.prior_fixes is unset.
+const DefaultPriorFixes = 2
 
 // SessionsEnabled reports whether Fix session recording is on
 // (default true).
 func (a AgentConfig) SessionsEnabled() bool {
 	return a.Sessions.Enabled == nil || *a.Sessions.Enabled
+}
+
+// PriorFixes returns how many earlier sessions to summarize into a Fix
+// prompt: 0 when recording is off (there would be nothing to read),
+// DefaultPriorFixes when unset, and never negative.
+func (a AgentConfig) PriorFixes() int {
+	if !a.SessionsEnabled() {
+		return 0
+	}
+	if a.Sessions.PriorFixes == nil {
+		return DefaultPriorFixes
+	}
+	if n := *a.Sessions.PriorFixes; n > 0 {
+		return n
+	}
+	return 0
 }
 
 // SessionsDir returns the configured session root, defaulting to

@@ -1709,3 +1709,144 @@ func TestWorktreeDisabledUsesSharedClone(t *testing.T) {
 		t.Fatal("worktree root created while worktrees are disabled")
 	}
 }
+
+// priorSessionsBlock is what turns recordings on disk into prompt text.
+// Its job is to describe what an earlier Fix did without pretending it
+// was a success: status, the agent's own verdict, and the head of the
+// patch.
+func TestPriorSessionsBlockRendersEarlierFixes(t *testing.T) {
+	st, err := session.Open(t.TempDir(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev, err := st.Start(session.Meta{Repo: "svc", Source: "ci"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prev.Write(session.FileDiff, "--- a/go.mod\n+++ b/go.mod\n+require foo v1.2.3\n"); err != nil {
+		t.Fatal(err)
+	}
+	prev.SetVerdict("gave_up", "bumped the pin, still red", 1)
+	prev.SetResult("error", "reverify failed", nil)
+	if err := prev.Finish(); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &Dispatcher{Sessions: st, PriorFixes: 3, Log: slog.New(slog.DiscardHandler)}
+	sig := orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI}
+	got := d.priorSessionsBlock(sig, "some-other-session")
+
+	for _, want := range []string{prev.ID(), "run error", "gave_up", "bumped the pin, still red", "+require foo v1.2.3"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("block missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestPriorSessionsBlockOffByConfigAndWithoutStore(t *testing.T) {
+	st, err := session.Open(t.TempDir(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev, err := st.Start(session.Meta{Repo: "svc", Source: "ci"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev.SetResult("ok", "", nil)
+	if err := prev.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	sig := orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI}
+	log := slog.New(slog.DiscardHandler)
+
+	if got := (&Dispatcher{Sessions: st, PriorFixes: 0, Log: log}).priorSessionsBlock(sig, ""); got != "" {
+		t.Fatalf("prior_fixes 0 must send nothing, got:\n%s", got)
+	}
+	if got := (&Dispatcher{PriorFixes: 3, Log: log}).priorSessionsBlock(sig, ""); got != "" {
+		t.Fatalf("no recordings means no history to read, got:\n%s", got)
+	}
+}
+
+// A run that delivered nothing is the most useful thing to pass on, so
+// it must not read as a silent success.
+func TestPriorSessionsBlockNamesEmptyPatch(t *testing.T) {
+	st, err := session.Open(t.TempDir(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev, err := st.Start(session.Meta{Repo: "svc", Source: "ci"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev.SetResult("error", "subagent timeout", nil)
+	if err := prev.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	d := &Dispatcher{Sessions: st, PriorFixes: 2, Log: slog.New(slog.DiscardHandler)}
+	got := d.priorSessionsBlock(orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI}, "")
+	if !strings.Contains(got, "changed nothing") {
+		t.Fatalf("want an explicit no-patch line:\n%s", got)
+	}
+}
+
+// The point of the feature: the second Fix on a repo is told what the
+// first one did, instead of re-deriving it from the same evidence.
+func TestFixFeedsPriorSessionIntoNextPrompt(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	st, err := session.Open(t.TempDir(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	d := New(mgr, runner, silentLogger())
+	d.Sessions = st
+	d.PriorFixes = 2
+
+	sig := orchestrator.Signal{
+		Repo:     "svc",
+		Source:   orchestrator.SourceCI,
+		Kind:     orchestrator.KindFail,
+		Evidence: map[string]any{"run_url": "http://ci/123"},
+	}
+	if _, err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("first Fix: %v", err)
+	}
+	first := strings.TrimSpace(runner.gotPrompt)
+	if strings.Contains(first, "earlier Fix runs") {
+		t.Fatalf("the repo's first Fix has no history to be given:\n%s", first)
+	}
+
+	sig.Evidence = map[string]any{"run_url": "http://ci/124"}
+	if _, err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("second Fix: %v", err)
+	}
+	second := runner.gotPrompt
+	if !strings.Contains(second, "earlier Fix runs") {
+		t.Fatalf("second Fix got no prior-session block:\n%s", second)
+	}
+	sessions, err := st.List("svc", 0)
+	if err != nil || len(sessions) != 2 {
+		t.Fatalf("want two recordings, got %d (%v)", len(sessions), err)
+	}
+	// Read the prior-record block on its own. The running session's id
+	// also reaches the prompt through evidence["session_id"], so a
+	// whole-prompt search cannot tell "given as history" from "named as
+	// this run".
+	start := strings.Index(second, "---BEGIN PRIOR FIX RECORD---")
+	end := strings.Index(second, "---END PRIOR FIX RECORD---")
+	if start < 0 || end < start {
+		t.Fatalf("prior record block missing or malformed:\n%s", second)
+	}
+	block := second[start:end]
+	// List is newest first: [0] is the run that built this prompt.
+	if !strings.Contains(block, sessions[1].ID) {
+		t.Fatalf("prior session %s not named in the block:\n%s", sessions[1].ID, block)
+	}
+	if strings.Contains(block, sessions[0].ID) {
+		t.Fatal("a Fix must not be handed its own still-open session as history")
+	}
+	if !strings.Contains(block, "app.txt") {
+		t.Fatalf("the earlier patch did not reach the prompt:\n%s", block)
+	}
+}

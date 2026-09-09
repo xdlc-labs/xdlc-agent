@@ -168,7 +168,8 @@
         "enabled": { "type": "boolean" },
         "dir": { "type": "string" },
         "retain": { "type": "string" },
-        "max_file_bytes": { "type": "integer" }
+        "max_file_bytes": { "type": "integer" },
+        "prior_fixes": { "type": "integer", "minimum": 0, "description": "How many earlier finished Fixes for the same repo and source are summarized into the next Fix prompt. Default 2; 0 sends none." }
       }
     },
     "Server": {

@@ -92,6 +92,15 @@ func Config(cfg *config.Config) []Issue {
 			"agent.fix_attempts %d is negative; use 1 (single shot) or higher", cfg.Agent.FixAttempts)})
 	}
 
+	// Negative reads as "off" at runtime, which is probably what was
+	// meant, but a config that says -1 is more likely a typo than an
+	// intent to disable history.
+	if n := cfg.Agent.Sessions.PriorFixes; n != nil && *n < 0 {
+		issues = append(issues, Issue{Message: fmt.Sprintf(
+			"agent.sessions.prior_fixes %d is negative; use 0 to send no prior Fixes "+
+				"into the prompt, or a small positive count", *n)})
+	}
+
 	// A malformed committer identity is not caught until the coding
 	// agent's `git commit` fails inside a worktree, which reads as "the
 	// Fix produced nothing" rather than "the config is wrong".
