@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { PipelineDiagram } from "@/components/pipeline";
 import { ActivityFeed } from "@/components/activity-feed";
+import { FixesInFlight } from "@/components/fixes-in-flight";
 import { ActionTag, Dot } from "@/components/status";
 import { QueryError, Skeleton } from "@/components/query-state";
 import { fetchOverview, type Gate, type GateStatus, type Repo } from "@/lib/api";
@@ -260,6 +261,12 @@ function Overview() {
       </div>
 
       <PipelineDiagram pipeline={data?.pipeline ?? []} />
+
+      {/* Directly under the pipeline: what the loop is doing right now,
+          ahead of the panels that summarize what it has already done. */}
+      <div className="mt-5">
+        <FixesInFlight delay={140} />
+      </div>
 
       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <Panel

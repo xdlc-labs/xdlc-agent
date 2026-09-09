@@ -124,6 +124,25 @@ paths:
       responses:
         "200":
           description: text/event-stream of Event JSON
+  /api/fixes/active:
+    get:
+      summary: Fixes in flight right now
+      description: >-
+        The live half of the audit trail: one entry per running Fix with
+        the phase it is in and when it entered it. An empty list means no
+        Fix is running. Transitions are also streamed over /api/events as
+        the named event "fix_state" carrying the same object.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [fixes]
+                properties:
+                  fixes:
+                    type: array
+                    items: { $ref: "#/components/schemas/ActiveFix" }
   /api/prs:
     get:
       summary: Fix-PR work queue
@@ -323,6 +342,37 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Event" }
         backlogMd: { type: string }
+    ActiveFix:
+      type: object
+      properties:
+        id:
+          type: string
+          description: >-
+            Stable for the whole run, including the queued phase before a
+            session directory exists.
+        session_id:
+          type: string
+          description: >-
+            The recording this Fix is writing, once it has one. Empty
+            while queued, and for every run when session recording is off.
+        repo: { type: string }
+        source: { type: string }
+        provider: { type: string }
+        state:
+          type: string
+          description: >-
+            Phase the Fix is in. A run skips what it does not do: no
+            planning without agent.fix_plan, no pushing outside worktree
+            mode, no verifying without agent.fix_reverify. "ok" and
+            "error" are terminal and only ever arrive as an event — a
+            finished Fix is not in this list.
+          enum: [queued, cloning, planning, fixing, pushing, verifying, ok, error]
+        since:
+          type: string
+          description: When the Fix entered this state, not when it started.
+        attempt:
+          type: integer
+          description: 1-based agent run within this Fix (agent.fix_attempts ladder).
     FixPR:
       type: object
       properties:

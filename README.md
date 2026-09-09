@@ -226,7 +226,9 @@ your repos, taking webhooks and polling, from the
 1. GitHub reports a failed `workflow_run` — or you run `xdlc fix` by hand, or enable DEV smoke and prod health later.
 2. The daemon validates the webhook and asks policy what to do.
 3. **Fix** runs your agent CLI against the failing logs and the repo's conventions (`AGENTS.md`, `CLAUDE.md`, `.xdlc/rules.md`, `.xdlc/skills/*.md`), in a fresh worktree on an `xdlc/<session>` branch. The agent commits; xdlc pushes.
-4. Evidence lands in the console, the audit store, `BACKLOG.md` and `xdlc sessions show`.
+4. While it runs, the console's **in flight** strip shows the phase each Fix is in —
+   queued, cloning, planning, fixing, pushing, verifying — and how long it has been there.
+5. Evidence lands in the console, the audit store, `BACKLOG.md` and `xdlc sessions show`.
 
 The default install is **CI Fix** only. GitOps promote and prod revert are opt-in; see
 [Optional profiles](https://xdlc.dev/agent/docs/production-loop).

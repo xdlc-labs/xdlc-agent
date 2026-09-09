@@ -6,6 +6,7 @@ import { fetchRole } from "@/lib/auth";
 import { PageHeader, ActionTag } from "@/components/status";
 import { Dialog } from "@/components/dialog";
 import { QueryError, Skeleton } from "@/components/query-state";
+import { FixesInFlight } from "@/components/fixes-in-flight";
 import { t } from "@/lib/i18n";
 import { formatAge } from "@/lib/utils";
 
@@ -201,6 +202,14 @@ function Actions() {
           </div>
         ))}
       </div>
+
+      {/* Directly under the run buttons: a manual Fix takes minutes, so
+          the operator who pressed one needs to see it queue, clone and
+          run rather than wait for a row to appear in the audit feed.
+          showEmpty because "no Fix running" is itself the answer here. */}
+      <section className="px-6 pb-6">
+        <FixesInFlight showEmpty />
+      </section>
 
       <section className="px-6 pb-6">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
