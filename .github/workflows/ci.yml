@@ -31,6 +31,11 @@ jobs:
       - name: Release reference drift (docs vs chart appVersion)
         run: ./scripts/check-version-refs.sh
       - name: govulncheck
+        env:
+          # setup-go sets GOTOOLCHAIN=local. x/vuln@latest now needs Go 1.26 to
+          # *build* the scanner; auto lets Go download that toolchain without
+          # changing the 1.25.x used for go test.
+          GOTOOLCHAIN: auto
         run: go run golang.org/x/vuln/cmd/govulncheck@latest $GO_PKGS
 
   lint:

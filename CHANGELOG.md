@@ -19,6 +19,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **CI `test` and `trivy` on `main`.** `go test` was green; the job died on `govulncheck@latest`, which now needs Go 1.26 to build while `setup-go` pins `GOTOOLCHAIN=local` on 1.25.x. That step now sets `GOTOOLCHAIN=auto`. Trivy failed on `google.golang.org/grpc` CVE-2026-84445 in v1.83.1, which is an indirect OTel dep: bumped to v1.83.2
 - **A streamed agent run recorded its cost as nothing.** `ParseCost` unmarshalled stdout as one JSON document, so `--output-format stream-json` — several JSON objects, one event per line — failed to parse, fell through the "strip surrounding chatter" retry (which spans the whole stream and is also not one document), and returned nil: no `total_cost_usd`, no tokens, for a Fix that was billed in full. It now reads a JSON-lines stream backwards for the last event that actually carries billing fields. Backwards matters: the totals are on the final `result` event, and every earlier line parses fine while carrying nothing, so reading forwards would have reported a Fix as free. A stream killed before its result event still records no totals rather than inventing zeros. Only reachable today with `agent.stall_timeout` set, which is what switches the format on
 
 ## [0.0.1-beta.7] - 2026-09-08
