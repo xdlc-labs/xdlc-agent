@@ -147,7 +147,8 @@ func daemonCmd() *cobra.Command {
 			// wherever the daemon has no git identity of its own, which
 			// includes the shipped container (uid 65532, empty HOME).
 			repoMgr.SetCommitter(cfg.Agent.Committer.Name, cfg.Agent.Committer.Email)
-			runner := subagent.NewSubprocessRunner(subagent.Provider(cfg.Agent.Provider), cfg.Agent.Binary, cfg.Agent.Args, cfg.Agent.Timeout, cfg.Agent.ExtraEnvKeys)
+			runner := subagent.NewSubprocessRunner(subagent.Provider(cfg.Agent.Provider), cfg.Agent.Binary, cfg.Agent.Args, cfg.Agent.Timeout, cfg.Agent.ExtraEnvKeys).
+				WithStallTimeout(cfg.Agent.StallTimeout)
 			disp := dispatch.New(repoMgr, runner, log)
 			disp.Metrics = &metrics
 			disp.FixMode = cfg.Agent.FixMode
@@ -167,7 +168,8 @@ func daemonCmd() *cobra.Command {
 			disp.Providers = append([]string(nil), cfg.Agent.Providers...)
 			disp.RouteMinSuccess = cfg.Agent.RouteMinSuccess
 			disp.NewRunner = func(provider string) subagent.Runner {
-				return subagent.NewSubprocessRunner(subagent.Provider(provider), cfg.Agent.Binary, cfg.Agent.Args, cfg.Agent.Timeout, cfg.Agent.ExtraEnvKeys)
+				return subagent.NewSubprocessRunner(subagent.Provider(provider), cfg.Agent.Binary, cfg.Agent.Args, cfg.Agent.Timeout, cfg.Agent.ExtraEnvKeys).
+					WithStallTimeout(cfg.Agent.StallTimeout)
 			}
 			disp.ProviderStats = func() map[string]dispatch.ProviderStats {
 				all, err := audit.All()

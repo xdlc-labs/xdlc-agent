@@ -18,6 +18,7 @@ func fixCmd() *cobra.Command {
 		workdir      string
 		instructions string
 		timeout      time.Duration
+		stallTimeout time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "fix <github-actions-run-url>",
@@ -46,6 +47,7 @@ you want it to happen without you: xdlc init.`,
 				WorkDir:      workdir,
 				Instructions: instructions,
 				Timeout:      timeout,
+				StallTimeout: stallTimeout,
 				Out:          cmd.OutOrStdout(),
 			})
 			if errors.Is(err, oneshot.ErrNotRed) {
@@ -60,5 +62,8 @@ you want it to happen without you: xdlc init.`,
 	cmd.Flags().StringVar(&workdir, "dir", "", "clones and sessions root (default: $XDG_CACHE_HOME/xdlc)")
 	cmd.Flags().StringVarP(&instructions, "message", "m", "", "hint for the agent, e.g. \"the flake is in the seed data\"")
 	cmd.Flags().DurationVar(&timeout, "timeout", 20*time.Minute, "agent wall-clock limit")
+	// Off by default, matching the daemon: it switches the agent CLI to
+	// streaming output, so an operator has to ask for it.
+	cmd.Flags().DurationVar(&stallTimeout, "stall-timeout", 0, "kill the agent after this long with no output (default off)")
 	return cmd
 }

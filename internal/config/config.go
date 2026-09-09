@@ -264,6 +264,24 @@ type AgentConfig struct {
 	// goes on stdin — see internal/subagent). Leave unset for defaults.
 	Args    []string      `yaml:"args"`
 	Timeout time.Duration `yaml:"timeout"`
+	// StallTimeout kills a Fix whose coding agent has printed nothing for
+	// this long while its process is still alive, recording
+	// escalate=stalled. 0 (the default) disables the watchdog.
+	//
+	// agent.timeout already bounds a run, but the two catch different
+	// failures. A timeout is reached by a Fix that is working and slow; a
+	// stall is a Fix that stopped working and will still hold its
+	// worktree, its API session and the repo's Fix slot until the full
+	// timeout expires, and be billed for it. A headless agent cannot ask
+	// a human for input, so silence is not "waiting" — it is wedged.
+	//
+	// Opting in switches a buffered `--output-format json` argv to
+	// stream-json, because a watchdog with nothing to watch would kill
+	// every healthy run: see subagent.SubprocessRunner.WithStallTimeout.
+	// That changes the session's output.txt to one JSON event per line.
+	// Keep it well above how long the agent may legitimately think
+	// between tool calls — minutes, not seconds.
+	StallTimeout time.Duration `yaml:"stall_timeout"`
 	// MaxConcurrentFixes caps how many Fix subagent runs may execute at
 	// once. 0 → default 2. Per-process only (see docs/capacity.md).
 	MaxConcurrentFixes int `yaml:"max_concurrent_fixes"`

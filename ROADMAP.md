@@ -37,10 +37,13 @@ The pieces the open items below build on:
 
 Ordered by value ÷ effort.
 
-### 1. Live Fix states and a stall watchdog (S, high)
+### 1. Live Fix states in the console (S, high)
 
 **Today:** `FixQueueStats()` returns two integers and the console shows `fix_queue_depth`. A
-Fix that is running is indistinguishable from one that is wedged.
+Fix that is running is indistinguishable from one that is nearly done. The wedged case is
+already handled — `agent.stall_timeout` (and `xdlc fix --stall-timeout`) kills an agent that
+has gone silent and records `escalate=stalled` — but that is an audit row after the fact, not
+a live view.
 
 **Change:**
 
@@ -48,11 +51,10 @@ Fix that is running is indistinguishable from one that is wedged.
   existing SSE hub, keyed by session id so the console collapses them into one row.
 - `GET /api/fixes/active` → `[{session_id, repo, source, provider, state, since}]`.
 - Overview gets an "in flight" strip; Actions shows the same during a Manual Fix.
-- **Stalled, not waiting.** A headless agent cannot ask for input, so the failure mode to
-  catch is a stall: no output for `agent.stall_timeout` while the process is still alive →
-  kill the process group, record `escalate=stalled`. This only works with a streaming output
-  format (`claude -p --output-format json` prints nothing until it exits), so it stays opt-in
-  and ships together with a switch to `stream-json`, not before.
+
+The streaming provider output format this needed has shipped: `agent.stall_timeout` switches
+the `claude` argv to `stream-json`, so per-event progress is already on stdout to key states
+off, rather than one result object at exit.
 
 ### 2. Console view of a session (S, medium)
 
@@ -87,7 +89,7 @@ for watching a fleet-wide burst of Fixes at once. Needs item 1 first.
 
 ## Sequencing
 
-1. Item 1 only alongside the switch to a streaming provider output format.
+1. Item 1 can now use `stream-json` output, which the stall watchdog already switches on.
 2. Item 3 next: prior sessions now reach the prompt as a fixed block, and `prior_sessions`
    as an MCP tool is the version of that the agent can ask for more of.
 3. Item 4 needs item 1 first.

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -99,6 +100,26 @@ func Config(cfg *config.Config) []Issue {
 		issues = append(issues, Issue{Message: fmt.Sprintf(
 			"agent.sessions.prior_fixes %d is negative; use 0 to send no prior Fixes "+
 				"into the prompt, or a small positive count", *n)})
+	}
+
+	// A stall watchdog that cannot fire before the run's own deadline is
+	// only a slower version of the timeout it duplicates.
+	if st := cfg.Agent.StallTimeout; st > 0 {
+		if t := cfg.Agent.Timeout; t > 0 && st >= t {
+			issues = append(issues, Issue{Message: fmt.Sprintf(
+				"agent.stall_timeout (%s) is not shorter than agent.timeout (%s), so the run "+
+					"is killed by the timeout before the watchdog can report a stall; "+
+					"use a fraction of the timeout", st, t)})
+		}
+		if st < 30*time.Second {
+			issues = append(issues, Issue{Message: fmt.Sprintf(
+				"agent.stall_timeout %s is shorter than a coding agent's normal pause between "+
+					"tool calls; a healthy Fix would be killed as stalled. Use minutes", st)})
+		}
+	}
+	if cfg.Agent.StallTimeout < 0 {
+		issues = append(issues, Issue{Message: fmt.Sprintf(
+			"agent.stall_timeout %s is negative; use 0 to disable the watchdog", cfg.Agent.StallTimeout)})
 	}
 
 	// A malformed committer identity is not caught until the coding

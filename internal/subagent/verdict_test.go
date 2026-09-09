@@ -94,3 +94,20 @@ func TestParseVerdictTruncatesLongSummary(t *testing.T) {
 		t.Fatalf("summary not capped: %d bytes", len(v.Summary))
 	}
 }
+
+// With the stall watchdog on, the agent's last line arrives inside a
+// stream event rather than as the whole of stdout. The verdict is what
+// the retry ladder reads, so it has to survive that switch.
+func TestParseVerdictFromStreamJSON(t *testing.T) {
+	stream := `{"type":"system","subtype":"init","session_id":"abc"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"{\"xdlc_outcome\": \"fixed\", \"summary\": \"bumped the pinned version\"}"}]}}
+{"type":"result","subtype":"success","result":"{\"xdlc_outcome\": \"fixed\", \"summary\": \"bumped the pinned version\"}","total_cost_usd":0.42}
+`
+	v := ParseVerdict(stream)
+	if v.Outcome != OutcomeFixed {
+		t.Fatalf("outcome = %q, want fixed", v.Outcome)
+	}
+	if v.Summary != "bumped the pinned version" {
+		t.Fatalf("summary = %q", v.Summary)
+	}
+}
