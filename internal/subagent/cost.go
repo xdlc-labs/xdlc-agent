@@ -22,6 +22,12 @@ type cliCostJSON struct {
 		// figure next to them.
 		CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
 		CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
+		// cursor-agent's stream-json result carries the same four counts
+		// in camelCase and no dollar figure.
+		InputTokensCamel      *int64 `json:"inputTokens"`
+		OutputTokensCamel     *int64 `json:"outputTokens"`
+		CacheWriteTokensCamel *int64 `json:"cacheWriteTokens"`
+		CacheReadTokensCamel  *int64 `json:"cacheReadTokens"`
 	} `json:"usage"`
 }
 
@@ -102,6 +108,18 @@ func costFieldsOf(parsed cliCostJSON) map[string]any {
 		}
 		if u.CacheReadInputTokens != nil {
 			out["cache_read_tokens"] = *u.CacheReadInputTokens
+		}
+		if u.InputTokensCamel != nil {
+			out["input_tokens"] = *u.InputTokensCamel
+		}
+		if u.OutputTokensCamel != nil {
+			out["output_tokens"] = *u.OutputTokensCamel
+		}
+		if u.CacheWriteTokensCamel != nil {
+			out["cache_write_tokens"] = *u.CacheWriteTokensCamel
+		}
+		if u.CacheReadTokensCamel != nil {
+			out["cache_read_tokens"] = *u.CacheReadTokensCamel
 		}
 	}
 	if len(out) == 0 {

@@ -375,10 +375,11 @@ func TestWithStallTimeoutZeroChangesNothing(t *testing.T) {
 	}
 }
 
-// The three CLIs that already stream need no rewrite; touching their
-// argv could only break an invocation that works.
+// The CLIs that already stream need no rewrite; touching their argv
+// could only break an invocation that works. Cursor is not one of them:
+// its default text mode prints at exit, so it gets stream-json too.
 func TestWithStallTimeoutLeavesStreamingProvidersAlone(t *testing.T) {
-	for _, p := range []Provider{ProviderCodex, ProviderCursor, ProviderGemini} {
+	for _, p := range []Provider{ProviderCodex, ProviderGemini} {
 		base := NewSubprocessRunner(p, "", nil, time.Minute, nil)
 		got := base.WithStallTimeout(time.Minute)
 		if strings.Join(got.Args, " ") != strings.Join(base.Args, " ") {
@@ -387,5 +388,9 @@ func TestWithStallTimeoutLeavesStreamingProvidersAlone(t *testing.T) {
 		if got.StallTimeout != time.Minute {
 			t.Fatalf("%s watchdog not enabled", p)
 		}
+	}
+	cur := NewSubprocessRunner(ProviderCursor, "", nil, time.Minute, nil).WithStallTimeout(time.Minute)
+	if !strings.HasSuffix(strings.Join(cur.Args, " "), "--output-format stream-json") {
+		t.Fatalf("cursor must stream under the watchdog, got %v", cur.Args)
 	}
 }

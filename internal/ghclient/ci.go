@@ -239,6 +239,42 @@ func (c *Client) downloadJobLog(ctx context.Context, owner, repo string, jobID i
 	return string(body), nil
 }
 
+// RunState is one workflow run's status and conclusion, for waiting on
+// the runs of a specific commit.
+type RunState struct {
+	ID         int64
+	Name       string
+	Path       string
+	HTMLURL    string
+	Status     string // queued | in_progress | completed
+	Conclusion string
+}
+
+// RunsForSHA lists the workflow runs GitHub has for one commit on one
+// branch. Empty when CI has not started for it yet.
+func (c *Client) RunsForSHA(ctx context.Context, ownerRepo, branch, sha string) ([]RunState, error) {
+	owner, name, ok := strings.Cut(ownerRepo, "/")
+	if !ok {
+		return nil, fmt.Errorf("ghclient: repo %q must be \"owner/name\"", ownerRepo)
+	}
+	runs, _, err := c.gh.Actions.ListRepositoryWorkflowRuns(ctx, owner, name, &github.ListWorkflowRunsOptions{
+		Branch:      branch,
+		HeadSHA:     sha,
+		ListOptions: github.ListOptions{PerPage: 20},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ghclient: list runs for %s@%s: %w", ownerRepo, sha, err)
+	}
+	out := make([]RunState, 0, len(runs.WorkflowRuns))
+	for _, r := range runs.WorkflowRuns {
+		out = append(out, RunState{
+			ID: r.GetID(), Name: r.GetName(), Path: r.GetPath(), HTMLURL: r.GetHTMLURL(),
+			Status: r.GetStatus(), Conclusion: r.GetConclusion(),
+		})
+	}
+	return out, nil
+}
+
 // Run is the slice of a workflow run the one-shot `xdlc fix` needs to
 // stand in for the webhook it never received: which branch and commit
 // failed, and whether the run really is red.

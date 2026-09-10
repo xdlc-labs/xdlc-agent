@@ -90,6 +90,7 @@ function RepoDetail() {
                           </button>
                         ) : null}
                       </div>
+                      {e.error ? <div className="mt-1 text-breach">{e.error}</div> : null}
                       {e.chain_id ? (
                         <div className="mt-1 text-[10px] text-muted-foreground">chain {e.chain_id}</div>
                       ) : null}

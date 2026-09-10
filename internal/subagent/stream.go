@@ -61,7 +61,7 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 // rewrite for its own reason; applying both is harmless.
 func (r *SubprocessRunner) WithStreaming() *SubprocessRunner {
 	clone := *r
-	clone.Args = streamingArgs(r.Args)
+	clone.Args = streamingArgsFor(r.Provider, r.Args)
 	return &clone
 }
 
@@ -87,6 +87,11 @@ type streamEvent struct {
 	DurationMS int64   `json:"duration_ms"`
 	NumTurns   int     `json:"num_turns"`
 	CostUSD    float64 `json:"total_cost_usd"`
+	// ToolCall is cursor-agent's shape: one key naming the tool
+	// ("editToolCall", "shellToolCall", …) whose value carries args,
+	// beside bookkeeping keys (toolCallId, hookAdditionalContexts, …)
+	// of other shapes — hence raw, decoded per key below.
+	ToolCall map[string]json.RawMessage `json:"tool_call"`
 }
 
 // RenderStreamLine turns one line of agent output into what a console
@@ -126,6 +131,32 @@ func RenderStreamLine(line string) string {
 			}
 		}
 		return strings.Join(out, "\n")
+	case "tool_call":
+		// cursor-agent: one event when the call starts and one when it
+		// completes; the start is the one worth a line.
+		if ev.Subtype != "started" {
+			return ""
+		}
+		for name, raw := range ev.ToolCall {
+			if !strings.HasSuffix(name, "ToolCall") {
+				continue
+			}
+			var call struct {
+				Args map[string]any `json:"args"`
+			}
+			if json.Unmarshal(raw, &call) != nil {
+				continue
+			}
+			target := ""
+			for _, k := range []string{"command", "path", "file_path", "pattern", "query", "url"} {
+				if v, ok := call.Args[k].(string); ok && v != "" {
+					target = clip(strings.Join(strings.Fields(v), " "), 160)
+					break
+				}
+			}
+			return "▸ " + strings.TrimSuffix(name, "ToolCall") + " " + target
+		}
+		return ""
 	case "result":
 		status := "done"
 		if ev.IsError || (ev.Subtype != "" && ev.Subtype != "success") {

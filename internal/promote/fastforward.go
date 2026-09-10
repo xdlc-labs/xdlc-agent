@@ -87,6 +87,49 @@ func VerifyRemoteTip(ctx context.Context, repoDir string, env []string, branch, 
 	return nil
 }
 
+// RemoteTip fetches branch and returns the full SHA of origin/<branch>.
+func RemoteTip(ctx context.Context, repoDir string, env []string, branch string) (string, error) {
+	if err := repos.FetchOriginHeads(ctx, repoDir, env, branch); err != nil {
+		return "", fmt.Errorf("promote: fetch %s: %w", branch, err)
+	}
+	return revParse(ctx, repoDir, env, "origin/"+branch)
+}
+
+// ErrNotFastForward is returned by CheckFastForward when the prod branch
+// holds a commit the dev branch does not: pushing dev onto it would need
+// a merge or a force, and a promote does neither.
+var ErrNotFastForward = errors.New("promote: prod branch is not an ancestor of the dev branch")
+
+// CheckFastForward fetches both branches and reports whether
+// origin/<toBranch> can be fast-forwarded to origin/<fromBranch>. Run it
+// before anything is written: the tag carry commits to the dev branch,
+// and a Promote that fails afterwards would leave that commit behind.
+func CheckFastForward(ctx context.Context, repoDir string, env []string, fromBranch, toBranch string) error {
+	if err := repos.FetchOriginHeads(ctx, repoDir, env, fromBranch, toBranch); err != nil {
+		return fmt.Errorf("promote: fetch: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "merge-base", "--is-ancestor", "origin/"+toBranch, "origin/"+fromBranch) //nolint:gosec // see FastForward
+	applyEnv(cmd, env)
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			prodTip, _ := revParse(ctx, repoDir, env, "origin/"+toBranch)
+			devTip, _ := revParse(ctx, repoDir, env, "origin/"+fromBranch)
+			return fmt.Errorf("%w: origin/%s is at %s, origin/%s at %s; reconcile the branches (merge %s into %s) before promoting",
+				ErrNotFastForward, toBranch, short(prodTip), fromBranch, short(devTip), toBranch, fromBranch)
+		}
+		return fmt.Errorf("promote: merge-base: %w", err)
+	}
+	return nil
+}
+
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
 func revParse(ctx context.Context, repoDir string, env []string, rev string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", rev) //nolint:gosec // see FastForward
 	applyEnv(cmd, env)

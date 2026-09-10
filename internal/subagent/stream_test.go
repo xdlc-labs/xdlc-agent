@@ -72,9 +72,65 @@ func TestWithStreamingRewritesOnlyClaudeJSON(t *testing.T) {
 	if r.StallTimeout != 0 {
 		t.Fatal("streaming must not turn the watchdog on")
 	}
-	c := NewSubprocessRunner(ProviderCursor, "", nil, time.Minute, nil)
-	if got := c.WithStreaming().Args; strings.Join(got, " ") != strings.Join(c.Args, " ") {
-		t.Fatalf("cursor argv changed: %v", got)
+	// cursor's text mode prints nothing until exit; streaming adds the
+	// format it does support, and leaves an operator's own choice alone.
+	c := NewSubprocessRunner(ProviderCursor, "", nil, time.Minute, nil).WithStreaming()
+	if got := strings.Join(c.Args, " "); !strings.HasSuffix(got, "--output-format stream-json") {
+		t.Fatalf("cursor argv not streamed: %v", c.Args)
+	}
+	own := NewSubprocessRunner(ProviderCursor, "", []string{"-p", "--output-format", "text", "{{prompt}}"}, time.Minute, nil).WithStreaming()
+	if got := strings.Join(own.Args, " "); strings.Count(got, "--output-format") != 1 || !strings.Contains(got, "--output-format text") {
+		t.Fatalf("operator's cursor format overridden: %v", own.Args)
+	}
+	g := NewSubprocessRunner(ProviderGemini, "", nil, time.Minute, nil)
+	if got := g.WithStreaming().Args; strings.Join(got, " ") != strings.Join(g.Args, " ") {
+		t.Fatalf("gemini argv changed: %v", got)
+	}
+}
+
+// cursor-agent's stream-json: thinking deltas are noise, tool_call
+// events name the tool and its target, the result carries camelCase
+// usage and no dollar figure.
+func TestRenderStreamLineCursorShapes(t *testing.T) {
+	cases := map[string]struct{ in, want string }{
+		"thinking drops": {
+			`{"type":"thinking","subtype":"delta","text":"Creating note.txt","session_id":"x"}`, "",
+		},
+		"tool_call started shows tool and path": {
+			`{"type":"tool_call","subtype":"started","call_id":"c1\nfc_2","tool_call":{"editToolCall":{"args":{"path":"/w/note.txt","streamContent":"hello\n"}},"hookAdditionalContexts":[],"toolCallId":"c1","startedAtMs":"1789055378168"}}`,
+			"▸ edit /w/note.txt",
+		},
+		"tool_call completed drops": {
+			`{"type":"tool_call","subtype":"completed","call_id":"c1","tool_call":{"editToolCall":{"args":{"path":"/w/note.txt"},"result":{"success":{}}}}}`, "",
+		},
+		"shell tool shows the command": {
+			`{"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"go test ./..."}}}}`,
+			"▸ shell go test ./...",
+		},
+		"cursor result": {
+			`{"type":"result","subtype":"success","duration_ms":10623,"is_error":false,"result":"PONG","usage":{"inputTokens":17881,"outputTokens":101}}`,
+			"■ done, 10s",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := RenderStreamLine(c.in); got != c.want {
+				t.Fatalf("got %q want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestParseCostReadsCursorUsage(t *testing.T) {
+	out := "{\"type\":\"system\",\"subtype\":\"init\"}\n" +
+		"{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"PONG\"}]}}\n" +
+		"{\"type\":\"result\",\"subtype\":\"success\",\"duration_ms\":10623,\"result\":\"PONG\",\"usage\":{\"inputTokens\":17881,\"outputTokens\":101,\"cacheReadTokens\":21248,\"cacheWriteTokens\":0}}\n"
+	got := ParseCost(out)
+	if got["input_tokens"] != int64(17881) || got["output_tokens"] != int64(101) || got["cache_read_tokens"] != int64(21248) {
+		t.Fatalf("cursor usage not read: %v", got)
+	}
+	if _, has := got["total_cost_usd"]; has {
+		t.Fatal("cursor reports no dollar figure; none must be invented")
 	}
 }
 

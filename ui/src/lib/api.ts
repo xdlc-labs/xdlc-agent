@@ -46,6 +46,8 @@ export interface Event {
   seq?: number;
   /** Key into /api/sessions/{id} for a recorded Fix; empty otherwise. */
   session_id?: string;
+  /** Why ok is false: the dispatch error verbatim. */
+  error?: string;
 }
 
 /** meta.json of one Fix recording (internal/session.Meta). */
