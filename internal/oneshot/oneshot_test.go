@@ -26,6 +26,10 @@ type fakeGitHub struct {
 }
 
 func (f *fakeGitHub) GetRun(context.Context, string) (ghclient.Run, error) { return f.run, nil }
+func (f *fakeGitHub) FetchAllFailedJobLogs(context.Context, string) ([]ghclient.JobLog, error) {
+	return []ghclient.JobLog{{Name: "test", Conclusion: "failure", Text: "full log\n"}}, nil
+}
+
 func (f *fakeGitHub) FetchFailedJobLogs(context.Context, string) (string, error) {
 	return "--- FAIL: TestAdd (0.00s)\n    add_test.go:6: Add(2,3)=-1 want 5\n", nil
 }

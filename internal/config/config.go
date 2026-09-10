@@ -351,6 +351,43 @@ type AgentConfig struct {
 	Worktree WorktreeConfig `yaml:"worktree"`
 	// Committer is the git identity Fix commits are attributed to.
 	Committer CommitterConfig `yaml:"committer"`
+	// MCP attaches `xdlc mcp` to each Fix as a read-only tool server, so
+	// the agent can pull the full CI logs, prod metrics and prior Fix
+	// records on demand instead of receiving a 32 KB slice of them.
+	MCP MCPConfig `yaml:"mcp"`
+}
+
+// MCPConfig controls the per-Fix MCP server.
+//
+// The Fix prompt inlines the failed job's logs trimmed to 32 KB. On a
+// large CI matrix the one useful line is often the one that got cut,
+// and the agent had no way to ask for more. With this on, the daemon
+// saves every failed job's complete logs into the session directory
+// and starts `xdlc mcp --session <id>` under the agent CLI, exposing
+// ci_logs(job, grep, tail), ci_run, prod_metrics, prior_sessions,
+// session_diff, lessons, backlog and repo_config. The prompt then
+// carries the conclusion, the run URL and the last 60 log lines; the
+// agent pulls detail when it needs it. Every tool call is appended to
+// the session's tools.jsonl, so "what did it look at" stays answerable.
+//
+// The server reads only the session directory, the config file, the
+// daemon's LESSONS.md and BACKLOG.md, and the configured Prometheus.
+// It carries no GitHub token: the agent subprocess env never has one,
+// and the tool server runs inside that env.
+type MCPConfig struct {
+	// Enabled defaults to false. Off until measured.
+	Enabled *bool `yaml:"enabled"`
+	// Binary is the xdlc executable the agent CLI should start for the
+	// server. Empty → the running daemon's own executable, which is the
+	// right answer everywhere except a container whose PATH differs
+	// between the daemon and the agent.
+	Binary string `yaml:"binary"`
+}
+
+// MCPEnabled reports whether the per-Fix MCP server is on. It needs
+// session recording: the tools read from the session directory.
+func (a AgentConfig) MCPEnabled() bool {
+	return a.MCP.Enabled != nil && *a.MCP.Enabled && a.SessionsEnabled()
 }
 
 // CommitterConfig is the git author/committer identity xdlc hands the

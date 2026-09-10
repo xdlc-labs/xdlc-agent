@@ -116,6 +116,15 @@ paths:
   /api/events:
     get:
       summary: SSE audit fan-out
+      description: >-
+        Audit records ride the default (unnamed) event with the audit
+        sequence as the SSE id. Two named events share the stream and
+        carry no id: "fix_state" (an ActiveFix, on every phase change,
+        plus one per running Fix on connect) and "fix_output" (a
+        FixOutput chunk of what a running Fix's agent printed, rendered
+        to prose, tool calls and the result; on connect one snapshot per
+        running Fix that has printed anything). A client written before
+        either keeps working: its onmessage never sees named events.
       parameters:
         - name: access_token
           in: query
@@ -143,6 +152,107 @@ paths:
                   fixes:
                     type: array
                     items: { $ref: "#/components/schemas/ActiveFix" }
+  /api/sessions:
+    get:
+      summary: Fix recordings, newest first (operator)
+      description: >-
+        The session directories under agent.sessions.dir. Recordings are
+        unscrubbed — a prompt embeds CI logs — so every /api/sessions route
+        requires the operator role; the viewer token gets 403. With
+        recording disabled the list is empty and enabled is false.
+      parameters:
+        - name: repo
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions, enabled]
+                properties:
+                  enabled: { type: boolean }
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Session" }
+        "403":
+          description: viewer role
+  /api/sessions/{id}:
+    get:
+      summary: One recording's meta, file list and output tail (operator)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session, files, output_tail]
+                properties:
+                  session: { $ref: "#/components/schemas/Session" }
+                  files:
+                    type: array
+                    items: { type: string }
+                    description: File names present in the session directory.
+                  output_tail:
+                    type: string
+                    description: Last 60 lines the agent printed on its final attempt.
+        "404":
+          description: unknown session, or recording disabled
+  /api/sessions/{id}/diff:
+    get:
+      summary: The patch the Fix produced (operator)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: text/plain unified diff
+        "404":
+          description: the run delivered no patch, or unknown session
+  /api/sessions/{id}/prompt:
+    get:
+      summary: The prompt the agent was given (operator)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: attempt
+          in: query
+          description: 1-based agent run within the Fix; default 1.
+          schema: { type: integer, default: 1 }
+      responses:
+        "200":
+          description: text/plain, unscrubbed
+        "404":
+          description: no prompt for that attempt, or unknown session
+  /api/sessions/{id}/output:
+    get:
+      summary: Everything the agent printed (operator)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: attempt
+          in: query
+          schema: { type: integer, default: 1 }
+      responses:
+        "200":
+          description: text/plain
+        "404":
+          description: no output for that attempt, or unknown session
   /api/prs:
     get:
       summary: Fix-PR work queue
@@ -263,6 +373,40 @@ components:
         url: { type: string }
         chain_id: { type: string }
         seq: { type: integer }
+        session_id:
+          type: string
+          description: >-
+            Key into /api/sessions/{id} for a Fix that was recorded. Empty
+            for gate signals and when recording is off.
+    Session:
+      type: object
+      description: meta.json of one Fix recording (internal/session.Meta).
+      required: [id, repo, source, kind, provider, started_at]
+      properties:
+        id: { type: string }
+        repo: { type: string }
+        source: { type: string }
+        kind: { type: string }
+        provider: { type: string }
+        fix_mode: { type: string }
+        manual: { type: boolean }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        duration_ms: { type: integer }
+        status: { type: string, enum: [ok, error, ""] }
+        error: { type: string }
+        base_sha: { type: string }
+        head_sha: { type: string }
+        branch: { type: string }
+        changed_files: { type: integer }
+        pr_url: { type: string }
+        cost:
+          type: object
+          additionalProperties: true
+          description: total_cost_usd, input_tokens, output_tokens, cache_* as the agent CLI reported them.
+        attempts: { type: integer }
+        outcome: { type: string, enum: [fixed, gave_up, needs_human, ""] }
+        summary: { type: string }
     Repo:
       type: object
       properties:
@@ -373,6 +517,27 @@ components:
         attempt:
           type: integer
           description: 1-based agent run within this Fix (agent.fix_attempts ladder).
+    FixOutput:
+      type: object
+      required: [id, text]
+      description: >-
+        One "fix_output" SSE event: a chunk of a running Fix's agent
+        output. The daemon keeps the last 16 KiB per Fix, so a console is
+        a live view, not the record; the session recording has it all.
+      properties:
+        id:
+          type: string
+          description: The ActiveFix id this output belongs to.
+        repo: { type: string }
+        text:
+          type: string
+          description: Newline-terminated rendered lines.
+        snapshot:
+          type: boolean
+          description: >-
+            When true, text is the whole tail kept so far and replaces what
+            the client holds — sent on connect, and to a client that fell
+            behind and had chunks dropped.
     FixPR:
       type: object
       properties:

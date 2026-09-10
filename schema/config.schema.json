@@ -149,7 +149,8 @@
         "fix_plan": { "type": "boolean" },
         "rules_file": { "type": "string" },
         "sessions": { "$ref": "#/$defs/Sessions" },
-        "committer": { "$ref": "#/$defs/Committer" }
+        "committer": { "$ref": "#/$defs/Committer" },
+        "mcp": { "$ref": "#/$defs/MCP" }
       }
     },
     "Committer": {
@@ -159,6 +160,15 @@
       "properties": {
         "name": { "type": "string" },
         "email": { "type": "string" }
+      }
+    },
+    "MCP": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-Fix read-only MCP tool server (xdlc mcp) attached to the agent CLI, so it can pull full CI logs, prod metrics and prior Fix records on demand. Needs agent.sessions enabled. Default off.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "binary": { "type": "string", "description": "xdlc executable the agent CLI starts for the server. Empty: the daemon's own executable." }
       }
     },
     "Sessions": {

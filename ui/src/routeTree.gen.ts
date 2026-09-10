@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ActionsRouteImport } from './routes/actions'
 import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as DocsRouteImport } from './routes/docs'
+import { Route as FixesRouteImport } from './routes/fixes'
 import { Route as GatesRouteImport } from './routes/gates'
 import { Route as ReposRouteImport } from './routes/repos'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -37,6 +38,11 @@ const ActivityRoute = ActivityRouteImport.update({
 const DocsRoute = DocsRouteImport.update({
   id: '/docs',
   path: '/docs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FixesRoute = FixesRouteImport.update({
+  id: '/fixes',
+  path: '/fixes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GatesRoute = GatesRouteImport.update({
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/actions': typeof ActionsRoute
   '/activity': typeof ActivityRoute
   '/docs': typeof DocsRoute
+  '/fixes': typeof FixesRoute
   '/gates': typeof GatesRoute
   '/repos': typeof ReposRouteWithChildren
   '/settings': typeof SettingsRoute
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   '/actions': typeof ActionsRoute
   '/activity': typeof ActivityRoute
   '/docs': typeof DocsRoute
+  '/fixes': typeof FixesRoute
   '/gates': typeof GatesRoute
   '/settings': typeof SettingsRoute
   '/repos/$id': typeof ReposIdRoute
@@ -92,6 +100,7 @@ export interface FileRoutesById {
   '/actions': typeof ActionsRoute
   '/activity': typeof ActivityRoute
   '/docs': typeof DocsRoute
+  '/fixes': typeof FixesRoute
   '/gates': typeof GatesRoute
   '/repos': typeof ReposRouteWithChildren
   '/settings': typeof SettingsRoute
@@ -105,6 +114,7 @@ export interface FileRouteTypes {
     | '/actions'
     | '/activity'
     | '/docs'
+    | '/fixes'
     | '/gates'
     | '/repos'
     | '/settings'
@@ -116,6 +126,7 @@ export interface FileRouteTypes {
     | '/actions'
     | '/activity'
     | '/docs'
+    | '/fixes'
     | '/gates'
     | '/settings'
     | '/repos/$id'
@@ -126,6 +137,7 @@ export interface FileRouteTypes {
     | '/actions'
     | '/activity'
     | '/docs'
+    | '/fixes'
     | '/gates'
     | '/repos'
     | '/settings'
@@ -138,6 +150,7 @@ export interface RootRouteChildren {
   ActionsRoute: typeof ActionsRoute
   ActivityRoute: typeof ActivityRoute
   DocsRoute: typeof DocsRoute
+  FixesRoute: typeof FixesRoute
   GatesRoute: typeof GatesRoute
   ReposRoute: typeof ReposRouteWithChildren
   SettingsRoute: typeof SettingsRoute
@@ -171,6 +184,13 @@ declare module '@tanstack/react-router' {
       path: '/docs'
       fullPath: '/docs'
       preLoaderRoute: typeof DocsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fixes': {
+      id: '/fixes'
+      path: '/fixes'
+      fullPath: '/fixes'
+      preLoaderRoute: typeof FixesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/gates': {
@@ -228,6 +248,7 @@ const rootRouteChildren: RootRouteChildren = {
   ActionsRoute: ActionsRoute,
   ActivityRoute: ActivityRoute,
   DocsRoute: DocsRoute,
+  FixesRoute: FixesRoute,
   GatesRoute: GatesRoute,
   ReposRoute: ReposRouteWithChildren,
   SettingsRoute: SettingsRoute,

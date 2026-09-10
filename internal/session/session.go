@@ -10,8 +10,8 @@
 //
 // Files are local and never uploaded. They are also unscrubbed: a Fix
 // prompt embeds CI logs, and CI logs occasionally embed secrets. The
-// directory is 0700 and entries are 0600; see docs/sessions.md and
-// docs/SECURITY.md.
+// directory is 0700 and entries are 0600. The daemon serves them over
+// /api/sessions to the operator role only; see SECURITY.md.
 package session
 
 import (
@@ -43,6 +43,17 @@ const (
 	FilePlan   = "plan.txt"
 	FileOutput = "output.txt"
 	FileDiff   = "diff.patch"
+	// FileCILogs holds every failed job's complete logs when agent.mcp
+	// is on — the untrimmed source the ci_logs tool reads. Sections are
+	// separated by "=== job: <name> (<conclusion>) ===" lines.
+	FileCILogs = "ci-logs.txt"
+	// FileCIRun is the run's metadata (JSON) for the ci_run tool.
+	FileCIRun = "ci-run.json"
+	// FileTools is one JSON line per MCP tool call the agent made.
+	FileTools = "tools.jsonl"
+	// FileMCP is the MCP client config handed to an agent CLI that reads
+	// one from a path (Claude Code).
+	FileMCP = "mcp.json"
 )
 
 // AttemptFile returns the artifact name for one attempt of a Fix that
@@ -90,6 +101,9 @@ type Meta struct {
 	// Summary is the agent's one-line description of what it did, from
 	// that same verdict.
 	Summary string `json:"summary,omitempty"`
+	// RunURL is the CI run this Fix answered, when the source was CI.
+	// The MCP tool server scopes ci_run and ci_logs to it.
+	RunURL string `json:"run_url,omitempty"`
 }
 
 // Store writes and reads session directories under Root.
@@ -350,6 +364,30 @@ func (s *Store) Path(id string) (string, error) {
 	return dir, nil
 }
 
+// AppendLine appends one line to a session file, creating it 0600. It
+// is for the tools.jsonl log written by the MCP server, a separate
+// process from the daemon that owns meta.json: append-only, one line
+// per call, never rewritten, so the two never race over one file.
+func (s *Store) AppendLine(id, name, line string) error {
+	dir, err := s.Path(id)
+	if err != nil {
+		return err
+	}
+	if name != filepath.Base(name) {
+		return fmt.Errorf("session: bad file name %q", name)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: dir is Path-validated, name is a base name
+	if err != nil {
+		return fmt.Errorf("session: append %s: %w", name, err)
+	}
+	defer func() { _ = f.Close() }()
+	if !strings.HasSuffix(line, "\n") {
+		line += "\n"
+	}
+	_, err = f.WriteString(line)
+	return err
+}
+
 // ReadFile returns one artifact from a session ("" when absent).
 func (s *Store) ReadFile(id, name string) (string, error) {
 	dir, err := s.Path(id)
@@ -452,21 +490,21 @@ const DefaultPriorDiffLines = 40
 // what a following run needs is only what was tried and whether it
 // worked, so a whole session is reduced to its head.
 type PriorFix struct {
-	ID        string
-	StartedAt time.Time
+	ID        string    `json:"id"`
+	StartedAt time.Time `json:"started_at"`
 	// Status is the daemon's own verdict — "ok" or "error".
-	Status string
+	Status string `json:"status"`
 	// Outcome and Summary are the agent's self-report ("fixed",
 	// "bumped the pinned version"), empty when it emitted no verdict.
-	Outcome string
-	Summary string
+	Outcome string `json:"outcome,omitempty"`
+	Summary string `json:"summary,omitempty"`
 	// Changed is how many files the patch touched.
-	Changed int
+	Changed int `json:"changed_files"`
 	// Diff is the first diffLines lines of diff.patch, "" when the run
 	// delivered nothing — which is itself worth telling the next run.
-	Diff string
+	Diff string `json:"diff,omitempty"`
 	// DiffTruncated reports that Diff is only the head of the patch.
-	DiffTruncated bool
+	DiffTruncated bool `json:"diff_truncated,omitempty"`
 }
 
 // Recent returns up to limit finished sessions for repo with the same

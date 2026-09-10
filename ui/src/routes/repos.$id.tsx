@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { fetchRepo } from "@/lib/api";
 import { PageHeader, ActionTag } from "@/components/status";
 import { QueryError, Skeleton, EmptyState } from "@/components/query-state";
+import { SessionPanel } from "@/components/session-panel";
 
 export const Route = createFileRoute("/repos/$id")({
   head: ({ params }) => ({
@@ -20,6 +22,9 @@ function RepoDetail() {
   });
   const repo = data?.repo;
   const timeline = data?.timeline ?? [];
+  // Which timeline row has its Fix recording open. One at a time: a
+  // recording is a wall of text, and two open at once is a scroll trap.
+  const [openSession, setOpenSession] = useState<string | null>(null);
 
   return (
     <div>
@@ -64,22 +69,37 @@ function RepoDetail() {
             ) : (
               <ol className="border border-border bg-card font-mono text-[11px]">
                 {timeline.map((e) => (
-                  <li key={e.id} className="border-b border-border px-4 py-3 last:border-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-muted-foreground">{e.ts}</span>
-                      <ActionTag action={e.action} />
-                      <span className="text-muted-foreground">{e.gate}</span>
-                      <span className="text-foreground">{e.signal}</span>
-                      <span className={e.ok ? "text-pass" : "text-breach"}>{e.ok ? "ok" : "err"}</span>
-                    </div>
-                    {e.chain_id ? (
-                      <div className="mt-1 text-[10px] text-muted-foreground">chain {e.chain_id}</div>
-                    ) : null}
-                    {e.evidence ? (
-                      <div className="mt-1 truncate text-muted-foreground" title={e.evidence}>
-                        {e.evidence}
+                  <li key={e.id} className="border-b border-border last:border-0">
+                    <div className="px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-muted-foreground">{e.ts}</span>
+                        <ActionTag action={e.action} />
+                        <span className="text-muted-foreground">{e.gate}</span>
+                        <span className="text-foreground">{e.signal}</span>
+                        <span className={e.ok ? "text-pass" : "text-breach"}>{e.ok ? "ok" : "err"}</span>
+                        {e.session_id ? (
+                          <button
+                            type="button"
+                            aria-expanded={openSession === e.session_id}
+                            onClick={() =>
+                              setOpenSession(openSession === e.session_id ? null : (e.session_id ?? null))
+                            }
+                            className="ml-auto border border-border px-2 py-0.5 text-muted-foreground hover:bg-surface hover:text-foreground"
+                          >
+                            {openSession === e.session_id ? "− recording" : "+ recording"}
+                          </button>
+                        ) : null}
                       </div>
-                    ) : null}
+                      {e.chain_id ? (
+                        <div className="mt-1 text-[10px] text-muted-foreground">chain {e.chain_id}</div>
+                      ) : null}
+                      {e.evidence ? (
+                        <div className="mt-1 truncate text-muted-foreground" title={e.evidence}>
+                          {e.evidence}
+                        </div>
+                      ) : null}
+                    </div>
+                    {e.session_id && openSession === e.session_id ? <SessionPanel id={e.session_id} /> : null}
                   </li>
                 ))}
               </ol>
