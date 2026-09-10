@@ -66,7 +66,7 @@ is real `claude`, but the bug is a toy one, so treat it as a tour of the mechani
 API key at all — a stub agent that writes a canned patch, which exercises the worktree, the
 push and the gate re-check, and nothing about the agent.
 
-The installer takes the newest release. Pin one with `XDLC_VERSION=v1.0.0`, or pick a tag
+The installer takes the newest release. Pin one with `XDLC_VERSION=v1.0.1`, or pick a tag
 from [Releases](https://github.com/xdlc-labs/xdlc-agent/releases).
 
 The CLI is `xdlc`. The container image, Helm chart and this repository are `xdlc-agent`.
@@ -194,7 +194,7 @@ docker run --rm -p 8080:8080 \
   -v "$PWD/config.yaml:/etc/xdlc-agent/config.yaml:ro" \
   -e XDLC_API_TOKEN -e GITHUB_TOKEN -e GITHUB_WEBHOOK_SECRET \
   -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CURSOR_API_KEY \
-  ghcr.io/xdlc-labs/xdlc-agent:1.0.0 \
+  ghcr.io/xdlc-labs/xdlc-agent:1.0.1 \
   daemon --config /etc/xdlc-agent/config.yaml
 ```
 </details>
@@ -206,7 +206,7 @@ Single replica: the audit DB is single-writer.
 
 ```bash
 helm install xdlc-agent deploy/helm/xdlc-agent \
-  --set image.tag=1.0.0 \
+  --set image.tag=1.0.1 \
   --set existingSecret=xdlc-agent-secrets \
   --set-file config=config.yaml
 ```
