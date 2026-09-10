@@ -227,6 +227,11 @@ func (a *Authenticator) keyFor(ctx context.Context, kid string) (*rsa.PublicKey,
 	a.mu.Lock()
 	key, ok := a.keys[kid]
 	stale := a.now().Sub(a.keysFetched) > time.Minute
+	if !ok && stale {
+		// Count the attempt now, success or not: a JWKS endpoint that is
+		// down must not turn every unknown-kid token into another fetch.
+		a.keysFetched = a.now()
+	}
 	a.mu.Unlock()
 	if ok {
 		return key, nil

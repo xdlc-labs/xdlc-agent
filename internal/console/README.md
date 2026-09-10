@@ -1,14 +1,15 @@
 # Ops console embed
 
-Built UI assets land in `dist/` (must include `index.html`).
+`dist/` is the built UI (`ui/`), committed so `go build` / `go run` from
+source ship the console without a bun toolchain. `embed.go` mounts it at
+`/` when `dist/index.html` exists; with an empty `dist/` the daemon stays
+API-only.
 
-Local / CI without a UI build: leave `dist/` empty aside from `.gitkeep`
-so `go build` works; the daemon stays API-only and skips mounting `/`.
+Refresh after changing `ui/`:
 
 ```sh
-cd ui && bun install && bun run build
-# vite build writes ui/dist/ — copy it into the embed path:
-cp -r dist/. ../internal/console/dist/
+make ui   # bun install + vite build, then copies ui/dist/ into dist/
 ```
 
-`deploy/Dockerfile` does the bun build + copy before compiling the agent.
+`deploy/Dockerfile` and the release workflow rebuild it the same way, so a
+stale committed copy only affects local source builds.

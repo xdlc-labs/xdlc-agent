@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -33,7 +34,7 @@ func signValue(secret []byte, payload []byte) string {
 
 // verifyValue checks the HMAC and returns the decoded payload bytes.
 func verifyValue(secret []byte, value string) ([]byte, error) {
-	i := indexByte(value, '.')
+	i := strings.IndexByte(value, '.')
 	if i < 0 {
 		return nil, fmt.Errorf("authn: malformed signed value")
 	}
@@ -53,15 +54,6 @@ func verifyValue(secret []byte, value string) ([]byte, error) {
 		return nil, fmt.Errorf("authn: signature mismatch")
 	}
 	return payload, nil
-}
-
-func indexByte(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
-		}
-	}
-	return -1
 }
 
 // issueSession signs a session cookie value for (sub, email, role),

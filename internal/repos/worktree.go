@@ -89,15 +89,11 @@ func (m *Manager) Worktree(ctx context.Context, repo, id string) (*Worktree, err
 	if _, ok := m.repos[repo]; !ok {
 		return nil, fmt.Errorf("repos: unknown repo %q", repo)
 	}
+	// Both paths are already absolute: NewManager makes root absolute
+	// and Dir does the same for a per-repo override.
 	base := m.Dir(repo)
-	if abs, err := filepath.Abs(base); err == nil {
-		base = abs
-	}
 	target := m.Branch(repo)
 	dir := m.worktreeDir(repo, id)
-	if abs, err := filepath.Abs(dir); err == nil {
-		dir = abs
-	}
 	if pathInside(base, dir) {
 		return nil, fmt.Errorf("repos: worktree %s would land inside clone %s", dir, base)
 	}
@@ -129,11 +125,6 @@ func (m *Manager) Worktree(ctx context.Context, repo, id string) (*Worktree, err
 	unlock()
 	if err != nil {
 		return nil, fmt.Errorf("repos: worktree add %s: %w", repo, err)
-	}
-	if pathInside(base, dir) {
-		m.markLive(dir, false)
-		_ = m.removeWorktreeAt(ctx, base, dir, branch)
-		return nil, fmt.Errorf("repos: worktree %s resolved inside clone %s", dir, base)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		m.markLive(dir, false)
@@ -211,11 +202,11 @@ func (m *Manager) HasCommits(ctx context.Context, w *Worktree) bool {
 	if w == nil {
 		return false
 	}
-	head, err := gitOutput(ctx, w.Dir, "rev-parse", "HEAD")
+	head, err := GitOutput(ctx, w.Dir, "rev-parse", "HEAD")
 	if err != nil {
 		return false
 	}
-	base, err := gitOutput(ctx, w.Dir, "rev-parse", "origin/"+w.Target)
+	base, err := GitOutput(ctx, w.Dir, "rev-parse", "origin/"+w.Target)
 	if err != nil {
 		// Without a comparison point, assume there is something to push
 		// rather than silently dropping the agent's work.

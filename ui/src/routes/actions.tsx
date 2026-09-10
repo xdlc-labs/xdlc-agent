@@ -1,7 +1,8 @@
 import { useCallback, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchFixPRs, fetchOverview, policy, postAction, type ManualAction } from "@/lib/api";
+import { fetchFixPRs, policy, postAction, type ManualAction } from "@/lib/api";
+import { useOverview } from "@/lib/overview-query";
 import { fetchRole } from "@/lib/auth";
 import { PageHeader, ActionTag } from "@/components/status";
 import { Dialog } from "@/components/dialog";
@@ -25,11 +26,7 @@ type Pending = {
 
 function Actions() {
   const queryClient = useQueryClient();
-  const { data, isPending, isError, error, refetch } = useQuery({
-    queryKey: ["overview"],
-    queryFn: fetchOverview,
-    refetchInterval: 10_000,
-  });
+  const { data, isPending, isError, error, refetch } = useOverview();
   const { data: role } = useQuery({ queryKey: ["role"], queryFn: fetchRole, refetchInterval: 60_000 });
   const canOperate = role === "operator";
   const [showAllPRs, setShowAllPRs] = useState(false);

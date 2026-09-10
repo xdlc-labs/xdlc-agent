@@ -75,6 +75,18 @@ func VerifyRemoteTip(ctx context.Context, repoDir string, env []string, branch, 
 	if err := repos.FetchOriginHeads(ctx, repoDir, env, branch); err != nil {
 		return fmt.Errorf("promote: fetch %s: %w", branch, err)
 	}
+	return VerifyFetchedTip(ctx, repoDir, env, branch, wantSHA)
+}
+
+// VerifyFetchedTip is VerifyRemoteTip without the fetch: it judges the
+// origin/<branch> the clone already has. For a caller that has just
+// fetched every branch a Promote touches in one go (dispatch's Promote
+// does, so the pinned path fetches twice rather than four times) and
+// does not want each check to fetch again.
+func VerifyFetchedTip(ctx context.Context, repoDir string, env []string, branch, wantSHA string) error {
+	if !isHexSHA(wantSHA) {
+		return fmt.Errorf("promote: %q is not a git object name", wantSHA)
+	}
 	got, err := revParse(ctx, repoDir, env, "origin/"+branch)
 	if err != nil {
 		return err
@@ -108,6 +120,13 @@ func CheckFastForward(ctx context.Context, repoDir string, env []string, fromBra
 	if err := repos.FetchOriginHeads(ctx, repoDir, env, fromBranch, toBranch); err != nil {
 		return fmt.Errorf("promote: fetch: %w", err)
 	}
+	return CheckFetchedFastForward(ctx, repoDir, env, fromBranch, toBranch)
+}
+
+// CheckFetchedFastForward is CheckFastForward without the fetch,
+// judging the origin/ refs the clone already has. See VerifyFetchedTip
+// for when that is the right call.
+func CheckFetchedFastForward(ctx context.Context, repoDir string, env []string, fromBranch, toBranch string) error {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "merge-base", "--is-ancestor", "origin/"+toBranch, "origin/"+fromBranch) //nolint:gosec // see FastForward
 	applyEnv(cmd, env)
 	if err := cmd.Run(); err != nil {

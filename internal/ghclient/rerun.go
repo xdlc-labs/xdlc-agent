@@ -20,8 +20,38 @@ func (c *Client) RerunFailedJobs(ctx context.Context, runURL string) error {
 	return nil
 }
 
-// WaitRunConclusion polls the workflow run until it leaves queued/in_progress
-// or ctx/timeout expires. Returns the final conclusion (success, failure, …).
+// maxPollInterval caps the back-off between two polls of a rerun. A
+// rerun takes minutes; asking every five seconds for all of them spent
+// API budget on answers that could not have changed yet.
+const maxPollInterval = 30 * time.Second
+
+// pollSleep waits d or until ctx is done. A variable so tests can run
+// the poll loop without real time passing.
+var pollSleep = func(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
+}
+
+// nextPollInterval doubles the wait between polls up to maxPollInterval.
+func nextPollInterval(cur time.Duration) time.Duration {
+	next := cur * 2
+	if next > maxPollInterval {
+		return maxPollInterval
+	}
+	return next
+}
+
+// WaitRunConclusion polls the workflow run until it leaves
+// queued/in_progress or ctx/timeout expires. Returns the final
+// conclusion (success, failure, …).
+//
+// interval is the first wait; each following wait doubles, up to
+// maxPollInterval, so a ten-minute rerun costs a couple of dozen calls
+// rather than a hundred and twenty.
 func (c *Client) WaitRunConclusion(ctx context.Context, runURL string, interval, timeout time.Duration) (string, error) {
 	owner, repo, runID, err := ParseRunURL(runURL)
 	if err != nil {
@@ -46,11 +76,10 @@ func (c *Client) WaitRunConclusion(ctx context.Context, runURL string, interval,
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("ghclient: wait run %d: timeout (status=%s)", runID, status)
 		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(interval):
+		if err := pollSleep(ctx, interval); err != nil {
+			return "", err
 		}
+		interval = nextPollInterval(interval)
 	}
 }
 

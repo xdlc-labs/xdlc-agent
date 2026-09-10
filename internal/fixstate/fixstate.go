@@ -14,6 +14,7 @@
 package fixstate
 
 import (
+	"bytes"
 	"sort"
 	"sync"
 	"time"
@@ -87,7 +88,7 @@ type Tracker struct {
 	nextID int
 	// tails holds the last tailBytes of each running Fix's agent output;
 	// outSubs are the "fix_output" listeners. See output.go.
-	tails   map[string]string
+	tails   map[string]*bytes.Buffer
 	outSubs map[int]*outputSub
 }
 
@@ -140,13 +141,12 @@ func (t *Tracker) Set(f Fix) {
 	} else {
 		t.active[f.ID] = f
 	}
-	subs := make([]chan Fix, 0, len(t.subs))
+	// Send while still holding the lock. The sends never block, and the
+	// lock is what makes them safe: unsub closes a channel under the
+	// same lock, so no send can land on a channel that has been closed.
+	// Snapshotting the map and sending after Unlock left exactly that
+	// gap open, and a console disconnecting mid-transition hit it.
 	for _, ch := range t.subs {
-		subs = append(subs, ch)
-	}
-	t.mu.Unlock()
-
-	for _, ch := range subs {
 		select {
 		case ch <- f:
 		default:
@@ -155,6 +155,7 @@ func (t *Tracker) Set(f Fix) {
 			// by a console that stopped reading.
 		}
 	}
+	t.mu.Unlock()
 }
 
 // Active returns the running Fixes, oldest state change first, so a
@@ -197,10 +198,12 @@ func (t *Tracker) Subscribe() (<-chan Fix, func()) {
 	var once sync.Once
 	return ch, func() {
 		once.Do(func() {
+			// Close under the lock: Set sends under it, so once this
+			// returns no send can race the close.
 			t.mu.Lock()
 			delete(t.subs, id)
-			t.mu.Unlock()
 			close(ch)
+			t.mu.Unlock()
 		})
 	}
 }

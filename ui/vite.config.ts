@@ -4,7 +4,6 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import tsConfigPaths from "vite-tsconfig-paths";
 
 const uiRoot = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(uiRoot, "..");
@@ -16,6 +15,9 @@ const repoRoot = path.resolve(uiRoot, "..");
 // (/api/* via react-query) are handled elsewhere — this UI doesn't
 // need a Node server of its own.
 export default defineConfig({
+  // Vite 8 reads the `paths` map from tsconfig.json itself, so the `@/`
+  // alias needs no plugin.
+  resolve: { tsconfigPaths: true },
   server: {
     port: 5173,
     strictPort: false,
@@ -28,7 +30,6 @@ export default defineConfig({
     },
   },
   plugins: [
-    tsConfigPaths({ projects: ["./tsconfig.json"] }),
     tailwindcss(),
     tanstackRouter({
       target: "react",

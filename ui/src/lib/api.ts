@@ -1,7 +1,5 @@
 // Client for the xdlc daemon /api/*. Fetch helpers throw on failure so
-// React Query can distinguish loading / empty / error (issue #7). Soft
-// "daemon stopped" shells are only built when a caller explicitly asks
-// via emptyOverview().
+// React Query can distinguish loading / empty / error (issue #7).
 //
 // Types mirror handlers; contract source of truth: openapi/openapi.yaml (#15).
 
@@ -136,9 +134,6 @@ export const policy: {
   { signal: "PROD error-rate breach", source: "Prometheus", action: "Revert", note: "git revert on main, rollback-first" },
 ];
 
-/** Last /api fetch succeeded (module-level; updated by fetch helpers). */
-export let backendReachable = true;
-
 /** HTTP status of last failed fetch, or null if last fetch ok / network error. */
 export let lastFetchStatus: number | null = null;
 
@@ -151,32 +146,6 @@ export function isDegraded(overview: Overview): boolean {
   );
 }
 
-/** Build a stopped-daemon Overview shell (tests / explicit fallbacks only). */
-export const emptyOverview = (webhook = "backend unreachable"): Overview => ({
-  daemon: {
-    status: "stopped",
-    version: "—",
-    env: "—",
-    uptime: "—",
-    webhook,
-    configPath: "—",
-    gitopsDir: "—",
-    agentProvider: "claude",
-  },
-  pipeline: [
-    { stage: "github", label: "GitHub", status: "idle", detail: "start xdlc daemon" },
-    { stage: "ci", label: "CI gate", status: "idle", detail: "—" },
-    { stage: "dev", label: "DEV smoke", status: "idle", detail: "—" },
-    { stage: "promote", label: "Promote", status: "idle", detail: "—" },
-    { stage: "prod", label: "PROD health", status: "idle", detail: "—" },
-  ],
-  kpis: { reposWatched: 0, fixes: 0, promotes: 0, reverts: 0, lastActionAt: "—", backlogOpen: 0 },
-  gates: [],
-  repos: [],
-  events: [],
-  backlogMd: "# BACKLOG\n\n(daemon not reachable — run `xdlc daemon`)\n",
-});
-
 export function degradeWebhook(status: number | null): string {
   if (status === 401) return "unauthorized (401) — set API token in Settings";
   if (status === 503) return "backend unreachable (503) — API token not configured on daemon";
@@ -186,11 +155,9 @@ export function degradeWebhook(status: number | null): string {
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path, { headers: { ...authHeaders() } });
   if (!res.ok) {
-    backendReachable = false;
     lastFetchStatus = res.status;
     throw new Error(`${path} → ${res.status}`);
   }
-  backendReachable = true;
   lastFetchStatus = null;
   return res.json() as Promise<T>;
 }
@@ -206,14 +173,6 @@ export async function fetchHistory(limit = 200): Promise<Event[]> {
 
 export async function fetchRepo(id: string): Promise<{ repo: Repo; timeline: Event[] }> {
   return getJSON<{ repo: Repo; timeline: Event[] }>(`/api/repos/${encodeURIComponent(id)}`);
-}
-
-/** Operator only: the recordings are unscrubbed, so a viewer token gets 403. */
-export async function fetchSessions(repo?: string, limit = 50): Promise<{ enabled: boolean; sessions: Session[] }> {
-  const q = new URLSearchParams({ limit: String(limit) });
-  if (repo) q.set("repo", repo);
-  const data = await getJSON<{ enabled: boolean; sessions: Session[] }>(`/api/sessions?${q}`);
-  return { enabled: data.enabled, sessions: data.sessions ?? [] };
 }
 
 export async function fetchSession(id: string): Promise<SessionDetail> {
@@ -365,7 +324,6 @@ export async function postAction(
     /* plain text body */
   }
   if (!res.ok) {
-    backendReachable = res.status !== 401 && res.status !== 503 ? backendReachable : false;
     lastFetchStatus = res.status;
     return { ok: false, message, status: res.status };
   }

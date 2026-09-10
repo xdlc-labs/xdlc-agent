@@ -322,7 +322,12 @@ func resolveToken(ctx context.Context) (token, source string, err error) {
 		return t, "GITHUB_TOKEN", nil
 	}
 	if _, lerr := exec.LookPath("gh"); lerr == nil {
-		b, rerr := exec.CommandContext(ctx, "gh", "auth", "token").Output()
+		// gh may reach out to a keyring or a browser-based login; a
+		// token lookup that takes longer than this is not going to
+		// answer, and the run should fall through to the error below.
+		ghCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		b, rerr := exec.CommandContext(ghCtx, "gh", "auth", "token").Output()
 		if rerr == nil {
 			if t := strings.TrimSpace(string(b)); t != "" {
 				return t, "gh auth token", nil

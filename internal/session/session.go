@@ -136,9 +136,20 @@ func Open(dir string, retain time.Duration, maxFileBytes int64) (*Store, error) 
 
 var unsafeName = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
+// idTimeLayout is the timestamp half of a session id. No separators
+// that could be confused with the "-" before the slug.
+const idTimeLayout = "20060102T150405Z"
+
 // NewID builds a sortable, filesystem-safe session id from the start
 // time and repo name: 20260905T010514Z-example-service.
 func NewID(at time.Time, repo string) string {
+	return at.UTC().Format(idTimeLayout) + "-" + repoSlug(repo)
+}
+
+// repoSlug is the repo half of a NewID: the name with anything that is
+// not filename-safe collapsed to "-", capped so a long repo name cannot
+// push the path past what the filesystem takes.
+func repoSlug(repo string) string {
 	slug := strings.Trim(unsafeName.ReplaceAllString(repo, "-"), "-")
 	if slug == "" {
 		slug = "repo"
@@ -146,7 +157,38 @@ func NewID(at time.Time, repo string) string {
 	if len(slug) > 48 {
 		slug = slug[:48]
 	}
-	return at.UTC().Format("20060102T150405Z") + "-" + slug
+	return slug
+}
+
+// idShaped matches a directory name NewID (or Start's collision suffix)
+// would have produced: a timestamp, "-", then the slug and an optional
+// "-N".
+var idShaped = regexp.MustCompile(`^\d{8}T\d{6}Z-(.+)$`)
+
+// mayBelongTo reports whether a session directory name could hold a
+// recording for repo, judged from the name alone. It is a cheap
+// pre-filter for List: with recording on for months, Root holds
+// thousands of directories and reading every meta.json to find one
+// repo's dozen is what made the prior-Fixes block slow. A name NewID did
+// not shape (hand-made ids in tests) is always a candidate, so the
+// answer is only ever "no" when the name says so.
+func mayBelongTo(name, repo string) bool {
+	m := idShaped.FindStringSubmatch(name)
+	if m == nil {
+		return true
+	}
+	slug := repoSlug(repo)
+	rest := m[1]
+	if rest == slug {
+		return true
+	}
+	// Start's collision suffix is "-<n>", digits only; "svc-api" is a
+	// different repo that happens to share the prefix.
+	if !strings.HasPrefix(rest, slug+"-") {
+		return false
+	}
+	suffix := rest[len(slug)+1:]
+	return suffix != "" && strings.Trim(suffix, "0123456789") == ""
 }
 
 // Session is one recording in progress. A nil *Session is valid and
@@ -310,6 +352,9 @@ func (s *Store) List(repo string, limit int) ([]Meta, error) {
 	var out []Meta
 	for _, ent := range entries {
 		if !ent.IsDir() {
+			continue
+		}
+		if repo != "" && !mayBelongTo(ent.Name(), repo) {
 			continue
 		}
 		m, err := s.Load(ent.Name())

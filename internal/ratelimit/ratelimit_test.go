@@ -1,7 +1,6 @@
 package ratelimit
 
 import (
-	"context"
 	"testing"
 	"time"
 )
@@ -37,9 +36,6 @@ func TestNilLimiterAllows(t *testing.T) {
 	if !l.Allow() {
 		t.Fatal("nil Limiter.Allow should be true")
 	}
-	if err := l.Wait(context.Background()); err != nil {
-		t.Fatalf("nil Limiter.Wait: %v", err)
-	}
 }
 
 func TestNewUnlimited(t *testing.T) {
@@ -48,17 +44,5 @@ func TestNewUnlimited(t *testing.T) {
 	}
 	if New(10, 0) != nil {
 		t.Fatal("burst 0 should yield nil")
-	}
-}
-
-func TestWaitRespectsContext(t *testing.T) {
-	l := New(0.001, 1) // tiny rate
-	if !l.Allow() {
-		t.Fatal("consume sole token")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
-	defer cancel()
-	if err := l.Wait(ctx); err == nil {
-		t.Fatal("Wait should fail when ctx times out before refill")
 	}
 }

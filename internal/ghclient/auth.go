@@ -155,6 +155,12 @@ func (a *AppToken) Token() (string, error) {
 	return tok.AccessToken, nil
 }
 
+// mintTimeout bounds one installation-token mint. token() holds a.mu
+// while it talks to GitHub, and every Token() caller — the gate poller,
+// the Fix's git push, the console — queues behind that lock, so a mint
+// that hangs on a half-open connection would stall the whole daemon.
+const mintTimeout = 30 * time.Second
+
 // oauth2.TokenSource
 func (a *AppToken) token() (*oauth2.Token, error) {
 	a.mu.Lock()
@@ -168,8 +174,10 @@ func (a *AppToken) token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), mintTimeout)
+	defer cancel()
 	src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: jwt})
-	httpClient := oauth2.NewClient(context.Background(), src)
+	httpClient := oauth2.NewClient(ctx, src)
 	if a.HTTP != nil {
 		base := a.HTTP.Transport
 		if base == nil {
@@ -177,12 +185,16 @@ func (a *AppToken) token() (*oauth2.Token, error) {
 		}
 		httpClient = &http.Client{Transport: &oauth2.Transport{Source: src, Base: base}}
 	}
+	// The context bounds this mint; the client's own Timeout is the same
+	// bound on the client itself, so nothing that borrows it runs
+	// unbounded.
+	httpClient.Timeout = mintTimeout
 	client := mustClient(github.WithHTTPClient(httpClient))
 	// Narrow the token before it exists: repositories from config.Repos
 	// (nil → installation-wide, see AppToken.Repos) and only the
 	// permissions the loop uses. The scope is fixed for the life of an
 	// AppToken, so the cache above stays valid across refreshes.
-	it, _, err := client.Apps.CreateInstallationToken(context.Background(), a.InstallationID,
+	it, _, err := client.Apps.CreateInstallationToken(ctx, a.InstallationID,
 		&github.InstallationTokenOptions{
 			Repositories: a.Repos,
 			Permissions:  tokenPermissions(),

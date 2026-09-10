@@ -1,17 +1,13 @@
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { degradeWebhook, fetchOverview, isDegraded, lastFetchStatus } from "@/lib/api";
+import { degradeWebhook, isDegraded, lastFetchStatus } from "@/lib/api";
+import { useOverview } from "@/lib/overview-query";
 import { getToken, setToken, clearToken } from "@/lib/auth";
 
 export function DegradedBanner() {
   const queryClient = useQueryClient();
-  const { data, isError, error, refetch, isPending } = useQuery({
-    queryKey: ["overview"],
-    queryFn: fetchOverview,
-    refetchInterval: 10_000,
-    retry: 1,
-  });
+  const { data, isError, error, refetch, isPending } = useOverview();
 
   const [tokenInput, setTokenInput] = useState(() => getToken());
   const [saving, setSaving] = useState(false);
@@ -32,16 +28,10 @@ export function DegradedBanner() {
     lastFetchStatus === 503 || webhook.includes("503") || errMsg.includes("503");
 
   const refresh = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["overview"] }),
-      queryClient.invalidateQueries({ queryKey: ["history"] }),
-      queryClient.invalidateQueries({ queryKey: ["backlog"] }),
-      queryClient.invalidateQueries({ queryKey: ["repos"] }),
-      queryClient.invalidateQueries({ queryKey: ["prs"] }),
-      queryClient.invalidateQueries({ queryKey: ["fix-prs"] }),
-      queryClient.invalidateQueries({ queryKey: ["kpis"] }),
-      queryClient.invalidateQueries({ queryKey: ["role"] }),
-    ]);
+    // The banner shows because the daemon or the token changed state, so
+    // every cached answer is suspect: drop them all rather than keep a
+    // hand-maintained list of keys in sync with the routes.
+    await queryClient.invalidateQueries();
     await refetch();
   };
 

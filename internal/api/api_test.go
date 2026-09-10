@@ -312,7 +312,7 @@ func TestBearerAuth(t *testing.T) {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/whoami", nil)
 		req.Header.Set("Authorization", "Bearer op")
 		mux.ServeHTTP(res, req)
-		if res.Code != 200 || !strings.Contains(res.Body.String(), `"role": "operator"`) {
+		if res.Code != 200 || !strings.Contains(res.Body.String(), `"role":"operator"`) {
 			t.Fatalf("operator whoami: status %d, body %s", res.Code, res.Body.String())
 		}
 
@@ -320,7 +320,7 @@ func TestBearerAuth(t *testing.T) {
 		req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/whoami", nil)
 		req.Header.Set("Authorization", "Bearer view")
 		mux.ServeHTTP(res, req)
-		if res.Code != 200 || !strings.Contains(res.Body.String(), `"role": "viewer"`) {
+		if res.Code != 200 || !strings.Contains(res.Body.String(), `"role":"viewer"`) {
 			t.Fatalf("viewer whoami: status %d, body %s", res.Code, res.Body.String())
 		}
 

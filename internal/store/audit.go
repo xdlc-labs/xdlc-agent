@@ -8,7 +8,9 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -69,6 +71,18 @@ type AuditStore struct {
 	subs    map[chan Record]struct{}
 	recent  []Record // ring for SSE Last-Event-ID replay
 	recentN int
+
+	// all caches the decoded history for All(). Every dashboard endpoint
+	// asks for the whole log, and JSON-decoding it per request grows with
+	// daemon age. The daemon is the single writer, so Append is the only
+	// place the cache can go stale and it drops it there. Read-only
+	// handles (`xdlc history`) share the file with a writing daemon and
+	// never cache.
+	cacheMu   sync.Mutex
+	all       []Record
+	allValid  bool
+	allGen    uint64 // bumped by every invalidation; guards a racing fill
+	cacheable bool
 }
 
 const recentCap = 256
@@ -82,7 +96,7 @@ func Open(path string) (*AuditStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
-	s := &AuditStore{db: db, subs: map[chan Record]struct{}{}, recentN: recentCap}
+	s := &AuditStore{db: db, subs: map[chan Record]struct{}{}, recentN: recentCap, cacheable: true}
 	err = db.Update(func(tx *bolt.Tx) error {
 		if _, err := tx.CreateBucketIfNotExists([]byte(bucket)); err != nil {
 			return err
@@ -102,7 +116,9 @@ func Open(path string) (*AuditStore, error) {
 // rebuildRepoIndex fills by_repo from history when empty (upgrade path).
 func rebuildRepoIndex(tx *bolt.Tx) error {
 	rb := tx.Bucket([]byte(bucketRepo))
-	if rb.Stats().KeyN > 0 {
+	// Stats() walks every page of the bucket; a cursor answers "is it
+	// empty" from the first leaf.
+	if k, _ := rb.Cursor().First(); k != nil {
 		return nil
 	}
 	hb := tx.Bucket([]byte(bucket))
@@ -165,26 +181,41 @@ func (s *AuditStore) Append(r Record) error {
 		if err := b.Put(key, val); err != nil {
 			return err
 		}
-		rb := tx.Bucket([]byte(bucketRepo))
-		if rb == nil {
-			var cerr error
-			rb, cerr = tx.CreateBucketIfNotExists([]byte(bucketRepo))
-			if cerr != nil {
-				return cerr
-			}
-		}
-		return rb.Put(repoKey(r.Repo, id), val)
+		// Open always creates by_repo and a read-only handle cannot reach
+		// an Update, so the bucket is present here.
+		return tx.Bucket([]byte(bucketRepo)).Put(repoKey(r.Repo, id), val)
 	})
 	s.countError("append", err)
 	if err == nil {
+		s.invalidateAll()
 		r.Seq = seq
 		s.publish(r)
 	}
 	return err
 }
 
+func (s *AuditStore) invalidateAll() {
+	s.cacheMu.Lock()
+	s.all, s.allValid = nil, false
+	s.allGen++
+	s.cacheMu.Unlock()
+}
+
 // All returns every Record in the store, in bbolt key (sequence) order.
+// The returned slice is the caller's to sort or truncate; Evidence maps
+// are shared with the cache and must be treated as read-only.
 func (s *AuditStore) All() ([]Record, error) {
+	var gen uint64
+	if s.cacheable {
+		s.cacheMu.Lock()
+		if s.allValid {
+			out := slices.Clone(s.all)
+			s.cacheMu.Unlock()
+			return out, nil
+		}
+		gen = s.allGen
+		s.cacheMu.Unlock()
+	}
 	var out []Record
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucket))
@@ -201,29 +232,55 @@ func (s *AuditStore) All() ([]Record, error) {
 		})
 	})
 	s.countError("all", err)
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	if s.cacheable {
+		s.cacheMu.Lock()
+		// An Append that landed between the View and here bumped allGen;
+		// installing this snapshot would hide that record until the next
+		// write, so only fill when the generation is unchanged.
+		if s.allGen == gen {
+			s.all, s.allValid = slices.Clone(out), true
+		}
+		s.cacheMu.Unlock()
+	}
+	return out, nil
 }
 
-// Since returns records for repo with At >= since, chronological by seq.
-// Uses the by_repo secondary index (issue #16) — sub-linear in other repos.
-func (s *AuditStore) Since(repo string, since time.Time) ([]Record, error) {
-	var out []Record
-	var usedIndex bool
-	prefix := append([]byte(repo), 0)
+// Recent returns the newest n records, newest first, walking the log
+// backwards from its tail so the cost is O(n) rather than O(history).
+// repo == "" spans every repo; otherwise the by_repo index is used.
+func (s *AuditStore) Recent(repo string, n int) ([]Record, error) {
+	if n <= 0 {
+		return nil, nil
+	}
+	out := make([]Record, 0, n)
 	err := s.db.View(func(tx *bolt.Tx) error {
-		rb := tx.Bucket([]byte(bucketRepo))
-		if rb == nil {
-			return nil
+		var (
+			c      *bolt.Cursor
+			k, v   []byte
+			prefix []byte
+		)
+		if repo == "" {
+			c = tx.Bucket([]byte(bucket)).Cursor()
+			k, v = c.Last()
+		} else {
+			rb := tx.Bucket([]byte(bucketRepo))
+			if rb == nil {
+				return errNoRepoIndex
+			}
+			c = rb.Cursor()
+			prefix = append([]byte(repo), 0)
+			k, v = seekPrefixEnd(c, prefix)
 		}
-		usedIndex = true
-		c := rb.Cursor()
-		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+		for ; k != nil && len(out) < n; k, v = c.Prev() {
+			if prefix != nil && !bytes.HasPrefix(k, prefix) {
+				break
+			}
 			var r Record
 			if err := json.Unmarshal(v, &r); err != nil {
 				return err
-			}
-			if r.At.Before(since) {
-				continue
 			}
 			if len(k) >= 8 {
 				r.Seq = binary.BigEndian.Uint64(k[len(k)-8:])
@@ -232,11 +289,69 @@ func (s *AuditStore) Since(repo string, since time.Time) ([]Record, error) {
 		}
 		return nil
 	})
-	if err != nil {
-		s.countError("since", err)
-		return nil, err
+	if errors.Is(err, errNoRepoIndex) {
+		// Pre-index database opened read-only (no Update to rebuild it).
+		all, aerr := s.All()
+		if aerr != nil {
+			return nil, aerr
+		}
+		for i := len(all) - 1; i >= 0 && len(out) < n; i-- {
+			if all[i].Repo == repo {
+				out = append(out, all[i])
+			}
+		}
+		return out, nil
 	}
-	if !usedIndex {
+	s.countError("recent", err)
+	return out, err
+}
+
+// seekPrefixEnd positions c on the last key that has prefix (or nil).
+// prefix ends in the 0 separator, so bumping that byte gives the first
+// key past the repo's range.
+func seekPrefixEnd(c *bolt.Cursor, prefix []byte) ([]byte, []byte) {
+	end := slices.Clone(prefix)
+	end[len(end)-1]++
+	if k, _ := c.Seek(end); k == nil {
+		return c.Last()
+	}
+	return c.Prev()
+}
+
+var errNoRepoIndex = errors.New("store: by_repo index missing")
+
+// Since returns records for repo with At >= since, chronological by seq.
+// Uses the by_repo secondary index (issue #16) — sub-linear in other
+// repos — and walks it backwards from the newest record, stopping at the
+// first one older than since, so a 2h window over a repo with months of
+// history decodes only those two hours.
+func (s *AuditStore) Since(repo string, since time.Time) ([]Record, error) {
+	var out []Record
+	prefix := append([]byte(repo), 0)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		rb := tx.Bucket([]byte(bucketRepo))
+		if rb == nil {
+			return errNoRepoIndex
+		}
+		c := rb.Cursor()
+		for k, v := seekPrefixEnd(c, prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Prev() {
+			var r Record
+			if err := json.Unmarshal(v, &r); err != nil {
+				return err
+			}
+			if r.At.Before(since) {
+				break
+			}
+			if len(k) >= 8 {
+				r.Seq = binary.BigEndian.Uint64(k[len(k)-8:])
+			}
+			out = append(out, r)
+		}
+		slices.Reverse(out)
+		return nil
+	})
+	if errors.Is(err, errNoRepoIndex) {
+		// Pre-index database opened read-only (no Update to rebuild it).
 		all, aerr := s.All()
 		if aerr != nil {
 			return nil, aerr
@@ -246,6 +361,11 @@ func (s *AuditStore) Since(repo string, since time.Time) ([]Record, error) {
 				out = append(out, r)
 			}
 		}
+		return out, nil
+	}
+	if err != nil {
+		s.countError("since", err)
+		return nil, err
 	}
 	return out, nil
 }

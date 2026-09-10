@@ -79,11 +79,11 @@ func formatEvidence(evidence map[string]any) string {
 	}
 	sort.Strings(keys)
 
-	out := ""
+	var out strings.Builder
 	for _, k := range keys {
-		out += fmt.Sprintf("%s=%s ", k, evidenceValue(evidence[k]))
+		fmt.Fprintf(&out, "%s=%s ", k, evidenceValue(evidence[k]))
 	}
-	return out
+	return out.String()
 }
 
 // evidenceValue renders one evidence value for a single-line, space-

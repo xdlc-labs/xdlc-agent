@@ -10,12 +10,12 @@ export function resolveTheme(): Theme {
   return "dark";
 }
 
-export function applyTheme(theme: Theme) {
+function applyTheme(theme: Theme) {
   document.documentElement.setAttribute("data-theme", theme);
   document.documentElement.style.colorScheme = theme;
 }
 
-export function setTheme(theme: Theme) {
+function setTheme(theme: Theme) {
   localStorage.setItem(STORAGE_KEY, theme);
   applyTheme(theme);
 }

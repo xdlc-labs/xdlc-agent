@@ -21,6 +21,10 @@ export function SessionPanel({ id }: { id: string }) {
     queryKey: ["session", id],
     queryFn: () => fetchSession(id),
     retry: false,
+    // A recording is immutable once the Fix has ended, so never refetch
+    // it. While it is still running, re-read on every mount (0) so the
+    // panel picks up the ending.
+    staleTime: (query) => (query.state.data?.session.ended_at ? Infinity : 0),
   });
 
   if (isPending) return <Skeleton rows={3} className="px-4 py-3" />;
@@ -75,7 +79,7 @@ export function SessionPanel({ id }: { id: string }) {
       </div>
 
       {tab ? (
-        <SessionText id={id} file={tab} attempt={attempt} />
+        <SessionText id={id} file={tab} attempt={attempt} ended={!!s.ended_at} />
       ) : data.output_tail ? (
         <div className="mt-3">
           <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">output, last lines</div>
@@ -88,11 +92,23 @@ export function SessionPanel({ id }: { id: string }) {
   );
 }
 
-function SessionText({ id, file, attempt }: { id: string; file: SessionFile; attempt: number }) {
+function SessionText({
+  id,
+  file,
+  attempt,
+  ended,
+}: {
+  id: string;
+  file: SessionFile;
+  attempt: number;
+  /** The parent's meta says the Fix has ended: its files no longer change. */
+  ended: boolean;
+}) {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ["session", id, file, attempt],
     queryFn: () => fetchSessionText(id, file, attempt),
     retry: false,
+    ...(ended ? { staleTime: Infinity } : {}),
   });
   if (isPending) return <Skeleton rows={4} className="mt-3" />;
   if (isError) {

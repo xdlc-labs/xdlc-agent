@@ -1844,10 +1844,8 @@ func TestFixFeedsPriorSessionIntoNextPrompt(t *testing.T) {
 	if err != nil || len(sessions) != 2 {
 		t.Fatalf("want two recordings, got %d (%v)", len(sessions), err)
 	}
-	// Read the prior-record block on its own. The running session's id
-	// also reaches the prompt through evidence["session_id"], so a
-	// whole-prompt search cannot tell "given as history" from "named as
-	// this run".
+	// Read the prior-record block on its own, so the check is about what
+	// was given as history and nothing else in the prompt can satisfy it.
 	start := strings.Index(second, "---BEGIN PRIOR FIX RECORD---")
 	end := strings.Index(second, "---END PRIOR FIX RECORD---")
 	if start < 0 || end < start {

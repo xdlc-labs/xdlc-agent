@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import type { FixState } from "@/lib/api";
 import type { LiveFix } from "@/lib/live-events";
 import { formatAge } from "@/lib/utils";
@@ -14,8 +14,14 @@ const stateTone: Record<FixState, string> = {
   error: "text-breach",
 };
 
-/** One Fix on the /fixes grid: header with phase and age, then the live tail. */
-export function FixCard({ live }: { live: LiveFix }) {
+/**
+ * One Fix on the /fixes grid: header with phase and age, then the live tail.
+ *
+ * Memoised on the LiveFix reference: the store replaces an entry whenever
+ * that Fix changes and leaves the others untouched, so an output chunk for
+ * one Fix re-renders one card, not the whole grid.
+ */
+export const FixCard = memo(function FixCard({ live }: { live: LiveFix }) {
   const { fix, output, endedAt } = live;
   const pre = useRef<HTMLPreElement>(null);
   // Follow the tail unless the operator has scrolled up to read.
@@ -63,4 +69,4 @@ export function FixCard({ live }: { live: LiveFix }) {
       ) : null}
     </li>
   );
-}
+});

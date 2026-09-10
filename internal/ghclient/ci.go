@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v90/github"
 )
@@ -108,6 +109,16 @@ func ParseRunURL(runURL string) (owner, repo string, runID int64, err error) {
 
 const maxLogBytes = 32 << 10 // 32 KiB — enough for Fix prompt, not a dump
 
+// jobsPerPage is how many jobs one ListWorkflowJobs call asks for — the
+// API's maximum, so a run with many jobs is still read in one request.
+const jobsPerPage = 100
+
+// logHTTP downloads job logs from the pre-signed URL GitHub redirects
+// to. It is not the go-github client (that URL is not an API call) and
+// it is not http.DefaultClient, which has no timeout: a log download
+// that stalls would otherwise hold a Fix open indefinitely.
+var logHTTP = &http.Client{Timeout: 60 * time.Second}
+
 // FetchFailedJobLogs downloads log text for the first failed job in a
 // workflow run, truncated to maxLogBytes. Returns empty string if no
 // failed job or logs unavailable.
@@ -118,14 +129,14 @@ func (c *Client) FetchFailedJobLogs(ctx context.Context, runURL string) (string,
 	}
 	jobs, _, err := c.gh.Actions.ListWorkflowJobs(ctx, owner, repo, runID, &github.ListWorkflowJobsOptions{
 		Filter:      "latest",
-		ListOptions: github.ListOptions{PerPage: 50},
+		ListOptions: github.ListOptions{PerPage: jobsPerPage},
 	})
 	if err != nil {
 		return "", fmt.Errorf("ghclient: list jobs for run %d: %w", runID, err)
 	}
 	var jobID int64
 	for _, j := range jobs.Jobs {
-		if j.GetConclusion() == "failure" || j.GetConclusion() == "timed_out" {
+		if isFailedJob(j) {
 			jobID = j.GetID()
 			break
 		}
@@ -133,35 +144,14 @@ func (c *Client) FetchFailedJobLogs(ctx context.Context, runURL string) (string,
 	if jobID == 0 {
 		return "", nil
 	}
-	// DownloadWorkflowJobLogs follows redirect to the zip/log URL.
-	url, _, err := c.gh.Actions.GetWorkflowJobLogs(ctx, owner, repo, jobID, 3)
-	if err != nil {
-		return "", fmt.Errorf("ghclient: job logs URL: %w", err)
-	}
-	if url == nil {
-		return "", nil
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url.String(), nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("ghclient: download job logs: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("ghclient: download job logs: status %d", resp.StatusCode)
-	}
-	limited := io.LimitReader(resp.Body, maxLogBytes+1)
-	body, err := io.ReadAll(limited)
-	if err != nil {
-		return "", err
-	}
-	if len(body) > maxLogBytes {
-		body = append(body[:maxLogBytes], []byte("\n...(truncated)\n")...)
-	}
-	return string(body), nil
+	return c.downloadJobLog(ctx, owner, repo, jobID, maxLogBytes)
+}
+
+// isFailedJob reports whether a job's conclusion is one a Fix should
+// read the log of.
+func isFailedJob(j *github.WorkflowJob) bool {
+	c := j.GetConclusion()
+	return c == "failure" || c == "timed_out"
 }
 
 // JobLog is one failed job's complete log, for the session's ci-logs.txt
@@ -188,14 +178,14 @@ func (c *Client) FetchAllFailedJobLogs(ctx context.Context, runURL string) ([]Jo
 	}
 	jobs, _, err := c.gh.Actions.ListWorkflowJobs(ctx, owner, repo, runID, &github.ListWorkflowJobsOptions{
 		Filter:      "latest",
-		ListOptions: github.ListOptions{PerPage: 100},
+		ListOptions: github.ListOptions{PerPage: jobsPerPage},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ghclient: list jobs for run %d: %w", runID, err)
 	}
 	var out []JobLog
 	for _, j := range jobs.Jobs {
-		if c := j.GetConclusion(); c != "failure" && c != "timed_out" {
+		if !isFailedJob(j) {
 			continue
 		}
 		text, err := c.downloadJobLog(ctx, owner, repo, j.GetID(), maxJobLogBytes)
@@ -209,7 +199,10 @@ func (c *Client) FetchAllFailedJobLogs(ctx context.Context, runURL string) ([]Jo
 	return out, nil
 }
 
+// downloadJobLog resolves one job's log URL and downloads it, keeping
+// the first limit bytes and marking the cut when the log ran longer.
 func (c *Client) downloadJobLog(ctx context.Context, owner, repo string, jobID int64, limit int) (string, error) {
+	// GetWorkflowJobLogs follows the redirect to the pre-signed log URL.
 	url, _, err := c.gh.Actions.GetWorkflowJobLogs(ctx, owner, repo, jobID, 3)
 	if err != nil {
 		return "", fmt.Errorf("ghclient: job logs URL: %w", err)
@@ -221,7 +214,7 @@ func (c *Client) downloadJobLog(ctx context.Context, owner, repo string, jobID i
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := logHTTP.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("ghclient: download job logs: %w", err)
 	}

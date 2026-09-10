@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { fetchOverview } from "@/lib/api";
+import { useOverview } from "@/lib/overview-query";
 import { PageHeader, StatusTag } from "@/components/status";
 import { EmptyState, QueryError, Skeleton } from "@/components/query-state";
 
@@ -12,11 +11,7 @@ export const Route = createFileRoute("/gates")({
 });
 
 function Gates() {
-  const { data, isPending, isError, error, refetch } = useQuery({
-    queryKey: ["overview"],
-    queryFn: fetchOverview,
-    refetchInterval: 10_000,
-  });
+  const { data, isPending, isError, error, refetch } = useOverview();
   const gates = data?.gates ?? [];
 
   return (

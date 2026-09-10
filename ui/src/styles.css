@@ -252,29 +252,6 @@
     transition: box-shadow 0.4s var(--ease-out-expo), border-color 0.3s ease;
   }
 
-  .kpi-card {
-    border: 1px solid color-mix(in oklab, var(--border) 85%, var(--primary));
-    background: color-mix(in oklab, var(--card) 90%, transparent);
-    box-shadow: 0 0 24px -12px color-mix(in oklab, var(--primary) 30%, transparent);
-    padding: 1.05rem 1.15rem;
-    min-width: 8.5rem;
-    flex: 1 1 8.5rem;
-    transition:
-      transform 0.35s var(--ease-out-expo),
-      box-shadow 0.35s var(--ease-out-expo),
-      border-color 0.25s ease;
-  }
-
-  .kpi-card:hover {
-    transform: translateY(-3px);
-    border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
-    box-shadow: 0 12px 32px -16px color-mix(in oklab, var(--primary) 45%, transparent);
-  }
-
-  .kpi-value {
-    animation: value-in 0.8s var(--ease-out-expo) both;
-  }
-
   .hex-node {
     position: relative;
     width: 100%;
@@ -501,68 +478,21 @@
   .dot-live,
   .glow-text,
   .grid-lines,
-  .kpi-value,
   .hex-pass,
   .hex-acting,
   .hex-fail,
   .flow-rail-active::before,
   .flow-rail-active::after,
   .brand-mark,
-  .kpi-card,
   .hex-node,
   .nav-link {
     animation: none !important;
     transition: none !important;
   }
 
-  .kpi-card:hover,
   .hex-node:hover,
   .nav-link:hover,
   .brand-mark:hover {
     transform: none !important;
   }
-}
-
-/* Docs: highlight.js tokens — mission-control dark, not default github-dark */
-.docs-md .hljs {
-  background: transparent;
-  color: var(--foreground);
-  padding: 0;
-}
-.docs-md .hljs-comment,
-.docs-md .hljs-quote {
-  color: var(--muted-foreground);
-  font-style: italic;
-}
-.docs-md .hljs-keyword,
-.docs-md .hljs-selector-tag,
-.docs-md .hljs-literal {
-  color: var(--primary);
-}
-.docs-md .hljs-string,
-.docs-md .hljs-attr,
-.docs-md .hljs-attribute {
-  color: var(--pass);
-}
-.docs-md .hljs-number,
-.docs-md .hljs-built_in,
-.docs-md .hljs-type {
-  color: var(--acting);
-}
-.docs-md .hljs-title,
-.docs-md .hljs-section,
-.docs-md .hljs-name {
-  color: color-mix(in oklab, var(--primary) 85%, white);
-}
-.docs-md .hljs-meta,
-.docs-md .hljs-subst {
-  color: var(--muted-foreground);
-}
-.docs-md .hljs-variable,
-.docs-md .hljs-template-variable {
-  color: var(--breach);
-}
-.docs-mermaid svg {
-  max-width: 100%;
-  height: auto;
 }

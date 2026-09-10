@@ -393,6 +393,11 @@ func evidenceKeyRank(k string) int {
 
 // selectEvidence keeps high-priority keys when the full JSON would exceed
 // budget. Returns a new map (may share value refs).
+//
+// Each value is marshaled once and its share of the encoded object is
+// added up, rather than re-marshaling the growing map after every key:
+// with a few hundred keys that was quadratic in the evidence size, on
+// the path every Fix prompt goes through.
 func selectEvidence(evidence map[string]any, budget int) map[string]any {
 	if len(evidence) == 0 {
 		return evidence
@@ -412,20 +417,32 @@ func selectEvidence(evidence map[string]any, budget int) map[string]any {
 		return keys[i] < keys[j]
 	})
 	out := make(map[string]any, len(keys))
+	// The encoded object is `{` + `"k":v` pairs joined by `,` + `}`.
+	// Counting each pair as key + colon + value + comma and starting at
+	// one gives exactly len(json.Marshal(out)): the surplus comma on
+	// the last pair pays for the second brace.
+	used := 1
 	for _, k := range keys {
-		out[k] = evidence[k]
-		raw, err := json.Marshal(out)
+		key, err := json.Marshal(k)
 		if err != nil {
 			continue
 		}
-		if len(raw) > budget {
-			if len(out) == 1 {
+		val, err := json.Marshal(evidence[k])
+		if err != nil {
+			// An unencodable value (chan, func) cannot be sent anyway;
+			// frameEvidence has its own fallback for the map as a whole.
+			continue
+		}
+		need := len(key) + 1 + len(val) + 1
+		if used+need > budget {
+			if len(out) == 0 {
 				// Single oversized value: keep it; frameEvidence byte-truncates.
-				break
+				out[k] = evidence[k]
 			}
-			delete(out, k)
 			break
 		}
+		out[k] = evidence[k]
+		used += need
 	}
 	return out
 }

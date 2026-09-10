@@ -7,7 +7,6 @@
 package subagent
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -350,17 +349,21 @@ func (r *SubprocessRunner) Run(ctx context.Context, repoDir, prompt string, extr
 	cmd.Stdin = strings.NewReader(prompt)
 	configureKillGroup(cmd)
 
-	var stdout, stderr bytes.Buffer
+	// Bounded, not a bytes.Buffer: a verbose agent in stream-json mode
+	// can print far more than anyone reads back, and every consumer of
+	// the result — ParseVerdict, ParseCost, the session file's tail, the
+	// error message — wants the end of the stream, not the start.
+	stdout, stderr := newTailWriter(outputTailLimit), newTailWriter(outputTailLimit)
 	// Both streams feed the watchdog: a CLI that is narrating its
 	// progress on stderr is working, whatever stdout is doing.
 	activity := &activityWriter{}
-	outW := io.Writer(&stdout)
-	errW := io.Writer(&stderr)
+	outW := io.Writer(stdout)
+	errW := io.Writer(stderr)
 	if tap := outputTap(ctx); tap != nil {
 		// The console's live view. Both streams, for the same reason
 		// the watchdog watches both: several CLIs narrate on stderr.
-		outW = io.MultiWriter(&stdout, tap)
-		errW = io.MultiWriter(&stderr, tap)
+		outW = io.MultiWriter(stdout, tap)
+		errW = io.MultiWriter(stderr, tap)
 	}
 	cmd.Stdout = io.MultiWriter(outW, activity)
 	cmd.Stderr = io.MultiWriter(errW, activity)
@@ -380,7 +383,11 @@ func (r *SubprocessRunner) Run(ctx context.Context, repoDir, prompt string, extr
 			r.Binary, repoDir, ErrStalled, r.StallTimeout, strings.TrimSpace(lastLines(stderr.String(), 5)))
 	}
 	if err != nil {
-		return stdout.String(), fmt.Errorf("subagent: %s run in %s: %w: %s", r.Binary, repoDir, err, stderr.String())
+		// The last lines, not the whole stream: the error lands in a
+		// log line and an audit row, and an agent's full stderr is a
+		// transcript, not a reason.
+		return stdout.String(), fmt.Errorf("subagent: %s run in %s: %w: %s",
+			r.Binary, repoDir, err, strings.TrimSpace(lastLines(stderr.String(), 20)))
 	}
 	return stdout.String(), nil
 }
@@ -425,6 +432,75 @@ func (r *SubprocessRunner) watchStall(cmd *exec.Cmd, activity *activityWriter) (
 		}
 	}()
 	return func() { close(done) }, stalled
+}
+
+// outputTailLimit is how much of each subprocess stream Run keeps. The
+// verdict and the cost line are the last thing an agent prints, and a
+// session file that holds the final 8 MiB of a run holds everything an
+// operator has ever gone back to read.
+const outputTailLimit = 8 << 20
+
+// tailWriter is an io.Writer that keeps only the last limit bytes it was
+// given. It grows like a plain buffer until it reaches the limit and
+// then writes in a ring, so a run that prints little costs little and a
+// run that prints without end costs exactly the limit.
+//
+// The cut is by byte, not by line: the first line of the kept tail may
+// be partial. Both readers cope — ParseVerdict scans backwards for a
+// whole JSON object and ParseCost reads lines from the end.
+type tailWriter struct {
+	limit int
+	buf   []byte
+	// head is where the next byte goes once the ring is full, which is
+	// also the index of the oldest byte kept. Meaningless until wrapped.
+	head    int
+	wrapped bool
+}
+
+func newTailWriter(limit int) *tailWriter {
+	return &tailWriter{limit: limit}
+}
+
+// Write always reports the whole of p as written: dropping the front of
+// the stream is this writer's job, never an error for the subprocess.
+func (w *tailWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if !w.wrapped {
+		room := w.limit - len(w.buf)
+		if n <= room {
+			w.buf = append(w.buf, p...)
+			return n, nil
+		}
+		// Fill what is left, then treat the rest as ring writes.
+		w.buf = append(w.buf, p[:room]...)
+		p = p[room:]
+		w.wrapped = true
+		w.head = 0
+	}
+	if len(p) >= w.limit {
+		// One write bigger than the whole tail: only its end survives,
+		// and the ring may as well start over at zero.
+		copy(w.buf, p[len(p)-w.limit:])
+		w.head = 0
+		return n, nil
+	}
+	k := copy(w.buf[w.head:], p)
+	if k < len(p) {
+		copy(w.buf, p[k:])
+	}
+	w.head = (w.head + len(p)) % w.limit
+	return n, nil
+}
+
+// String returns the kept tail in write order.
+func (w *tailWriter) String() string {
+	if !w.wrapped {
+		return string(w.buf)
+	}
+	out := make([]byte, 0, w.limit)
+	out = append(out, w.buf[w.head:]...)
+	out = append(out, w.buf[:w.head]...)
+	return string(out)
 }
 
 // activityWriter records when the subprocess last wrote anything. It

@@ -1,6 +1,5 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { fetchOverview } from "@/lib/api";
+import { useOverview } from "@/lib/overview-query";
 import { PageHeader, StatusTag, ActionTag } from "@/components/status";
 import { EmptyState, QueryError, Skeleton } from "@/components/query-state";
 
@@ -19,11 +18,7 @@ const healthTone = {
 
 function ReposIndex() {
   const navigate = useNavigate();
-  const { data, isPending, isError, error, refetch } = useQuery({
-    queryKey: ["overview"],
-    queryFn: fetchOverview,
-    refetchInterval: 30_000,
-  });
+  const { data, isPending, isError, error, refetch } = useOverview();
   const repos = data?.repos ?? [];
 
   return (
