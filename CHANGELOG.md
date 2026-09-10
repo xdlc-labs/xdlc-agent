@@ -12,6 +12,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+## [0.0.1-beta.9] - 2026-09-10
+
+A Debian image that can run a copied `cursor-agent`, and clones that Promote and Revert can actually fast-forward onto `main`.
+
+### Fixed
+
 - **The published image can run a copied `cursor-agent`.** Both Dockerfiles used Alpine, so a glibc Node binary and a `#!/usr/bin/env bash` launcher failed with `required file not found` (shop dogfood F1). The runtime image is now `node:22-bookworm-slim` with `bash`, `git`, and `ca-certificates`. Cursor is still not bundled: copy the host CLI onto PATH, or run Cursor's installer as root before `USER`.
 - **Promote and Revert can resolve `origin/main`.** Clones used `--depth 1 --single-branch`, so `git fetch origin main` updated `FETCH_HEAD` and never created `origin/main`. Revert died on `ambiguous argument 'origin/main'`, and Promote reported a non-fast-forward against a history that was a fast-forward on GitHub (shop dogfood F6). New clones fetch advertised heads. Existing shallow clones are unshallowed, their fetch refspec is widened to all heads, and fetch uses explicit `+refs/heads/<name>:refs/remotes/origin/<name>`.
 
@@ -372,6 +378,7 @@ First public beta of the open-source `xdlc-agent` daemon (MIT).
 - `claude.mode: sdk` reserved but unimplemented
 - AWS/EKS bootstrap not included (local Kind only)
 
+[0.0.1-beta.9]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.9
 [0.0.1-beta.8]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.8
 [0.0.1-beta.7]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.7
 [0.0.1-beta.6]: https://github.com/xdlc-labs/xdlc-agent/releases/tag/v0.0.1-beta.6
