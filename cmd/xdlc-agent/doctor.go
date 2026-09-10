@@ -143,6 +143,24 @@ Exit 1 when any required check fails.`,
 			}
 			check("agent API key ("+keyEnv+")", true, keyDetail)
 
+			// The MCP tool server is started by the agent CLI from an
+			// absolute path, so the binary has to exist where the daemon
+			// will resolve it, and recording has to be on for the tools
+			// to have anything to read.
+			if e := cfg.Agent.MCP.Enabled; e != nil && *e {
+				switch {
+				case !cfg.Agent.SessionsEnabled():
+					check("agent MCP tools", false, "agent.mcp.enabled needs agent.sessions.enabled (the tools read the session directory)")
+				default:
+					bin := cfg.Agent.MCP.Binary
+					if bin == "" {
+						bin, _ = os.Executable()
+					}
+					_, statErr := os.Stat(bin)
+					check("agent MCP tools", statErr == nil, "xdlc mcp via "+bin+" — ci_logs, ci_run, prod_metrics, prior_sessions, session_diff, lessons, backlog, repo_config")
+				}
+			}
+
 			// Rules the Fix agent will be given, per repo. Missing files
 			// are not a failure — they mean the agent runs on defaults.
 			for _, r := range cfg.Repos {

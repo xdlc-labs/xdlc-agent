@@ -34,6 +34,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/gatebuild"
 	"github.com/xdlc-labs/xdlc-agent/internal/ghclient"
 	"github.com/xdlc-labs/xdlc-agent/internal/lessons"
+	"github.com/xdlc-labs/xdlc-agent/internal/mcpserver"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	agentotel "github.com/xdlc-labs/xdlc-agent/internal/otel"
 	"github.com/xdlc-labs/xdlc-agent/internal/poller"
@@ -81,6 +82,7 @@ func main() {
 		doctorCmd(),
 		demoCmd(),
 		fixCmd(),
+		mcpCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -170,6 +172,15 @@ func daemonCmd() *cobra.Command {
 			// and the SSE stream read them.
 			fixTracker := fixstate.New()
 			disp.Fixes = fixTracker
+			if cfg.Agent.MCPEnabled() && sessions != nil {
+				setup, merr := mcpSetup(cfg, cfgPath, sessions.Root)
+				if merr != nil {
+					log.Warn("agent.mcp disabled", "error", merr)
+				} else {
+					disp.MCP = setup
+					log.Info("agent mcp enabled", "binary", setup.Binary, "sessions", setup.SessionsDir)
+				}
+			}
 			disp.DefaultProvider = cfg.Agent.Provider
 			disp.Route = cfg.Agent.Route
 			disp.Providers = append([]string(nil), cfg.Agent.Providers...)
@@ -208,6 +219,14 @@ func daemonCmd() *cobra.Command {
 			}
 			gh := ghclient.NewFromProvider(tokens)
 			disp.FetchLogs = gh.FetchFailedJobLogs
+			disp.FetchAllLogs = func(ctx context.Context, runURL string) ([]mcpserver.JobLog, error) {
+				jobs, err := gh.FetchAllFailedJobLogs(ctx, runURL)
+				return jobLogs(jobs), err
+			}
+			disp.FetchRun = func(ctx context.Context, runURL string) (dispatch.RunInfo, error) {
+				run, err := gh.GetRun(ctx, runURL)
+				return runInfo(run), err
+			}
 			disp.FindPR = func(ctx context.Context, ownerRepo, branch string) (*dispatch.PRRef, error) {
 				pr, err := gh.FindPRByBranch(ctx, ownerRepo, branch)
 				if err != nil || pr == nil {

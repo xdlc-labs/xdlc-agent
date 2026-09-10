@@ -102,6 +102,15 @@ func Config(cfg *config.Config) []Issue {
 				"into the prompt, or a small positive count", *n)})
 	}
 
+	// The MCP tools read the session directory (full CI logs, prior
+	// runs), so a server with recording off would answer every call
+	// with "nothing recorded" and the agent would be told it has tools
+	// that never work.
+	if e := cfg.Agent.MCP.Enabled; e != nil && *e && !cfg.Agent.SessionsEnabled() {
+		issues = append(issues, Issue{Message: "agent.mcp.enabled needs agent.sessions.enabled: the tool server " +
+			"reads the session directory; turn recording back on or leave mcp off"})
+	}
+
 	// A stall watchdog that cannot fire before the run's own deadline is
 	// only a slower version of the timeout it duplicates.
 	if st := cfg.Agent.StallTimeout; st > 0 {

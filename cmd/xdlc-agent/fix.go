@@ -19,6 +19,7 @@ func fixCmd() *cobra.Command {
 		instructions string
 		timeout      time.Duration
 		stallTimeout time.Duration
+		mcp          bool
 	)
 	cmd := &cobra.Command{
 		Use:   "fix <github-actions-run-url>",
@@ -48,6 +49,7 @@ you want it to happen without you: xdlc init.`,
 				Instructions: instructions,
 				Timeout:      timeout,
 				StallTimeout: stallTimeout,
+				MCP:          mcp,
 				Out:          cmd.OutOrStdout(),
 			})
 			if errors.Is(err, oneshot.ErrNotRed) {
@@ -65,5 +67,6 @@ you want it to happen without you: xdlc init.`,
 	// Off by default, matching the daemon: it switches the agent CLI to
 	// streaming output, so an operator has to ask for it.
 	cmd.Flags().DurationVar(&stallTimeout, "stall-timeout", 0, "kill the agent after this long with no output (default off)")
+	cmd.Flags().BoolVar(&mcp, "mcp", false, "attach the xdlc MCP tool server so the agent can pull every failed job's full logs on demand (default off)")
 	return cmd
 }

@@ -80,7 +80,15 @@ agent:
   #   dir: sessions
   #   retain: 720h
   #   max_file_bytes: 2097152
-  #   prior_fixes: 2                # earlier Fixes (same repo + source) summarized
+  #   prior_fixes: 2
+  # mcp:                        # context on demand for the agent; default off
+  #   enabled: true             # attach `xdlc mcp --session <id>` to each Fix's agent CLI:
+  #                             # ci_logs (every failed job's COMPLETE log, grep/tail/job),
+  #                             # ci_run, prod_metrics, prior_sessions, session_diff,
+  #                             # lessons, backlog, repo_config. The prompt then carries
+  #                             # only the last 60 log lines. Needs sessions.enabled.
+  #                             # Every call lands in the session's tools.jsonl.
+  #   binary: /usr/local/bin/xdlc  # default: the daemon's own executable                # earlier Fixes (same repo + source) summarized
   #                                 # into the next Fix prompt; 0 sends none
 
 # fleet:
