@@ -12,6 +12,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+## [1.0.0] - 2026-09-10
+
+The first stable release. Nine betas of running this daemon against its own repository and a dogfood shop turned the documented paths into bug lists and then into fixes; what is left is the loop the README describes, working the way the README describes it. From here the `config.yaml` schema, the `xdlc` CLI and the HTTP API in `openapi/openapi.yaml` follow semver: a breaking change to any of them is a major bump.
+
+### Added
+
+- **`ghcr.io/xdlc-labs/xdlc-agent:latest`** now points at the newest stable release. It is written only for non-prerelease tags, so a later `1.1.0-beta.1` cannot move it. Still linux/amd64 only
+
+### Changed
+
+- **The install snippets and the README no longer describe a public beta.** `scripts/install.sh` defaults to the newest release as before, and GitHub's own "latest" link now resolves, because a stable tag is not a prerelease
+- **`scripts/check-version-refs.sh` no longer needs perl.** It used `perl -ne` for the release-reference scan, which fails on a minimal host with `perl: command not found` and then reports that "the pattern has rotted", which is the wrong diagnosis. It now uses POSIX `grep -o` and `sed`, which both macOS and a container base image have
+
 ## [0.0.1-beta.9] - 2026-09-10
 
 A Debian image that can run a copied `cursor-agent`, and clones that Promote and Revert can actually fast-forward onto `main`.
