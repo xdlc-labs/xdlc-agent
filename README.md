@@ -317,7 +317,6 @@ is the release gate for those.
 
 [Docs](https://xdlc.dev/docs) ·
 [Getting started](https://xdlc.dev/agent/docs/getting-started) ·
-[Roadmap](ROADMAP.md) ·
 [Changelog](CHANGELOG.md) ·
 [Contributing](CONTRIBUTING.md) ·
 [Security](SECURITY.md) ·

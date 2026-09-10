@@ -10,6 +10,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+### Removed
+
+- **`ROADMAP.md`.** Everything on it shipped in 1.0.0. What comes next is decided in issues, one at a time, against what 1.0 users actually hit — a standing roadmap file for a project whose roadmap is empty would only go stale. The README footer link is gone with it
+
 ### Fixed
 
 ## [1.0.0] - 2026-09-10
