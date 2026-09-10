@@ -1068,8 +1068,8 @@ func (d *Dispatcher) revertInner(ctx context.Context, s orchestrator.Signal) err
 		return cmd.CombinedOutput()
 	}
 
-	if out, err := run("fetch", "origin", prod, dev); err != nil {
-		return fmt.Errorf("dispatch: revert: fetch: %w: %s", err, out)
+	if err := repos.FetchOriginHeads(ctx, dir, env, prod, dev); err != nil {
+		return fmt.Errorf("dispatch: revert: fetch: %w", err)
 	}
 	oldProd, err := run("rev-parse", "origin/"+prod)
 	if err != nil {

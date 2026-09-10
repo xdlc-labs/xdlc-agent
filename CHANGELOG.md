@@ -12,6 +12,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The published image can run a copied `cursor-agent`.** Both Dockerfiles used Alpine, so a glibc Node binary and a `#!/usr/bin/env bash` launcher failed with `required file not found` (shop dogfood F1). The runtime image is now `node:22-bookworm-slim` with `bash`, `git`, and `ca-certificates`. Cursor is still not bundled: copy the host CLI onto PATH, or run Cursor's installer as root before `USER`.
+- **Promote and Revert can resolve `origin/main`.** Clones used `--depth 1 --single-branch`, so `git fetch origin main` updated `FETCH_HEAD` and never created `origin/main`. Revert died on `ambiguous argument 'origin/main'`, and Promote reported a non-fast-forward against a history that was a fast-forward on GitHub (shop dogfood F6). New clones fetch advertised heads. Existing shallow clones are unshallowed, their fetch refspec is widened to all heads, and fetch uses explicit `+refs/heads/<name>:refs/remotes/origin/<name>`.
+
 ## [0.0.1-beta.8] - 2026-09-09
 
 Prior Fix recordings in the next prompt, a stall watchdog, live Fix states in the console, and a CI scan fix so `main` stays green.

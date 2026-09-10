@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xdlc-labs/xdlc-agent/internal/config"
+	"github.com/xdlc-labs/xdlc-agent/internal/repos"
 )
 
 func TestCarryProdTag(t *testing.T) {
@@ -264,4 +267,37 @@ func mustOutput(t *testing.T, dir string, args ...string) []byte {
 		t.Fatalf("git %v: %v: %s", args, err, out)
 	}
 	return out
+}
+
+// TestFastForwardFromShallowSingleBranch is the promote half of shop
+// F6: after EnsureCloned repairs the clone, develop must fast-forward
+// onto main.
+func TestFastForwardFromShallowSingleBranch(t *testing.T) {
+	bare, _, work := setupDevProd(t)
+	// Recreate work as the old daemon clone.
+	if err := os.RemoveAll(work); err != nil {
+		t.Fatal(err)
+	}
+	run := func(dir string, args ...string) {
+		t.Helper()
+		out, err := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run(filepath.Dir(bare), "clone", "--depth", "1", "--single-branch", "--branch", "develop", bare, work)
+
+	mgr := repos.NewManager("unused-root", []config.Repo{
+		{Name: "svc", GitHub: "org/svc", Dir: work, Branch: "develop", ProdBranch: "main"},
+	}, nil)
+	if err := mgr.EnsureCloned(context.Background(), "svc"); err != nil {
+		t.Fatalf("EnsureCloned: %v", err)
+	}
+	gated := revParseT(t, bare, "develop")
+	if err := FastForward(context.Background(), work, nil, "develop", "main", gated); err != nil {
+		t.Fatalf("FastForward: %v", err)
+	}
+	if got := revParseT(t, bare, "main"); got != gated {
+		t.Errorf("origin main = %s, want %s", got, gated)
+	}
 }

@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/xdlc-labs/xdlc-agent/internal/repos"
 )
 
 // CommitProdTag stages and commits the prod values file if dirty, then
@@ -70,10 +72,8 @@ func VerifyRemoteTip(ctx context.Context, repoDir string, env []string, branch, 
 	if !isHexSHA(wantSHA) {
 		return fmt.Errorf("promote: %q is not a git object name", wantSHA)
 	}
-	fetch := exec.CommandContext(ctx, "git", "-C", repoDir, "fetch", "origin", branch) //nolint:gosec // see FastForward
-	applyEnv(fetch, env)
-	if out, err := fetch.CombinedOutput(); err != nil {
-		return fmt.Errorf("promote: fetch %s: %w: %s", branch, err, out)
+	if err := repos.FetchOriginHeads(ctx, repoDir, env, branch); err != nil {
+		return fmt.Errorf("promote: fetch %s: %w", branch, err)
 	}
 	got, err := revParse(ctx, repoDir, env, "origin/"+branch)
 	if err != nil {
@@ -119,10 +119,8 @@ func FastForward(ctx context.Context, repoDir string, env []string, fromBranch, 
 	// (internal/repos.Manager.Dir), not external input; branch names
 	// come from config.yaml via repos.Manager, and gatedSHA is checked
 	// by isHexSHA before it reaches argv.
-	fetch := exec.CommandContext(ctx, "git", "-C", repoDir, "fetch", "origin", fromBranch, toBranch) //nolint:gosec
-	applyEnv(fetch, env)
-	if out, err := fetch.CombinedOutput(); err != nil {
-		return fmt.Errorf("promote: fetch: %w: %s", err, out)
+	if err := repos.FetchOriginHeads(ctx, repoDir, env, fromBranch, toBranch); err != nil {
+		return fmt.Errorf("promote: fetch: %w", err)
 	}
 
 	src := fromBranch
@@ -150,7 +148,11 @@ func FastForward(ctx context.Context, repoDir string, env []string, fromBranch, 
 	var stderr bytes.Buffer
 	push.Stderr = &stderr
 	if err := push.Run(); err != nil {
-		return fmt.Errorf("promote: push %s->%s not fast-forwardable: %w: %s", src, toBranch, err, stderr.String())
+		msg := stderr.String()
+		if strings.Contains(msg, "non-fast-forward") || strings.Contains(msg, "not fast-forward") {
+			return fmt.Errorf("promote: push %s->%s not fast-forwardable: %w: %s", src, toBranch, err, msg)
+		}
+		return fmt.Errorf("promote: push %s->%s: %w: %s", src, toBranch, err, msg)
 	}
 	return nil
 }
