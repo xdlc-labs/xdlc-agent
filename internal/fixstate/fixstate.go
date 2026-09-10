@@ -85,6 +85,10 @@ type Tracker struct {
 	active map[string]Fix
 	subs   map[int]chan Fix
 	nextID int
+	// tails holds the last tailBytes of each running Fix's agent output;
+	// outSubs are the "fix_output" listeners. See output.go.
+	tails   map[string]string
+	outSubs map[int]*outputSub
 }
 
 // New returns an empty Tracker.
@@ -131,6 +135,8 @@ func (t *Tracker) Set(f Fix) {
 	}
 	if f.State.Terminal() {
 		delete(t.active, f.ID)
+		// The tail was a live view; the transcript is on disk.
+		delete(t.tails, f.ID)
 	} else {
 		t.active[f.ID] = f
 	}

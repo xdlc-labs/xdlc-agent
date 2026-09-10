@@ -24,10 +24,13 @@ files=(
   deploy/helm/xdlc-agent/Chart.yaml
 )
 
-# Capture group 1 is the version in each release-shaped reference.
-# perl, not grep -P: macOS grep has no PCRE, and RELEASING.md runs this locally.
+# Prints "line:version" for each release-shaped reference. POSIX ERE via
+# grep -o and sed only: macOS grep has no PCRE, minimal hosts have no perl, and
+# RELEASING.md runs this locally on both.
+semver='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'
 scan_refs() {
-  perl -ne 'while (/(?:xdlc-agent:|image\.tag=|XDLC_VERSION=v|^appVersion: "|^version: )([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?)/g) { print "$.:$1\n" }' "$1"
+  grep -noE "(xdlc-agent:|image\.tag=|XDLC_VERSION=v|^appVersion: \"|^version: )${semver}" "$1" \
+    | sed -E "s/^([0-9]+):.*[:=v\" ](${semver})\$/\1:\2/"
 }
 
 status=0

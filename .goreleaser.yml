@@ -31,12 +31,14 @@ changelog:
       - "^test:"
 
 # linux/amd64 only — arm64 via QEMU was the release time sink.
-# Re-add arm64 (+ :latest) when we have a native arm runner / first GA.
+# Re-add arm64 when we have a native arm runner.
+# :latest is skipped on prerelease tags so a later 1.1.0-beta.1 cannot move it.
 dockers:
   - ids:
       - xdlc-agent
     image_templates:
       - "ghcr.io/xdlc-labs/xdlc-agent:{{ .Version }}"
+      - "{{ if not .Prerelease }}ghcr.io/xdlc-labs/xdlc-agent:latest{{ end }}"
     dockerfile: deploy/Dockerfile.release
     use: buildx
     build_flag_templates:

@@ -23,6 +23,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
+	"github.com/xdlc-labs/xdlc-agent/internal/session"
 	"github.com/xdlc-labs/xdlc-agent/internal/store"
 )
 
@@ -60,6 +61,10 @@ type Server struct {
 	// answers with an empty list and no state events are streamed, which
 	// is what a daemon built without the tracker should say.
 	Fixes *fixstate.Tracker
+	// Sessions optionally serves the Fix recordings under
+	// /api/sessions, operator role only. nil → recording is off: the
+	// list answers empty with enabled=false and every id is 404.
+	Sessions *session.Store
 }
 
 // PRLiveStatus is the live GitHub view of a Fix PR (issue #14).
@@ -88,6 +93,12 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	mux.Handle("GET /api/kpis", s.requireAuth(http.HandlerFunc(s.handleKPIs)))
 	mux.Handle("GET /api/events", s.requireAuth(http.HandlerFunc(s.handleEvents)))
 	mux.Handle("GET /api/fixes/active", s.requireAuth(http.HandlerFunc(s.handleActiveFixes)))
+	// Recordings are unscrubbed (prompts embed CI logs): operator only.
+	mux.Handle("GET /api/sessions", s.requireOperator(http.HandlerFunc(s.handleSessions)))
+	mux.Handle("GET /api/sessions/{id}", s.requireOperator(http.HandlerFunc(s.handleSession)))
+	mux.Handle("GET /api/sessions/{id}/diff", s.requireOperator(http.HandlerFunc(s.handleSessionDiff)))
+	mux.Handle("GET /api/sessions/{id}/prompt", s.requireOperator(http.HandlerFunc(s.handleSessionPrompt)))
+	mux.Handle("GET /api/sessions/{id}/output", s.requireOperator(http.HandlerFunc(s.handleSessionOutput)))
 	mux.Handle("POST /api/actions/fix", s.requireOperator(http.HandlerFunc(s.handleActionFix)))
 	mux.Handle("POST /api/actions/promote", s.requireOperator(http.HandlerFunc(s.handleActionPromote)))
 	mux.Handle("POST /api/actions/revert", s.requireOperator(http.HandlerFunc(s.handleActionRevert)))
@@ -460,6 +471,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		writeFixStateSSE(w, f)
 		flusher.Flush()
 	}
+	// Same for what each of them has printed so far: a client that
+	// connects mid-run gets the tail as a snapshot, then chunks.
+	output, unsubOutput := s.Fixes.SubscribeOutput()
+	defer unsubOutput()
+	for _, o := range s.Fixes.Tails() {
+		writeFixOutputSSE(w, o)
+		flusher.Flush()
+	}
 
 	ch, unsub := s.Audit.Subscribe()
 	defer unsub()
@@ -487,8 +506,25 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			writeFixStateSSE(w, f)
 			flusher.Flush()
+		case o, ok := <-output:
+			if !ok {
+				output = nil
+				continue
+			}
+			writeFixOutputSSE(w, o)
+			flusher.Flush()
 		}
 	}
+}
+
+// writeFixOutputSSE emits a chunk of a running Fix's agent output as the
+// named event "fix_output". No SSE id, for the same reason as fix_state.
+func writeFixOutputSSE(w http.ResponseWriter, o fixstate.Output) {
+	payload, err := json.Marshal(o)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "event: fix_output\ndata: %s\n\n", payload)
 }
 
 func writeSSE(w http.ResponseWriter, rec store.Record) {
@@ -678,6 +714,9 @@ func recordToEvent(r store.Record) map[string]any {
 	}
 	// ok = gate happy OR an action was taken (fix/promote/revert recorded)
 	ok := r.Kind == "pass" || r.Action == "fix" || r.Action == "promote" || r.Action == "revert"
+	// session_id is the key into /api/sessions/{id}; it was only ever
+	// buried inside the evidence string before, which no row can link from.
+	sessionID, _ := r.Evidence["session_id"].(string)
 	return map[string]any{
 		"id":       fmt.Sprintf("%s-%s-%s", r.At.UTC().Format("20060102150405"), r.Repo, r.Source),
 		"ts":       r.At.UTC().Format("2006-01-02 15:04:05Z"),
@@ -691,6 +730,8 @@ func recordToEvent(r store.Record) map[string]any {
 		"url":      url,
 		"chain_id": r.ChainID,
 		"seq":      r.Seq,
+		// Empty for gate signals and for a daemon with recording off.
+		"session_id": sessionID,
 	}
 }
 

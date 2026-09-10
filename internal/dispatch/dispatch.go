@@ -4,11 +4,14 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/fixstate"
+	"github.com/xdlc-labs/xdlc-agent/internal/mcpserver"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/otel"
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
@@ -103,6 +107,16 @@ type Dispatcher struct {
 	ProviderStats func() map[string]ProviderStats
 	// NewRunner builds a Runner for a provider name; nil → always use Subagent.
 	NewRunner func(provider string) subagent.Runner
+	// MCP, when set, attaches `xdlc mcp --session <id>` to each Fix's
+	// agent CLI (agent.mcp.enabled). Needs Sessions: the tools read the
+	// session directory. See MCPSetup.
+	MCP *MCPSetup
+	// FetchAllLogs downloads every failed job's complete log for the
+	// session's ci-logs.txt, which the ci_logs tool serves. Optional;
+	// without it the tool answers that nothing was saved.
+	FetchAllLogs func(ctx context.Context, runURL string) ([]mcpserver.JobLog, error)
+	// FetchRun fetches the run's metadata for ci-run.json. Optional.
+	FetchRun func(ctx context.Context, runURL string) (RunInfo, error)
 	// fixSem caps concurrent Fix runs. Nil = unlimited (tests); set via SetFixConcurrency.
 	fixSem chan struct{}
 	// fixRepoSem: cap 1 Fix per repo when fixSem is set (#9 fair drain).
@@ -114,6 +128,35 @@ type Dispatcher struct {
 	fixWaiting  atomic.Int64
 	fixInflight atomic.Int64
 }
+
+// MCPSetup is what a Fix needs to hand its agent the `xdlc mcp` server.
+type MCPSetup struct {
+	// Binary is the xdlc executable the agent CLI starts.
+	Binary string
+	// SessionsDir is the absolute session store root, so the server
+	// finds the recording from the agent's working directory.
+	SessionsDir string
+	// Root is the daemon's working directory (LESSONS.md, BACKLOG.md).
+	Root string
+	// ConfigPath is the daemon's config.yaml, absolute. Empty skips the
+	// config-backed tools.
+	ConfigPath string
+}
+
+// RunInfo is the CI run metadata saved as the session's ci-run.json.
+type RunInfo struct {
+	URL        string   `json:"run_url"`
+	Workflow   string   `json:"workflow,omitempty"`
+	HeadBranch string   `json:"head_branch,omitempty"`
+	HeadSHA    string   `json:"head_sha,omitempty"`
+	Status     string   `json:"status,omitempty"`
+	Conclusion string   `json:"conclusion,omitempty"`
+	FailedJobs []string `json:"failed_jobs,omitempty"`
+}
+
+// promptLogLines is how much of the failed job's log the prompt carries
+// when the agent has ci_logs to ask for the rest.
+const promptLogLines = 60
 
 // New returns a Dispatcher.
 func New(r *repos.Manager, s subagent.Runner, log *slog.Logger) *Dispatcher {
@@ -229,6 +272,16 @@ func (ft *fixTrack) to(state fixstate.State, patch fixstate.Fix) {
 	ft.tracker.Set(patch)
 }
 
+// output returns the writer that streams this Fix's agent output to the
+// console. Discards when no tracker is wired up. The caller closes it
+// after Run so a final line without a newline is not lost.
+func (ft *fixTrack) output() io.WriteCloser {
+	if ft == nil || ft.tracker == nil {
+		return (*fixstate.Tracker)(nil).Writer("", nil)
+	}
+	return ft.tracker.Writer(ft.id, subagent.RenderStreamLine)
+}
+
 // done closes the row with the outcome the audit row will record.
 func (ft *fixTrack) done(err error) {
 	state := fixstate.OK
@@ -272,6 +325,86 @@ func (d *Dispatcher) acquireFixSlot(ctx context.Context, repo string) (release f
 			<-repoSem
 		}
 	}, nil
+}
+
+// attachMCP wires `xdlc mcp` into the agent CLI for this Fix and saves
+// the material its tools read. It returns the runner to use, the
+// evidence to prompt with (inline logs trimmed to a tail, with a note
+// saying where the rest is), or an error when the runner cannot take an
+// MCP server — in which case the caller runs without tools.
+func (d *Dispatcher) attachMCP(ctx context.Context, s orchestrator.Signal, sess *session.Session,
+	runner subagent.Runner, dir string, evidence map[string]any) (subagent.Runner, map[string]any, error) {
+	sub, ok := runner.(*subagent.SubprocessRunner)
+	if !ok {
+		return nil, nil, fmt.Errorf("runner %T cannot take an MCP server", runner)
+	}
+	// What the tools read. Written straight to the directory rather than
+	// through sess.Write: the recorder's per-file cap is sized for a
+	// prompt, and these are the complete logs by definition.
+	if runURL, _ := evidence["run_url"].(string); runURL != "" && s.Source == orchestrator.SourceCI {
+		info := RunInfo{URL: runURL}
+		if d.FetchRun != nil {
+			if got, err := d.FetchRun(ctx, runURL); err != nil {
+				d.Log.Warn("mcp: run metadata fetch failed", "repo", s.Repo, "error", err)
+			} else {
+				info = got
+			}
+		}
+		if d.FetchAllLogs != nil {
+			jobs, err := d.FetchAllLogs(ctx, runURL)
+			if err != nil {
+				d.Log.Warn("mcp: full log fetch failed", "repo", s.Repo, "error", err)
+			} else if len(jobs) > 0 {
+				for _, j := range jobs {
+					info.FailedJobs = append(info.FailedJobs, j.Name)
+				}
+				path := filepath.Join(sess.Dir(), session.FileCILogs)
+				if err := os.WriteFile(path, []byte(mcpserver.FormatCILogs(jobs)), 0o600); err != nil {
+					d.Log.Warn("mcp: ci-logs write failed", "repo", s.Repo, "error", err)
+				} else if logs, _ := evidence["logs"].(string); logs != "" {
+					// The prompt now carries a tail; the agent has the rest.
+					evidence = copyEvidence(evidence)
+					evidence["logs"] = tailLines(logs, promptLogLines) +
+						fmt.Sprintf("\n(last %d lines of the first failed job; the complete logs of all %d failed jobs are in the ci_logs tool)\n",
+							promptLogLines, len(jobs))
+				}
+			}
+		}
+		if raw, err := json.MarshalIndent(info, "", "  "); err == nil {
+			if err := os.WriteFile(filepath.Join(sess.Dir(), session.FileCIRun), raw, 0o600); err != nil {
+				d.Log.Warn("mcp: ci-run write failed", "repo", s.Repo, "error", err)
+			}
+		}
+	}
+	args := []string{"mcp", "--session", sess.ID(), "--sessions-dir", d.MCP.SessionsDir}
+	if d.MCP.Root != "" {
+		args = append(args, "--root", d.MCP.Root)
+	}
+	if d.MCP.ConfigPath != "" {
+		args = append(args, "--config", d.MCP.ConfigPath)
+	}
+	// The agent runs in the worktree, not where the daemon was started,
+	// so every path it is handed has to be absolute. agent.sessions.dir
+	// defaults to the relative "sessions".
+	configDir, err := filepath.Abs(sess.Dir())
+	if err != nil {
+		return nil, nil, err
+	}
+	wired, err := sub.WithMCP(subagent.MCPServer{Name: mcpserver.ServerName, Command: d.MCP.Binary, Args: args}, dir, configDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	return wired, evidence, nil
+}
+
+// tailLines returns the last n lines of s.
+func tailLines(s string, n int) string {
+	s = strings.TrimRight(s, "\n")
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // SetWorktree turns per-Fix worktrees on and sets how long a failed run's
@@ -345,6 +478,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 	var sess *session.Session
 	manual, _ := s.Evidence["manual"].(bool)
 	if d.Sessions != nil {
+		runURL, _ := s.Evidence["run_url"].(string)
 		started, serr := d.Sessions.Start(session.Meta{
 			Repo:     s.Repo,
 			Source:   string(s.Source),
@@ -352,6 +486,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 			Provider: provider,
 			FixMode:  d.FixMode,
 			Manual:   manual,
+			RunURL:   runURL,
 		})
 		if serr != nil {
 			d.Log.Warn("session start failed", "repo", s.Repo, "error", serr)
@@ -392,6 +527,21 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 	}
 	baseSHA := session.HeadSHA(ctx, dir)
 	sess.SetGit(baseSHA, "", branch, 0)
+
+	// Context on demand: save what GitHub had to say into the session,
+	// hand the agent `xdlc mcp --session <id>`, and shrink the inline
+	// logs to a tail, since the rest is now one tool call away.
+	useTools := false
+	if d.MCP != nil && sess != nil {
+		wired, ev, terr := d.attachMCP(ctx, s, sess, runner, dir, evidence)
+		if terr != nil {
+			// A Fix without tools is the Fix every release before this one
+			// ran; a Fix that does not run because tooling failed is worse.
+			d.Log.Warn("mcp attach failed; running without tools", "repo", s.Repo, "error", terr)
+		} else {
+			runner, evidence, useTools = wired, ev, true
+		}
+	}
 
 	teamRules := subagent.ReadTeamInstructions(dir, d.RulesFile)
 	if extra := d.Repos.AgentInstructions(s.Repo); extra != "" {
@@ -503,6 +653,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 			Plan:          plan,
 			Retry:         retry,
 			NoPush:        wt != nil,
+			Tools:         useTools,
 		})
 		if werr := sess.Write(session.AttemptFile(session.FilePrompt, attempt), prompt); werr != nil {
 			d.Log.Warn("session prompt write failed", "repo", s.Repo, "error", werr)
@@ -513,7 +664,13 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 		// Inject git AuthEnv (GIT_CONFIG_* http.extraHeader) so the subagent
 		// can `git push` without GITHUB_TOKEN in its allowlist — same credential
 		// path Promote/Revert use. Never pass App PEM / webhook secrets.
-		out, runErr := runner.Run(ctx, dir, prompt, authEnv)
+		//
+		// The tap streams the agent's output to the console as it prints,
+		// rendered down to prose, tool calls and the result; the full
+		// transcript still goes to the session file below once Run returns.
+		tap := track.output()
+		out, runErr := runner.Run(subagent.WithOutputTap(ctx, tap), dir, prompt, authEnv)
+		_ = tap.Close()
 		ranAgent = true
 		// Best-effort cost/tokens into Evidence (audit/backlog), even on
 		// error. Summed, not replaced: a Fix that took three attempts

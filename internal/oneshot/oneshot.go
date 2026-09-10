@@ -22,6 +22,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
 	"github.com/xdlc-labs/xdlc-agent/internal/dispatch"
 	"github.com/xdlc-labs/xdlc-agent/internal/ghclient"
+	"github.com/xdlc-labs/xdlc-agent/internal/mcpserver"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
 	"github.com/xdlc-labs/xdlc-agent/internal/session"
@@ -32,6 +33,7 @@ import (
 type GitHub interface {
 	GetRun(ctx context.Context, runURL string) (ghclient.Run, error)
 	FetchFailedJobLogs(ctx context.Context, runURL string) (string, error)
+	FetchAllFailedJobLogs(ctx context.Context, runURL string) ([]ghclient.JobLog, error)
 	FindPRByBranch(ctx context.Context, repo, branch string) (*ghclient.PRRef, error)
 	CreatePR(ctx context.Context, repo, head, base, title, body string) (*ghclient.PRRef, error)
 }
@@ -51,8 +53,18 @@ type Options struct {
 	// wall clock runs out; see subagent.SubprocessRunner.WithStallTimeout
 	// for why opting in also switches the CLI to streaming output.
 	StallTimeout time.Duration
-	Out          io.Writer    // progress lines; default os.Stdout
-	Log          *slog.Logger // dispatcher log; default: warnings to Out
+	// MCP attaches `xdlc mcp --session <id>` to the agent CLI, so it can
+	// pull every failed job's complete logs and earlier Fix records on
+	// demand instead of receiving a 32 KB slice. Same server the daemon
+	// wires with agent.mcp.enabled; here the session store is the one
+	// under WorkDir and there is no config, so prod_metrics and
+	// repo_config answer "not available".
+	MCP bool
+	// MCPBinary is the xdlc executable the agent starts for it. Empty →
+	// this process's own executable.
+	MCPBinary string
+	Out       io.Writer    // progress lines; default os.Stdout
+	Log       *slog.Logger // dispatcher log; default: warnings to Out
 
 	// Seams for tests. Zero values mean "the real thing".
 	GitHub  GitHub
@@ -210,6 +222,33 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	// second `xdlc fix` on the same repo can read what the first tried.
 	disp.PriorFixes = config.DefaultPriorFixes
 	res.SessionDir = sessionDir
+	if opts.MCP {
+		bin := opts.MCPBinary
+		if bin == "" {
+			exe, err := os.Executable()
+			if err != nil {
+				return res, fmt.Errorf("oneshot: --mcp: cannot locate the xdlc binary: %w", err)
+			}
+			bin = exe
+		}
+		sessAbs, err := filepath.Abs(sessionDir)
+		if err != nil {
+			return res, err
+		}
+		disp.MCP = &dispatch.MCPSetup{Binary: bin, SessionsDir: sessAbs}
+		disp.FetchAllLogs = func(ctx context.Context, runURL string) ([]mcpserver.JobLog, error) {
+			jobs, err := gh.FetchAllFailedJobLogs(ctx, runURL)
+			out := make([]mcpserver.JobLog, 0, len(jobs))
+			for _, j := range jobs {
+				out = append(out, mcpserver.JobLog{Name: j.Name, Conclusion: j.Conclusion, Text: j.Text})
+			}
+			return out, err
+		}
+		disp.FetchRun = func(_ context.Context, _ string) (dispatch.RunInfo, error) {
+			return dispatch.RunInfo{URL: run.HTMLURL, Workflow: run.Workflow, HeadBranch: run.HeadBranch,
+				HeadSHA: run.HeadSHA, Status: run.Status, Conclusion: run.Conclusion}, nil
+		}
+	}
 
 	sig := orchestrator.Signal{
 		Source: orchestrator.SourceCI,

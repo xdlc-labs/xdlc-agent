@@ -8,7 +8,7 @@
 # `set: Illegal option -o pipefail` before the first line of work runs.
 #
 # Env:
-#   XDLC_VERSION      release tag (e.g. v0.0.1-beta.1). Default: newest release (incl. prereleases).
+#   XDLC_VERSION      release tag (e.g. v1.0.0). Default: newest release (incl. prereleases).
 #   XDLC_INSTALL_DIR  install directory. Default: ~/.local/bin
 #   XDLC_REPO         owner/name. Default: xdlc-labs/xdlc-agent
 set -euo pipefail

@@ -34,6 +34,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/gatebuild"
 	"github.com/xdlc-labs/xdlc-agent/internal/ghclient"
 	"github.com/xdlc-labs/xdlc-agent/internal/lessons"
+	"github.com/xdlc-labs/xdlc-agent/internal/mcpserver"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	agentotel "github.com/xdlc-labs/xdlc-agent/internal/otel"
 	"github.com/xdlc-labs/xdlc-agent/internal/poller"
@@ -81,6 +82,7 @@ func main() {
 		doctorCmd(),
 		demoCmd(),
 		fixCmd(),
+		mcpCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -149,7 +151,8 @@ func daemonCmd() *cobra.Command {
 			// includes the shipped container (uid 65532, empty HOME).
 			repoMgr.SetCommitter(cfg.Agent.Committer.Name, cfg.Agent.Committer.Email)
 			runner := subagent.NewSubprocessRunner(subagent.Provider(cfg.Agent.Provider), cfg.Agent.Binary, cfg.Agent.Args, cfg.Agent.Timeout, cfg.Agent.ExtraEnvKeys).
-				WithStallTimeout(cfg.Agent.StallTimeout)
+				WithStallTimeout(cfg.Agent.StallTimeout).
+				WithStreaming()
 			disp := dispatch.New(repoMgr, runner, log)
 			disp.Metrics = &metrics
 			disp.FixMode = cfg.Agent.FixMode
@@ -169,13 +172,23 @@ func daemonCmd() *cobra.Command {
 			// and the SSE stream read them.
 			fixTracker := fixstate.New()
 			disp.Fixes = fixTracker
+			if cfg.Agent.MCPEnabled() && sessions != nil {
+				setup, merr := mcpSetup(cfg, cfgPath, sessions.Root)
+				if merr != nil {
+					log.Warn("agent.mcp disabled", "error", merr)
+				} else {
+					disp.MCP = setup
+					log.Info("agent mcp enabled", "binary", setup.Binary, "sessions", setup.SessionsDir)
+				}
+			}
 			disp.DefaultProvider = cfg.Agent.Provider
 			disp.Route = cfg.Agent.Route
 			disp.Providers = append([]string(nil), cfg.Agent.Providers...)
 			disp.RouteMinSuccess = cfg.Agent.RouteMinSuccess
 			disp.NewRunner = func(provider string) subagent.Runner {
 				return subagent.NewSubprocessRunner(subagent.Provider(provider), cfg.Agent.Binary, cfg.Agent.Args, cfg.Agent.Timeout, cfg.Agent.ExtraEnvKeys).
-					WithStallTimeout(cfg.Agent.StallTimeout)
+					WithStallTimeout(cfg.Agent.StallTimeout).
+					WithStreaming()
 			}
 			disp.ProviderStats = func() map[string]dispatch.ProviderStats {
 				all, err := audit.All()
@@ -206,6 +219,14 @@ func daemonCmd() *cobra.Command {
 			}
 			gh := ghclient.NewFromProvider(tokens)
 			disp.FetchLogs = gh.FetchFailedJobLogs
+			disp.FetchAllLogs = func(ctx context.Context, runURL string) ([]mcpserver.JobLog, error) {
+				jobs, err := gh.FetchAllFailedJobLogs(ctx, runURL)
+				return jobLogs(jobs), err
+			}
+			disp.FetchRun = func(ctx context.Context, runURL string) (dispatch.RunInfo, error) {
+				run, err := gh.GetRun(ctx, runURL)
+				return runInfo(run), err
+			}
 			disp.FindPR = func(ctx context.Context, ownerRepo, branch string) (*dispatch.PRRef, error) {
 				pr, err := gh.FindPRByBranch(ctx, ownerRepo, branch)
 				if err != nil || pr == nil {
@@ -447,6 +468,7 @@ func daemonCmd() *cobra.Command {
 				RepoDir:       repoMgr.Dir,
 				FixQueueStats: disp.FixQueueStats,
 				Fixes:         fixTracker,
+				Sessions:      sessions,
 			}
 			if cfg.Server.OIDC.Enabled() {
 				oidcAuth, err := setupOIDC(cmd.Context(), cfg.Server.OIDC)

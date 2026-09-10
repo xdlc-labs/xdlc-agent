@@ -164,6 +164,81 @@ func (c *Client) FetchFailedJobLogs(ctx context.Context, runURL string) (string,
 	return string(body), nil
 }
 
+// JobLog is one failed job's complete log, for the session's ci-logs.txt
+// that the MCP ci_logs tool reads.
+type JobLog struct {
+	Name       string
+	Conclusion string
+	Text       string
+}
+
+// maxJobLogBytes bounds one job's saved log. Generous — this is the
+// untrimmed source the agent can grep — but a job that printed more than
+// this is not going to be read line by line by anyone.
+const maxJobLogBytes = 8 << 20
+
+// FetchAllFailedJobLogs downloads the complete log of every failed or
+// timed-out job in a run, in job order. FetchFailedJobLogs keeps the
+// first 32 KiB of the first one for the prompt; this is what the agent
+// reaches for when the useful line was not in that slice.
+func (c *Client) FetchAllFailedJobLogs(ctx context.Context, runURL string) ([]JobLog, error) {
+	owner, repo, runID, err := ParseRunURL(runURL)
+	if err != nil {
+		return nil, err
+	}
+	jobs, _, err := c.gh.Actions.ListWorkflowJobs(ctx, owner, repo, runID, &github.ListWorkflowJobsOptions{
+		Filter:      "latest",
+		ListOptions: github.ListOptions{PerPage: 100},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ghclient: list jobs for run %d: %w", runID, err)
+	}
+	var out []JobLog
+	for _, j := range jobs.Jobs {
+		if c := j.GetConclusion(); c != "failure" && c != "timed_out" {
+			continue
+		}
+		text, err := c.downloadJobLog(ctx, owner, repo, j.GetID(), maxJobLogBytes)
+		if err != nil {
+			// One job's log being unavailable should not lose the others;
+			// say so in its place.
+			text = "(log unavailable: " + err.Error() + ")\n"
+		}
+		out = append(out, JobLog{Name: j.GetName(), Conclusion: j.GetConclusion(), Text: text})
+	}
+	return out, nil
+}
+
+func (c *Client) downloadJobLog(ctx context.Context, owner, repo string, jobID int64, limit int) (string, error) {
+	url, _, err := c.gh.Actions.GetWorkflowJobLogs(ctx, owner, repo, jobID, 3)
+	if err != nil {
+		return "", fmt.Errorf("ghclient: job logs URL: %w", err)
+	}
+	if url == nil {
+		return "", nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ghclient: download job logs: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("ghclient: download job logs: status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
+	if err != nil {
+		return "", err
+	}
+	if len(body) > limit {
+		body = append(body[:limit], []byte("\n...(truncated)\n")...)
+	}
+	return string(body), nil
+}
+
 // Run is the slice of a workflow run the one-shot `xdlc fix` needs to
 // stand in for the webhook it never received: which branch and commit
 // failed, and whether the run really is red.

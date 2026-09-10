@@ -12,6 +12,7 @@ const navOps = [
   { to: "/repos", key: "nav.repos" },
   { to: "/activity", key: "nav.activity" },
   { to: "/actions", key: "nav.actions" },
+  { to: "/fixes", key: "nav.fixes" },
 ] as const;
 
 const navMeta = [
