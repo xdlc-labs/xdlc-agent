@@ -88,6 +88,13 @@ func testManager(t *testing.T, workDir string) *repos.Manager {
 	}, nil /* no auth needed for local file:// remotes */)
 }
 
+// lastPromoteFrom answers Revert's "what did we last promote" from a
+// Promote signal's evidence, the way main.go answers it from the audit.
+func lastPromoteFrom(promoted orchestrator.Signal) func(string) (string, bool) {
+	sha, _ := promoted.Evidence["promoted_sha"].(string)
+	return func(string) (string, bool) { return sha, sha != "" }
+}
+
 func silentLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -119,9 +126,13 @@ func TestRevertPushesUndoCommit(t *testing.T) {
 	d := New(mgr, nil, silentLogger())
 
 	// Prod revert targets main after a promote (main == develop tip).
-	if err := d.Promote(context.Background(), orchestrator.Signal{Repo: "svc"}); err != nil {
+	promoteSig := orchestrator.Signal{Repo: "svc", Evidence: map[string]any{}}
+	if err := d.Promote(context.Background(), promoteSig); err != nil {
 		t.Fatalf("Promote: %v", err)
 	}
+	// Revert checks the prod tip against the last promoted commit, which
+	// the daemon reads back from its audit trail.
+	d.LastPromote = lastPromoteFrom(promoteSig)
 
 	if err := d.Revert(context.Background(), orchestrator.Signal{Repo: "svc"}); err != nil {
 		t.Fatalf("Revert: %v", err)
@@ -337,7 +348,8 @@ func TestPromoteRevertCustomBranches(t *testing.T) {
 	}, nil)
 	d := New(mgr, nil, silentLogger())
 
-	if err := d.Promote(context.Background(), orchestrator.Signal{Repo: "svc"}); err != nil {
+	promoteSig := orchestrator.Signal{Repo: "svc", Evidence: map[string]any{}}
+	if err := d.Promote(context.Background(), promoteSig); err != nil {
 		t.Fatalf("Promote: %v", err)
 	}
 	prodRev := strings.TrimSpace(runGit(t, bareDir, "rev-parse", prod))
@@ -345,6 +357,7 @@ func TestPromoteRevertCustomBranches(t *testing.T) {
 	if prodRev != devRev {
 		t.Errorf("origin %s (%s) != %s (%s) after promote", prod, prodRev, dev, devRev)
 	}
+	d.LastPromote = lastPromoteFrom(promoteSig)
 
 	if err := d.Revert(context.Background(), orchestrator.Signal{Repo: "svc"}); err != nil {
 		t.Fatalf("Revert: %v", err)

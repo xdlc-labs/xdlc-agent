@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/backlog"
@@ -166,9 +167,27 @@ func Run(ctx context.Context, opts Options) error {
 		},
 	}
 
+	// Revert checks the prod tip against the last commit a Promote put
+	// there. The daemon reads that from its audit trail; the demo keeps
+	// it from the Promote's own evidence.
+	var promotedMu sync.Mutex
+	lastPromoted := ""
+	disp.LastPromote = func(string) (string, bool) {
+		promotedMu.Lock()
+		defer promotedMu.Unlock()
+		return lastPromoted, lastPromoted != ""
+	}
+
 	o := orchestrator.New(disp, bl, log)
 	results := make(chan stepResult, 8)
 	o.Audit = func(s orchestrator.Signal, action orchestrator.Action, dispatchErr error, started time.Time) error {
+		if action == orchestrator.ActionPromote && dispatchErr == nil {
+			if sha, _ := s.Evidence["promoted_sha"].(string); sha != "" {
+				promotedMu.Lock()
+				lastPromoted = sha
+				promotedMu.Unlock()
+			}
+		}
 		status := store.StatusOK
 		errMsg := ""
 		if dispatchErr != nil {

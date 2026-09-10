@@ -157,6 +157,7 @@ type workflowRunEvent struct {
 		Name           string `json:"name"`
 		Path           string `json:"path"`
 		Conclusion     string `json:"conclusion"`
+		RunAttempt     int    `json:"run_attempt"`
 		HeadBranch     string `json:"head_branch"`
 		HeadSHA        string `json:"head_sha"`
 		HTMLURL        string `json:"html_url"`
@@ -302,6 +303,7 @@ func (s *Server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 			"head_sha":      evt.WorkflowRun.HeadSHA,
 			"head_branch":   evt.WorkflowRun.HeadBranch,
 			"run_event":     evt.WorkflowRun.Event,
+			"run_attempt":   evt.WorkflowRun.RunAttempt,
 			"workflow_name": evt.WorkflowRun.Name,
 			"workflow_path": evt.WorkflowRun.Path,
 		},

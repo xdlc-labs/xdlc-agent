@@ -378,6 +378,12 @@ components:
           description: >-
             Key into /api/sessions/{id} for a Fix that was recorded. Empty
             for gate signals and when recording is off.
+        error:
+          type: string
+          description: >-
+            The dispatch error when ok is false — a rejected Promote push,
+            a Revert that found a human's commit at the prod tip, a Fix
+            whose agent failed. Empty when the action happened.
     Session:
       type: object
       description: meta.json of one Fix recording (internal/session.Meta).

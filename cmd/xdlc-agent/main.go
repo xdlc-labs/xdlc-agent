@@ -254,11 +254,32 @@ func daemonCmd() *cobra.Command {
 					interval = 15 * time.Second
 				}
 				disp.Reverify = func(ctx context.Context, s orchestrator.Signal) (map[string]any, error) {
-					return reverifyGate(ctx, s, repoMgr, ciGate, smokeGates, attempts, interval, log)
+					return reverifyGate(ctx, s, repoMgr, ciGate, smokeGates, gh, cfg.Agent.Timeout, attempts, interval, log)
 				}
 			}
 
 			o := orchestrator.New(disp, bl, log)
+			// A fail for a commit that is no longer the branch tip is stale
+			// news: drop it instead of rerunning and fixing a superseded run.
+			o.TipSHA = repoMgr.RemoteSHA
+			// Revert checks the prod tip against the last commit a Promote
+			// put there; anything else at the tip is a human's commit.
+			disp.LastPromote = func(repo string) (string, bool) {
+				records, err := audit.Since(repo, time.Time{})
+				if err != nil {
+					return "", false
+				}
+				for i := len(records) - 1; i >= 0; i-- {
+					r := records[i]
+					if r.Action != string(orchestrator.ActionPromote) || !r.Succeeded() {
+						continue
+					}
+					if sha, _ := r.Evidence["promoted_sha"].(string); sha != "" {
+						return sha, true
+					}
+				}
+				return "", false
+			}
 			rerunOn := true
 			if cfg.Agent.CIRerunBeforeFix != nil {
 				rerunOn = *cfg.Agent.CIRerunBeforeFix
@@ -787,6 +808,8 @@ func reverifyGate(
 	repoMgr *repos.Manager,
 	ci *gate.CIGate,
 	smoke map[string]*gate.SmokeGate,
+	gh *ghclient.Client,
+	runTimeout time.Duration,
 	attempts int,
 	interval time.Duration,
 	log *slog.Logger,
@@ -796,8 +819,16 @@ func reverifyGate(
 	switch s.Source {
 	case orchestrator.SourceCI:
 		g = ci
-		if gh := repoMgr.GitHub(s.Repo); gh != "" {
-			checkRepo = gh
+		if ghRepo := repoMgr.GitHub(s.Repo); ghRepo != "" {
+			checkRepo = ghRepo
+		}
+		// The verdict on a Fix is the CI run of the commit the Fix pushed,
+		// not whatever run happens to be the branch's latest. Polling the
+		// branch declared a correct Fix failed three seconds before its
+		// run finished, because until then the latest completed run was
+		// the old red one. Wait for the pushed commit's own runs instead.
+		if pushed, _ := s.Evidence["pushed_sha"].(string); pushed != "" && gh != nil {
+			return reverifyBySHA(ctx, gh, checkRepo, repoMgr.Branch(s.Repo), pushed, runTimeout, interval, log)
 		}
 	case orchestrator.SourceDevGate:
 		if sg, ok := smoke[s.Repo]; ok {
@@ -831,6 +862,76 @@ func reverifyGate(
 		}
 	}
 	return last.Evidence, fmt.Errorf("gate %s still %s after %d attempts", g.Name(), last.Status, attempts)
+}
+
+// reverifyBySHA waits for every workflow run GitHub has for the pushed
+// commit to complete, then reads their conclusions. "No run yet" and
+// "still running" are waits, never failures. The wall clock is the
+// agent's own timeout (or 20 minutes when unset) — CI for a Fix is
+// allowed to take as long as the Fix did.
+func reverifyBySHA(ctx context.Context, gh *ghclient.Client, ownerRepo, branch, sha string,
+	runTimeout, interval time.Duration, log *slog.Logger) (map[string]any, error) {
+	if runTimeout <= 0 {
+		runTimeout = 20 * time.Minute
+	}
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	deadline := time.Now().Add(runTimeout)
+	// A run that has not appeared after this long is not coming: the
+	// workflow does not trigger on this branch, or CI is down.
+	noRunAfter := time.Now().Add(3 * time.Minute)
+	var last []ghclient.RunState
+	for {
+		runs, err := gh.RunsForSHA(ctx, ownerRepo, branch, sha)
+		if err != nil {
+			log.Warn("fix reverify: cannot list runs for pushed commit", "repo", ownerRepo, "sha", sha, "error", err)
+		} else {
+			last = runs
+			if len(runs) > 0 && allCompleted(runs) {
+				failed := failedRuns(runs)
+				ev := map[string]any{"reverify_sha": sha, "reverify_runs": len(runs)}
+				if len(failed) == 0 {
+					return nil, nil
+				}
+				ev["run_url"] = failed[0].HTMLURL
+				ev["conclusion"] = failed[0].Conclusion
+				return ev, fmt.Errorf("gate ci still %s for pushed commit %s (%s)", failed[0].Conclusion, sha[:min(12, len(sha))], failed[0].Name)
+			}
+			if len(runs) == 0 && time.Now().After(noRunAfter) {
+				return map[string]any{"reverify_sha": sha}, fmt.Errorf("gate ci: no workflow run appeared for pushed commit %s within 3m; does the workflow trigger on push to %s?", sha[:min(12, len(sha))], branch)
+			}
+		}
+		if time.Now().After(deadline) {
+			return map[string]any{"reverify_sha": sha, "reverify_runs": len(last)}, fmt.Errorf("gate ci: run for pushed commit %s still not complete after %s", sha[:min(12, len(sha))], runTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
+func allCompleted(runs []ghclient.RunState) bool {
+	for _, r := range runs {
+		if r.Status != "completed" {
+			return false
+		}
+	}
+	return true
+}
+
+func failedRuns(runs []ghclient.RunState) []ghclient.RunState {
+	var out []ghclient.RunState
+	for _, r := range runs {
+		switch r.Conclusion {
+		case "success", "skipped", "neutral":
+		default:
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func hasGate(r config.Repo, name string) bool {

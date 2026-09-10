@@ -134,6 +134,16 @@ Exit 1 when any required check fails.`,
 					"unknown provider — known: "+strings.Join(names, ", ")+" (falling back to the claude argv shape)")
 			}
 			check("agent CLI ("+bin+")", lookPath(bin), pathDetail(bin))
+			// route: cheapest can pick any CLI in agent.providers; a
+			// missing one used to go unmentioned here and then be chosen
+			// for every Fix.
+			for _, p := range cfg.Agent.Providers {
+				if p == "" || p == provider {
+					continue
+				}
+				pb := subagent.DefaultBinary(subagent.Provider(p))
+				check("agent CLI ("+pb+", providers)", lookPath(pb), pathDetail(pb)+" — in agent.providers, so the router may pick it")
+			}
 			// Informational, never a failure: the CLIs also accept an
 			// interactive login, in which case no key env is set here.
 			keyEnv := subagent.APIKeyEnvName(subagent.Provider(provider))

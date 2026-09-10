@@ -67,6 +67,11 @@ func (r *SubprocessRunner) WithMCP(srv MCPServer, repoDir, configDir string) (*S
 		if err := gitExclude(repoDir, ".cursor/mcp.json"); err != nil {
 			return nil, err
 		}
+		// cursor-agent drops its own scratch directory into the workspace;
+		// an agent that runs `git add -A` would otherwise commit it.
+		if err := gitExclude(repoDir, "toolbox/"); err != nil {
+			return nil, err
+		}
 		clone.Args = append(clone.Args, "--approve-mcps")
 	case ProviderGemini:
 		path := filepath.Join(repoDir, ".gemini", "settings.json")

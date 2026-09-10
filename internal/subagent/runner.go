@@ -290,8 +290,26 @@ func (r *SubprocessRunner) WithStallTimeout(d time.Duration) *SubprocessRunner {
 	}
 	clone := *r
 	clone.StallTimeout = d
-	clone.Args = streamingArgs(r.Args)
+	clone.Args = streamingArgsFor(r.Provider, r.Args)
 	return &clone
+}
+
+// streamingArgsFor is streamingArgs plus the one provider whose silence
+// is not visible in its argv: cursor-agent's default `--output-format
+// text` prints nothing until exit, so a watchdog saw a healthy run as
+// stalled and the console saw nothing at all. Cursor takes stream-json
+// too; add it when the operator did not pick a format.
+func streamingArgsFor(p Provider, args []string) []string {
+	out := streamingArgs(args)
+	if p != ProviderCursor {
+		return out
+	}
+	for _, a := range out {
+		if a == "--output-format" {
+			return out
+		}
+	}
+	return append(out, "--output-format", "stream-json")
 }
 
 // streamingArgs rewrites the one argv shape that buffers its whole

@@ -117,6 +117,17 @@ type Dispatcher struct {
 	FetchAllLogs func(ctx context.Context, runURL string) ([]mcpserver.JobLog, error)
 	// FetchRun fetches the run's metadata for ci-run.json. Optional.
 	FetchRun func(ctx context.Context, runURL string) (RunInfo, error)
+	// LastPromote reports the commit the daemon last promoted for a repo,
+	// from the audit trail. Revert refuses to touch a prod tip that is
+	// not that commit: the tip is then a human's, not a deploy. nil → a
+	// Revert has nothing to check against and refuses outright.
+	LastPromote func(repo string) (sha string, ok bool)
+	// down is every provider whose CLI failed before the agent could
+	// start (auth expired, binary broken), with when it did. The router
+	// skips them for providerDownFor so one dead login does not turn
+	// every cheapest-first Fix into a guaranteed failure.
+	downMu sync.Mutex
+	down   map[string]time.Time
 	// fixSem caps concurrent Fix runs. Nil = unlimited (tests); set via SetFixConcurrency.
 	fixSem chan struct{}
 	// fixRepoSem: cap 1 Fix per repo when fixSem is set (#9 fair drain).
@@ -407,6 +418,69 @@ func tailLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// providerDownFor is how long a provider stays out of the rotation after
+// its CLI failed before the agent started. Long enough that a cheapest-
+// first daemon does not retry a dead login on every signal; short enough
+// that a re-login is picked up within the hour.
+const providerDownFor = 30 * time.Minute
+
+// failOver decides whether a run error is the provider's rather than the
+// Fix's, and if so which provider takes over. The test is "exited
+// non-zero having printed nothing": an agent that ran and failed leaves
+// output; a CLI that could not start does not. A stall is not a
+// fail-over case (the agent was working). An operator's explicit
+// provider is honoured even when it fails.
+func (d *Dispatcher) failOver(provider, out string, runErr error, operatorPinned bool) (string, bool) {
+	if operatorPinned || runErr == nil || strings.TrimSpace(out) != "" || errors.Is(runErr, subagent.ErrStalled) {
+		return "", false
+	}
+	d.markDown(provider)
+	for _, p := range d.liveProviders() {
+		if p != provider && p != "" {
+			return p, true
+		}
+	}
+	if d.DefaultProvider != "" && d.DefaultProvider != provider && !d.isDown(d.DefaultProvider) {
+		return d.DefaultProvider, true
+	}
+	return "", false
+}
+
+func (d *Dispatcher) markDown(provider string) {
+	d.downMu.Lock()
+	defer d.downMu.Unlock()
+	if d.down == nil {
+		d.down = map[string]time.Time{}
+	}
+	d.down[provider] = time.Now()
+}
+
+func (d *Dispatcher) isDown(provider string) bool {
+	d.downMu.Lock()
+	defer d.downMu.Unlock()
+	at, ok := d.down[provider]
+	return ok && time.Since(at) < providerDownFor
+}
+
+// liveProviders is d.Providers minus the ones marked down.
+func (d *Dispatcher) liveProviders() []string {
+	out := make([]string, 0, len(d.Providers))
+	for _, p := range d.Providers {
+		if !d.isDown(p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// runnerFor builds the Runner for a provider chosen at run time.
+func (d *Dispatcher) runnerFor(provider string) subagent.Runner {
+	if d.NewRunner != nil {
+		return d.NewRunner(provider)
+	}
+	return subagent.NewSubprocessRunner(subagent.Provider(provider), "", nil, 0, nil)
+}
+
 // SetWorktree turns per-Fix worktrees on and sets how long a failed run's
 // worktree is kept. Call before Fix.
 func (d *Dispatcher) SetWorktree(enabled bool, keepFailed time.Duration) {
@@ -456,7 +530,7 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 		if d.ProviderStats != nil {
 			stats = d.ProviderStats()
 		}
-		provider = PickProvider(d.Route, d.DefaultProvider, d.Providers, d.RouteMinSuccess, stats)
+		provider = PickProvider(d.Route, d.DefaultProvider, d.liveProviders(), d.RouteMinSuccess, stats)
 		if d.NewRunner != nil {
 			runner = d.NewRunner(provider)
 		}
@@ -695,6 +769,30 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 		recordVerdict(s.Evidence, verdict)
 
 		if runErr != nil {
+			// A CLI that exits non-zero having printed nothing did not run
+			// an agent at all — an expired login, a missing binary. That
+			// is the provider's failure, not the Fix's: mark it down and
+			// hand the same attempt to the next provider in the list.
+			if next, ok := d.failOver(provider, out, runErr, s.OperatorAgentProvider != ""); ok {
+				d.Log.Warn("provider failed before the agent started; failing over",
+					"repo", s.Repo, "from", provider, "to", next, "error", truncate(runErr.Error(), 200))
+				if s.Evidence != nil {
+					s.Evidence["provider_failed_over_from"] = provider
+				}
+				provider = next
+				runner = d.runnerFor(next)
+				if d.MCP != nil && sess != nil {
+					if wired, _, aerr := d.attachMCP(ctx, s, sess, runner, dir, evidence); aerr == nil {
+						runner = wired
+					}
+				}
+				if s.Evidence != nil {
+					s.Evidence["agent_provider"] = provider
+				}
+				track.to(fixstate.Fixing, fixstate.Fix{Provider: provider, Attempt: attempt})
+				attempt--
+				continue
+			}
 			// A stall is the one run failure that names its own cause: the
 			// agent went silent while healthy, so neither "timeout" nor a
 			// crash describes it, and an operator needs to know the run
@@ -721,6 +819,16 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 				break
 			}
 			delivered = delivered || pushed
+			if pushed {
+				// The orchestrator drops the workflow_run this push will
+				// produce; reverify waits for that same run by SHA.
+				if head := session.HeadSHA(ctx, dir); head != "" {
+					res.PushedSHAs = append(res.PushedSHAs, head)
+					if s.Evidence != nil {
+						s.Evidence["pushed_sha"] = head
+					}
+				}
+			}
 		}
 
 		// The agent declared itself blocked. Both outcomes exit 0, so
@@ -1234,6 +1342,36 @@ func (d *Dispatcher) revertInner(ctx context.Context, s orchestrator.Signal) err
 	}
 	oldProdSHA := strings.TrimSpace(string(oldProd))
 
+	// A Revert undoes a deploy — the commit a Promote put at the prod
+	// tip. If the tip is anything else, it is a human's commit, and
+	// reverting it is not a rollback, whatever the signal says.
+	promoted, known := "", false
+	if d.LastPromote != nil {
+		promoted, known = d.LastPromote(s.Repo)
+	}
+	if s.Evidence != nil {
+		s.Evidence["prod_tip"] = oldProdSHA
+		if known {
+			s.Evidence["last_promoted_sha"] = promoted
+		}
+	}
+	switch {
+	case !known:
+		if s.Evidence != nil {
+			s.Evidence["escalate"] = "nothing_to_revert"
+		}
+		return fmt.Errorf("dispatch: revert: no Promote on record for %s; %s is at %s, which the daemon did not put there — revert by hand if that is what you want", s.Repo, prod, oldProdSHA[:min(12, len(oldProdSHA))])
+	case !strings.HasPrefix(oldProdSHA, promoted) && !strings.HasPrefix(promoted, oldProdSHA):
+		if s.Evidence != nil {
+			s.Evidence["escalate"] = "nothing_to_revert"
+		}
+		return fmt.Errorf("dispatch: revert: %s tip %s is not the last promoted commit %s; someone pushed to prod since — refusing to revert their commit", prod, oldProdSHA[:min(12, len(oldProdSHA))], promoted[:min(12, len(promoted))])
+	}
+	if subject, err := run("log", "-1", "--format=%s", "origin/"+prod); err == nil && s.Evidence != nil {
+		s.Evidence["reverted_sha"] = oldProdSHA
+		s.Evidence["reverted_subject"] = strings.TrimSpace(string(subject))
+	}
+
 	steps := [][]string{
 		{"checkout", prod},
 		{"reset", "--hard", "origin/" + prod},
@@ -1259,7 +1397,10 @@ func (d *Dispatcher) revertInner(ctx context.Context, s orchestrator.Signal) err
 		}
 	}
 
-	d.Log.Info("reverted", "repo", s.Repo, "branch", prod)
+	if newTip, err := run("rev-parse", "origin/"+prod); err == nil && s.Evidence != nil {
+		s.Evidence["new_prod_tip"] = strings.TrimSpace(string(newTip))
+	}
+	d.Log.Info("reverted", "repo", s.Repo, "branch", prod, "reverted_sha", oldProdSHA)
 	return nil
 }
 
@@ -1298,6 +1439,17 @@ func (d *Dispatcher) promoteInner(ctx context.Context, s orchestrator.Signal) er
 		return fmt.Errorf("dispatch: promote: %w", err)
 	}
 
+	// Nothing is written until the push is known to be possible. The
+	// carry commit lands on the dev branch; a Promote that then failed
+	// its fast-forward used to leave dev carrying a prod tag for a
+	// release that never reached prod.
+	if err := promote.CheckFastForward(ctx, dir, env, dev, prod); err != nil {
+		if s.Evidence != nil {
+			s.Evidence["escalate"] = "not_fast_forward"
+		}
+		return fmt.Errorf("dispatch: promote: %w", err)
+	}
+
 	carry, err := promote.CarryProdTag(dir, s.Repo)
 	if err != nil {
 		return fmt.Errorf("dispatch: promote: %w", err)
@@ -1318,7 +1470,17 @@ func (d *Dispatcher) promoteInner(ctx context.Context, s orchestrator.Signal) er
 	if err := promote.FastForward(ctx, dir, env, dev, prod, pin); err != nil {
 		return fmt.Errorf("dispatch: promote: %w", err)
 	}
-	d.Log.Info("promoted", "repo", s.Repo, "from", dev, "to", prod, "sha", pin,
+	promoted := pin
+	if promoted == "" {
+		if tip, err := promote.RemoteTip(ctx, dir, env, prod); err == nil {
+			promoted = tip
+		}
+	}
+	if s.Evidence != nil && promoted != "" {
+		// What Revert checks the prod tip against.
+		s.Evidence["promoted_sha"] = promoted
+	}
+	d.Log.Info("promoted", "repo", s.Repo, "from", dev, "to", prod, "sha", promoted,
 		"tag_carry", string(carry.Status), "image_tag", carry.Tag)
 	return nil
 }

@@ -28,6 +28,10 @@ import (
 // Fix marks the SHA fixed; see finishFixSHA.
 type FixResult struct {
 	Delivered bool
+	// PushedSHAs are the commits the daemon itself pushed to the tracked
+	// branch during this Fix. GitHub will report a workflow_run for each;
+	// those runs are the reverify's subject, never a new failure to Fix.
+	PushedSHAs []string
 }
 
 // Dispatcher performs the side-effecting part of an Action: running a
@@ -67,9 +71,24 @@ type Orchestrator struct {
 
 	// RerunCI is the flake ladder before Fix (issue #3). Optional.
 	RerunCI RerunCIFunc
-	// reran tracks run_urls already attempted this process lifetime.
+	// reran tracks run_urls this process asked GitHub to rerun, with the
+	// run_attempt the rerun's own completion will carry (the attempt we
+	// saw, plus one). GitHub delivers that completion like any other;
+	// it is the answer the ladder already read, not a new failure.
 	reranMu sync.Mutex
-	reran   map[string]struct{}
+	reran   map[string]int
+
+	// ownSHA is every commit the daemon pushed to a tracked branch
+	// (repo+SHA). A fail for one of those is the reverify's subject —
+	// or a Fix that reverify already judged — never a fresh red to Fix.
+	ownMu  sync.Mutex
+	ownSHA map[string]struct{}
+
+	// TipSHA optionally reports the tracked branch's current remote tip
+	// for a repo, so a fail signal for a commit that is no longer the tip
+	// is dropped rather than reran and fixed on a checkout that does not
+	// contain it. nil skips the check.
+	TipSHA func(ctx context.Context, repo string) (string, error)
 
 	// fixSHA is one delivered Fix per repo+SHA this process lifetime.
 	// A flake-ladder rerun of the same commit used to open a second PR
@@ -109,7 +128,8 @@ func New(dispatcher Dispatcher, bl *backlog.Store, log *slog.Logger) *Orchestrat
 		Log:        log,
 		breach:     map[string]bool{},
 		RepoDeps:   map[string][]string{},
-		reran:      map[string]struct{}{},
+		reran:      map[string]int{},
+		ownSHA:     map[string]struct{}{},
 		fixSHA:     map[string]fixSHAState{},
 	}
 }
@@ -207,7 +227,15 @@ func (o *Orchestrator) handle(ctx context.Context, s Signal) {
 	var err error
 	switch action {
 	case ActionFix:
-		if green, skipFix := o.tryCIRerun(ctx, &s); skipFix {
+		if skip := o.selfCausedOrStale(ctx, s); skip != "" {
+			action = ActionNoop
+			if s.Evidence == nil {
+				s.Evidence = map[string]any{}
+			}
+			s.Evidence["skip_fix_sha"] = skip
+			o.Log.Info("skipping Fix: signal is not a new failure",
+				"repo", s.Repo, "sha", s.SHA, "reason", skip)
+		} else if green, skipFix := o.tryCIRerun(ctx, &s); skipFix {
 			action = ActionRerun
 			if s.Evidence == nil {
 				s.Evidence = map[string]any{}
@@ -237,6 +265,15 @@ func (o *Orchestrator) handle(ctx context.Context, s Signal) {
 	}
 	if err != nil {
 		o.Log.Error("dispatch failed", "action", action, "repo", s.Repo, "error", err)
+		// The audit store gets the error as a column; BACKLOG.md only
+		// gets evidence, so a failed Promote or Revert used to read there
+		// exactly like one that worked.
+		if s.Evidence == nil {
+			s.Evidence = map[string]any{}
+		}
+		if _, has := s.Evidence["error"]; !has {
+			s.Evidence["error"] = truncateErr(err.Error(), 300)
+		}
 	}
 
 	if recErr := o.Backlog.Record(s.Repo, string(action), s.Evidence); recErr != nil {
@@ -318,13 +355,14 @@ func (o *Orchestrator) tryCIRerun(ctx context.Context, s *Signal) (green bool, s
 	}
 	o.reranMu.Lock()
 	if o.reran == nil {
-		o.reran = map[string]struct{}{}
+		o.reran = map[string]int{}
 	}
 	if _, seen := o.reran[runURL]; seen {
 		o.reranMu.Unlock()
 		return false, false
 	}
-	o.reran[runURL] = struct{}{}
+	// The rerun we are about to request will complete as attempt+1.
+	o.reran[runURL] = runAttempt(*s) + 1
 	o.reranMu.Unlock()
 
 	if s.Evidence != nil {
@@ -398,4 +436,78 @@ func (o *Orchestrator) finishFixSHA(s Signal, res FixResult, err error) {
 		st.ok = true
 	}
 	o.fixSHA[key] = st
+	o.ownMu.Lock()
+	if o.ownSHA == nil {
+		o.ownSHA = map[string]struct{}{}
+	}
+	for _, pushed := range res.PushedSHAs {
+		if pushed = strings.TrimSpace(pushed); pushed != "" {
+			o.ownSHA[fixSHAKey(s.Repo, pushed)] = struct{}{}
+		}
+	}
+	o.ownMu.Unlock()
+}
+
+// runAttempt is the workflow_run's run_attempt from the evidence, 1 when
+// the payload did not say.
+func runAttempt(s Signal) int {
+	switch v := s.Evidence["run_attempt"].(type) {
+	case int:
+		if v > 0 {
+			return v
+		}
+	case float64:
+		if v > 0 {
+			return int(v)
+		}
+	}
+	return 1
+}
+
+// selfCausedOrStale returns a skip reason when a CI fail signal is not
+// news: it is the completion of a rerun this daemon requested, a run of
+// a commit this daemon pushed, or a run of a commit that is no longer
+// the branch tip. Each of those produced a duplicate Fix in the field —
+// the last one pushing a commit onto a branch that was already green.
+// Empty SHA (manual Fix) is never skipped.
+func (o *Orchestrator) selfCausedOrStale(ctx context.Context, s Signal) string {
+	if s.Source != SourceCI {
+		return ""
+	}
+	sha := strings.TrimSpace(s.SHA)
+	if sha == "" {
+		return ""
+	}
+	o.ownMu.Lock()
+	_, own := o.ownSHA[fixSHAKey(s.Repo, sha)]
+	o.ownMu.Unlock()
+	if own {
+		return "own_push"
+	}
+	if runURL, _ := s.Evidence["run_url"].(string); runURL != "" {
+		o.reranMu.Lock()
+		expected, reran := o.reran[runURL]
+		o.reranMu.Unlock()
+		if reran && runAttempt(s) >= expected {
+			return "rerun_echo"
+		}
+	}
+	if o.TipSHA != nil {
+		tip, err := o.TipSHA(ctx, s.Repo)
+		if err != nil {
+			o.Log.Warn("cannot read branch tip; treating signal as current", "repo", s.Repo, "error", err)
+		} else if tip != "" && !strings.HasPrefix(tip, sha) && !strings.HasPrefix(sha, tip) {
+			return "superseded"
+		}
+	}
+	return ""
+}
+
+// truncateErr bounds an error message for an evidence field.
+func truncateErr(msg string, n int) string {
+	msg = strings.Join(strings.Fields(msg), " ")
+	if len(msg) <= n {
+		return msg
+	}
+	return msg[:n] + "…"
 }

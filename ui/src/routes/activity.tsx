@@ -168,6 +168,9 @@ function Activity() {
                       <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground">
                         {e.evidence}
                       </pre>
+                      {e.error && (
+                        <p className="mt-2 whitespace-pre-wrap font-mono text-[11px] text-breach">{e.error}</p>
+                      )}
                       {e.url && (
                         <a href={e.url} className="mt-2 inline-block font-mono text-[11px] text-primary hover:underline">
                           {e.url}

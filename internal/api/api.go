@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -268,9 +269,11 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action str
 // that Decide() already understands — no Action bypass field.
 func signalForManualAction(action, repo string) (orchestrator.Signal, bool) {
 	sig := orchestrator.Signal{
-		Repo:     repo,
-		At:       time.Now().UTC(),
-		Evidence: map[string]any{"manual": true, "via": "api", "action": action},
+		Repo: repo,
+		At:   time.Now().UTC(),
+		// The action is the row's own column; putting it in evidence too
+		// printed `action=fix action=fix` in every manual BACKLOG line.
+		Evidence: map[string]any{"manual": true, "via": "api"},
 	}
 	switch action {
 	case "fix":
@@ -446,11 +449,36 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// The server's WriteTimeout is sized for request/response, and for
+	// an HTTP/1.1 response it is armed once, when the response starts.
+	// A stream that outlives it keeps "writing" into a dead deadline:
+	// every Write fails, the handler never notices, the connection
+	// stays open, and the client sees nothing more — which is exactly
+	// what a console did 30 s after page load. Clear the deadline for
+	// this response only.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && s.Log != nil {
+		s.Log.Warn("sse: cannot clear write deadline; stream will go quiet at the server WriteTimeout", "error", err)
+	}
 	// Send the headers before waiting for anything to report. Without
 	// this an idle daemon leaves the client waiting on a response that
 	// has been decided but not written, so the stream reads as
 	// still-connecting until the first event happens to arrive.
 	flusher.Flush()
+	// A comment line every so often, so a proxy or the browser can tell
+	// a quiet stream from a dead one, and so a write to a client that
+	// has gone away fails here rather than never.
+	keepalive := time.NewTicker(sseKeepalive)
+	defer keepalive.Stop()
+	// write sends one frame and reports whether the client is still
+	// there. A failed write ends the handler: looping on a dead
+	// connection would only leak the subscriptions.
+	write := func(frame string) bool {
+		if _, err := io.WriteString(w, frame); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
 
 	var after uint64
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
@@ -459,8 +487,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, rec := range s.Audit.ReplaySinceSeq(after) {
-		writeSSE(w, rec)
-		flusher.Flush()
+		if !write(auditFrame(rec)) {
+			return
+		}
 	}
 	// A console that connects mid-Fix has to see the Fixes already
 	// running, not just the next transition — otherwise a long agent run
@@ -468,16 +497,18 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	fixes, unsubFixes := s.Fixes.Subscribe()
 	defer unsubFixes()
 	for _, f := range s.Fixes.Active() {
-		writeFixStateSSE(w, f)
-		flusher.Flush()
+		if !write(fixStateFrame(f)) {
+			return
+		}
 	}
 	// Same for what each of them has printed so far: a client that
 	// connects mid-run gets the tail as a snapshot, then chunks.
 	output, unsubOutput := s.Fixes.SubscribeOutput()
 	defer unsubOutput()
 	for _, o := range s.Fixes.Tails() {
-		writeFixOutputSSE(w, o)
-		flusher.Flush()
+		if !write(fixOutputFrame(o)) {
+			return
+		}
 	}
 
 	ch, unsub := s.Audit.Subscribe()
@@ -487,6 +518,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-keepalive.C:
+			if !write(": keepalive\n\n") {
+				return
+			}
 		case rec, ok := <-ch:
 			if !ok {
 				return
@@ -494,8 +529,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if rec.Seq <= after {
 				continue
 			}
-			writeSSE(w, rec)
-			flusher.Flush()
+			if !write(auditFrame(rec)) {
+				return
+			}
 			after = rec.Seq
 		case f, ok := <-fixes:
 			if !ok {
@@ -504,47 +540,56 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				fixes = nil
 				continue
 			}
-			writeFixStateSSE(w, f)
-			flusher.Flush()
+			if !write(fixStateFrame(f)) {
+				return
+			}
 		case o, ok := <-output:
 			if !ok {
 				output = nil
 				continue
 			}
-			writeFixOutputSSE(w, o)
-			flusher.Flush()
+			if !write(fixOutputFrame(o)) {
+				return
+			}
 		}
 	}
 }
 
-// writeFixOutputSSE emits a chunk of a running Fix's agent output as the
-// named event "fix_output". No SSE id, for the same reason as fix_state.
-func writeFixOutputSSE(w http.ResponseWriter, o fixstate.Output) {
+// sseKeepalive is how often an idle stream sends a comment line. Under
+// the browser's and most proxies' idle limits, and frequent enough that
+// a dead client is dropped within a minute.
+const sseKeepalive = 15 * time.Second
+
+// fixOutputFrame is a chunk of a running Fix's agent output as the named
+// event "fix_output". No SSE id, for the same reason as fix_state.
+func fixOutputFrame(o fixstate.Output) string {
 	payload, err := json.Marshal(o)
 	if err != nil {
-		return
+		return ""
 	}
-	_, _ = fmt.Fprintf(w, "event: fix_output\ndata: %s\n\n", payload)
+	return fmt.Sprintf("event: fix_output\ndata: %s\n\n", payload)
 }
 
-func writeSSE(w http.ResponseWriter, rec store.Record) {
+// auditFrame is one audit record on the default event, with the audit
+// sequence as the SSE id so a reconnect can resume.
+func auditFrame(rec store.Record) string {
 	payload, err := json.Marshal(recordToEvent(rec))
 	if err != nil {
-		return
+		return ""
 	}
-	_, _ = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", rec.Seq, payload)
+	return fmt.Sprintf("id: %d\ndata: %s\n\n", rec.Seq, payload)
 }
 
-// writeFixStateSSE emits one Fix transition. Deliberately without an
-// SSE id: ids on this stream are audit sequence numbers, and a client
-// that reconnected with a Fix id in Last-Event-ID would ask the audit
-// store to replay from a number that means nothing.
-func writeFixStateSSE(w http.ResponseWriter, f fixstate.Fix) {
+// fixStateFrame is one Fix transition. Deliberately without an SSE id:
+// ids on this stream are audit sequence numbers, and a client that
+// reconnected with a Fix id in Last-Event-ID would ask the audit store
+// to replay from a number that means nothing.
+func fixStateFrame(f fixstate.Fix) string {
 	payload, err := json.Marshal(f)
 	if err != nil {
-		return
+		return ""
 	}
-	_, _ = fmt.Fprintf(w, "event: fix_state\ndata: %s\n\n", payload)
+	return fmt.Sprintf("event: fix_state\ndata: %s\n\n", payload)
 }
 
 // handlePRs is the Fix-PR work queue: every fix_mode: pr
@@ -712,8 +757,11 @@ func recordToEvent(r store.Record) map[string]any {
 	if url == "" {
 		url, _ = r.Evidence["url"].(string)
 	}
-	// ok = gate happy OR an action was taken (fix/promote/revert recorded)
-	ok := r.Kind == "pass" || r.Action == "fix" || r.Action == "promote" || r.Action == "revert"
+	// ok = the dispatch did not fail AND (gate happy OR an action was
+	// taken). A Promote whose push was rejected used to read as ok
+	// because only the action name was consulted; the record's own
+	// Status is what says whether the action happened.
+	ok := r.Succeeded() && (r.Kind == "pass" || r.Action == "fix" || r.Action == "promote" || r.Action == "revert")
 	// session_id is the key into /api/sessions/{id}; it was only ever
 	// buried inside the evidence string before, which no row can link from.
 	sessionID, _ := r.Evidence["session_id"].(string)
@@ -732,6 +780,8 @@ func recordToEvent(r store.Record) map[string]any {
 		"seq":      r.Seq,
 		// Empty for gate signals and for a daemon with recording off.
 		"session_id": sessionID,
+		// Why ok is false, when it is; the dispatch error verbatim.
+		"error": r.Error,
 	}
 }
 
