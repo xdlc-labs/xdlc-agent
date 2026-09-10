@@ -324,3 +324,95 @@ func TestEnsureClonedFetchesWhenTrackingRefStale(t *testing.T) {
 		t.Errorf("HEAD %s != origin develop %s", head, want)
 	}
 }
+
+// TestEnsureClonedFetchesProdFromShallowSingleBranch is shop dogfood F6:
+// the old clone args left origin/main missing, so revert died on
+// rev-parse and promote reported a non-fast-forward against a history
+// that was a fast-forward on GitHub.
+func TestEnsureClonedFetchesProdFromShallowSingleBranch(t *testing.T) {
+	root := t.TempDir()
+	bareDir := filepath.Join(root, "origin.git")
+	seedDir := filepath.Join(root, "seed")
+	workDir := filepath.Join(root, "work")
+
+	gitCmdTest(t, root, "init", "--bare", bareDir)
+	gitCmdTest(t, root, "clone", bareDir, seedDir)
+	gitCmdTest(t, seedDir, "config", "user.email", "test@example.com")
+	gitCmdTest(t, seedDir, "config", "user.name", "test")
+	gitCmdTest(t, seedDir, "checkout", "-b", "main")
+	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("prod\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmdTest(t, seedDir, "add", ".")
+	gitCmdTest(t, seedDir, "commit", "-m", "main")
+	gitCmdTest(t, seedDir, "push", "origin", "main")
+	gitCmdTest(t, seedDir, "checkout", "-b", "develop")
+	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("dev\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmdTest(t, seedDir, "add", ".")
+	gitCmdTest(t, seedDir, "commit", "-m", "develop")
+	gitCmdTest(t, seedDir, "push", "origin", "develop")
+	gitCmdTest(t, bareDir, "symbolic-ref", "HEAD", "refs/heads/develop")
+	gitCmdTest(t, root, "clone", "--depth", "1", "--single-branch", "--branch", "develop", bareDir, workDir)
+
+	if err := exec.CommandContext(context.Background(), "git", "-C", workDir, "rev-parse", "--verify", "refs/remotes/origin/main").Run(); err == nil {
+		t.Fatal("fixture still has origin/main; the old clone args should not")
+	}
+
+	mgr := NewManager("unused-root", []config.Repo{
+		{Name: "svc", GitHub: "org/svc", Dir: workDir, Branch: "develop", ProdBranch: "main"},
+	}, nil)
+	if err := mgr.EnsureCloned(context.Background(), "svc"); err != nil {
+		t.Fatalf("EnsureCloned: %v", err)
+	}
+	mainSHA := strings.TrimSpace(gitCmdTest(t, workDir, "rev-parse", "refs/remotes/origin/main"))
+	wantMain := strings.TrimSpace(gitCmdTest(t, bareDir, "rev-parse", "main"))
+	if mainSHA != wantMain {
+		t.Errorf("origin/main = %s, want %s", mainSHA, wantMain)
+	}
+	shallow := strings.TrimSpace(gitCmdTest(t, workDir, "rev-parse", "--is-shallow-repository"))
+	if shallow == "true" {
+		t.Error("clone still shallow after EnsureCloned")
+	}
+}
+
+// TestFetchOriginHeadsSkipsMissingProd is the default ProdBranch=main
+// case on a repo that only has develop: fetch must still update
+// origin/develop instead of failing the whole call.
+func TestFetchOriginHeadsSkipsMissingProd(t *testing.T) {
+	root := t.TempDir()
+	bareDir := filepath.Join(root, "origin.git")
+	seedDir := filepath.Join(root, "seed")
+	workDir := filepath.Join(root, "work")
+
+	gitCmdTest(t, root, "init", "--bare", bareDir)
+	gitCmdTest(t, root, "clone", bareDir, seedDir)
+	gitCmdTest(t, seedDir, "config", "user.email", "test@example.com")
+	gitCmdTest(t, seedDir, "config", "user.name", "test")
+	gitCmdTest(t, seedDir, "checkout", "-b", "develop")
+	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmdTest(t, seedDir, "add", ".")
+	gitCmdTest(t, seedDir, "commit", "-m", "v1")
+	gitCmdTest(t, seedDir, "push", "origin", "develop")
+	gitCmdTest(t, bareDir, "symbolic-ref", "HEAD", "refs/heads/develop")
+	gitCmdTest(t, root, "clone", "--branch", "develop", bareDir, workDir)
+
+	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmdTest(t, seedDir, "add", ".")
+	gitCmdTest(t, seedDir, "commit", "-m", "v2")
+	gitCmdTest(t, seedDir, "push", "origin", "develop")
+
+	if err := FetchOriginHeads(context.Background(), workDir, nil, "develop", "main"); err != nil {
+		t.Fatalf("FetchOriginHeads: %v", err)
+	}
+	got := strings.TrimSpace(gitCmdTest(t, workDir, "rev-parse", "origin/develop"))
+	want := strings.TrimSpace(gitCmdTest(t, bareDir, "rev-parse", "develop"))
+	if got != want {
+		t.Errorf("origin/develop = %s, want %s", got, want)
+	}
+}

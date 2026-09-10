@@ -287,11 +287,16 @@ func AuthEnv(token string) []string {
 // the directory doesn't exist, or fetches + hard-resets it to
 // origin/<branch> if it does. When HEAD already matches the remote tip
 // (ls-remote, not the local origin/<branch> tracking ref) and the
-// working tree is clean, the fetch is skipped (issue #17). Comparing
-// only the tracking ref would skip a Fix onto a stale commit after a
-// push the clone has not fetched yet. The hard reset still runs when
-// dirty or diverged: a plain `git fetch` alone would leave the working
-// tree on a stale commit.
+// working tree is clean, the fetch of that branch is skipped (issue
+// #17). Comparing only the tracking ref would skip a Fix onto a stale
+// commit after a push the clone has not fetched yet. The hard reset
+// still runs when dirty or diverged: a plain `git fetch` alone would
+// leave the working tree on a stale commit.
+//
+// The clone is a full fetch of advertised heads, not `--depth 1
+// --single-branch`. Promote and revert need origin/<prod> and enough
+// history to fast-forward onto it. Existing shallow single-branch
+// clones are unshallowed and have their fetch refspec widened.
 func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 	r, ok := m.repos[repo]
 	if !ok {
@@ -303,10 +308,13 @@ func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 	env := m.AuthEnv()
 
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		if err := m.prepareCloneForPromote(ctx, dir, env, branch, m.ProdBranch(repo)); err != nil {
+			return err
+		}
 		if m.localMatchesRemote(ctx, repo, dir, branch) {
 			return nil
 		}
-		if err := runGit(ctx, dir, env, "fetch", "origin", branch); err != nil {
+		if err := FetchOriginHeads(ctx, dir, env, branch, m.ProdBranch(repo)); err != nil {
 			return err
 		}
 		if err := runGit(ctx, dir, env, "checkout", branch); err != nil {
@@ -319,7 +327,82 @@ func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 		return fmt.Errorf("repos: mkdir %s: %w", dir, err)
 	}
 	url := fmt.Sprintf("https://github.com/%s.git", r.GitHub)
-	return runGit(ctx, "", env, "clone", "--depth", "1", "--single-branch", "--branch", branch, url, dir)
+	// Full clone of the requested branch, all heads advertised. A
+	// `--depth 1 --single-branch` clone cannot resolve origin/<prod>
+	// and cannot prove a fast-forward onto main (shop dogfood F6).
+	if err := runGit(ctx, "", env, "clone", "--branch", branch, url, dir); err != nil {
+		return err
+	}
+	return m.prepareCloneForPromote(ctx, dir, env, branch, m.ProdBranch(repo))
+}
+
+// prepareCloneForPromote makes origin/<dev> and origin/<prod> resolvable
+// on an existing clone, including ones created with the old
+// `--depth 1 --single-branch` args. Config-only when the clone is
+// already complete so a synced EnsureCloned stays a skip-fetch.
+func (m *Manager) prepareCloneForPromote(ctx context.Context, dir string, env []string, dev, prod string) error {
+	if err := runGit(ctx, dir, env, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"); err != nil {
+		return err
+	}
+	shallow, err := gitOutput(ctx, dir, "rev-parse", "--is-shallow-repository")
+	if err == nil && shallow == "true" {
+		if err := runGit(ctx, dir, env, "fetch", "--unshallow", "origin"); err != nil {
+			return err
+		}
+	}
+	if _, err := gitOutput(ctx, dir, "rev-parse", "--verify", "refs/remotes/origin/"+prod); err == nil {
+		return nil
+	}
+	if !remoteHasBranch(ctx, dir, env, prod) {
+		return nil
+	}
+	return FetchOriginHeads(ctx, dir, env, dev, prod)
+}
+
+// FetchOriginHeads fetches each branch into refs/remotes/origin/<branch>
+// with an explicit refspec. `git fetch origin main` on a single-branch
+// clone updates FETCH_HEAD and does not create origin/main, which is
+// what revert's rev-parse and promote's fast-forward need.
+//
+// Branches are fetched one refspec at a time. A single `git fetch`
+// with two refspecs fails the whole command when the remote has no
+// prod branch, which is the default in tests and in a repo that has
+// not created main yet.
+func FetchOriginHeads(ctx context.Context, dir string, env []string, branches ...string) error {
+	seen := map[string]struct{}{}
+	for _, b := range branches {
+		b = strings.TrimSpace(b)
+		if b == "" {
+			continue
+		}
+		if _, ok := seen[b]; ok {
+			continue
+		}
+		seen[b] = struct{}{}
+		spec := "+refs/heads/" + b + ":refs/remotes/origin/" + b
+		if err := runGit(ctx, dir, env, "fetch", "origin", spec); err != nil {
+			if missingRemoteRef(err) {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func missingRemoteRef(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "couldn't find remote ref") || strings.Contains(s, "Couldn't find remote ref")
+}
+
+func remoteHasBranch(ctx context.Context, dir string, env []string, branch string) bool {
+	if branch == "" {
+		return false
+	}
+	return runGit(ctx, dir, env, "ls-remote", "--exit-code", "origin", "refs/heads/"+branch) == nil
 }
 
 // localMatchesRemote is true when HEAD is on branch, the tree is clean,
