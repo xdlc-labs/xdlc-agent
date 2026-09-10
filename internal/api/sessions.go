@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/session"
+	"github.com/xdlc-labs/xdlc-agent/internal/subagent"
 )
 
 // Session endpoints serve the Fix recordings under agent.sessions.dir.
@@ -78,8 +79,23 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"session":     meta,
 		"files":       files,
-		"output_tail": tailLines(out, outputTailLines),
+		"output_tail": tailLines(renderOutput(out), outputTailLines),
 	})
+}
+
+// renderOutput reduces a recorded transcript to what the live console
+// shows for it — prose, tool calls, the result — so the summary panel
+// and the /fixes grid read the same way. The raw stream-json is still
+// one click away under /output.
+func renderOutput(out string) string {
+	var b strings.Builder
+	for line := range strings.SplitSeq(out, "\n") {
+		if r := subagent.RenderStreamLine(line); r != "" {
+			b.WriteString(r)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
 
 // handleSessionDiff serves diff.patch as text. 404 when the run

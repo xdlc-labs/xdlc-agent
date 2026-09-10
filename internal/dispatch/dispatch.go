@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -227,6 +228,16 @@ func (ft *fixTrack) to(state fixstate.State, patch fixstate.Fix) {
 	patch.ID = ft.id
 	patch.State = state
 	ft.tracker.Set(patch)
+}
+
+// output returns the writer that streams this Fix's agent output to the
+// console. Discards when no tracker is wired up. The caller closes it
+// after Run so a final line without a newline is not lost.
+func (ft *fixTrack) output() io.WriteCloser {
+	if ft == nil || ft.tracker == nil {
+		return (*fixstate.Tracker)(nil).Writer("", nil)
+	}
+	return ft.tracker.Writer(ft.id, subagent.RenderStreamLine)
 }
 
 // done closes the row with the outcome the audit row will record.
@@ -513,7 +524,13 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 		// Inject git AuthEnv (GIT_CONFIG_* http.extraHeader) so the subagent
 		// can `git push` without GITHUB_TOKEN in its allowlist — same credential
 		// path Promote/Revert use. Never pass App PEM / webhook secrets.
-		out, runErr := runner.Run(ctx, dir, prompt, authEnv)
+		//
+		// The tap streams the agent's output to the console as it prints,
+		// rendered down to prose, tool calls and the result; the full
+		// transcript still goes to the session file below once Run returns.
+		tap := track.output()
+		out, runErr := runner.Run(subagent.WithOutputTap(ctx, tap), dir, prompt, authEnv)
+		_ = tap.Close()
 		ranAgent = true
 		// Best-effort cost/tokens into Evidence (audit/backlog), even on
 		// error. Summed, not replaced: a Fix that took three attempts

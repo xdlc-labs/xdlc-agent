@@ -116,6 +116,15 @@ paths:
   /api/events:
     get:
       summary: SSE audit fan-out
+      description: >-
+        Audit records ride the default (unnamed) event with the audit
+        sequence as the SSE id. Two named events share the stream and
+        carry no id: "fix_state" (an ActiveFix, on every phase change,
+        plus one per running Fix on connect) and "fix_output" (a
+        FixOutput chunk of what a running Fix's agent printed, rendered
+        to prose, tool calls and the result; on connect one snapshot per
+        running Fix that has printed anything). A client written before
+        either keeps working: its onmessage never sees named events.
       parameters:
         - name: access_token
           in: query
@@ -508,6 +517,27 @@ components:
         attempt:
           type: integer
           description: 1-based agent run within this Fix (agent.fix_attempts ladder).
+    FixOutput:
+      type: object
+      required: [id, text]
+      description: >-
+        One "fix_output" SSE event: a chunk of a running Fix's agent
+        output. The daemon keeps the last 16 KiB per Fix, so a console is
+        a live view, not the record; the session recording has it all.
+      properties:
+        id:
+          type: string
+          description: The ActiveFix id this output belongs to.
+        repo: { type: string }
+        text:
+          type: string
+          description: Newline-terminated rendered lines.
+        snapshot:
+          type: boolean
+          description: >-
+            When true, text is the whole tail kept so far and replaces what
+            the client holds — sent on connect, and to a client that fell
+            behind and had chunks dropped.
     FixPR:
       type: object
       properties:

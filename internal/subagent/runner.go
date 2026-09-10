@@ -336,8 +336,16 @@ func (r *SubprocessRunner) Run(ctx context.Context, repoDir, prompt string, extr
 	// Both streams feed the watchdog: a CLI that is narrating its
 	// progress on stderr is working, whatever stdout is doing.
 	activity := &activityWriter{}
-	cmd.Stdout = io.MultiWriter(&stdout, activity)
-	cmd.Stderr = io.MultiWriter(&stderr, activity)
+	outW := io.Writer(&stdout)
+	errW := io.Writer(&stderr)
+	if tap := outputTap(ctx); tap != nil {
+		// The console's live view. Both streams, for the same reason
+		// the watchdog watches both: several CLIs narrate on stderr.
+		outW = io.MultiWriter(&stdout, tap)
+		errW = io.MultiWriter(&stderr, tap)
+	}
+	cmd.Stdout = io.MultiWriter(outW, activity)
+	cmd.Stderr = io.MultiWriter(errW, activity)
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("subagent: %s start in %s: %w", r.Binary, repoDir, err)

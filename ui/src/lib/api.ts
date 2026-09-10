@@ -297,6 +297,15 @@ export interface ActiveFix {
 }
 
 /** Fixes running right now. Empty is the normal answer, not an error. */
+/** One "fix_output" SSE event: a chunk of a running Fix's agent output. */
+export interface FixOutput {
+  id: string;
+  repo?: string;
+  text: string;
+  /** The whole tail so far; replaces what the client holds. */
+  snapshot?: boolean;
+}
+
 export async function fetchActiveFixes(): Promise<ActiveFix[]> {
   const data = await getJSON<{ fixes: ActiveFix[] }>("/api/fixes/active");
   return data.fixes ?? [];

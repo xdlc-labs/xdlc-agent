@@ -471,6 +471,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		writeFixStateSSE(w, f)
 		flusher.Flush()
 	}
+	// Same for what each of them has printed so far: a client that
+	// connects mid-run gets the tail as a snapshot, then chunks.
+	output, unsubOutput := s.Fixes.SubscribeOutput()
+	defer unsubOutput()
+	for _, o := range s.Fixes.Tails() {
+		writeFixOutputSSE(w, o)
+		flusher.Flush()
+	}
 
 	ch, unsub := s.Audit.Subscribe()
 	defer unsub()
@@ -498,8 +506,25 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			writeFixStateSSE(w, f)
 			flusher.Flush()
+		case o, ok := <-output:
+			if !ok {
+				output = nil
+				continue
+			}
+			writeFixOutputSSE(w, o)
+			flusher.Flush()
 		}
 	}
+}
+
+// writeFixOutputSSE emits a chunk of a running Fix's agent output as the
+// named event "fix_output". No SSE id, for the same reason as fix_state.
+func writeFixOutputSSE(w http.ResponseWriter, o fixstate.Output) {
+	payload, err := json.Marshal(o)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "event: fix_output\ndata: %s\n\n", payload)
 }
 
 func writeSSE(w http.ResponseWriter, rec store.Record) {
