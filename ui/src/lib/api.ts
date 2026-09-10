@@ -44,7 +44,42 @@ export interface Event {
   url?: string;
   chain_id?: string;
   seq?: number;
+  /** Key into /api/sessions/{id} for a recorded Fix; empty otherwise. */
+  session_id?: string;
 }
+
+/** meta.json of one Fix recording (internal/session.Meta). */
+export interface Session {
+  id: string;
+  repo: string;
+  source: string;
+  kind: string;
+  provider: string;
+  fix_mode?: string;
+  manual?: boolean;
+  started_at: string;
+  ended_at?: string;
+  duration_ms?: number;
+  status?: "ok" | "error" | "";
+  error?: string;
+  base_sha?: string;
+  head_sha?: string;
+  branch?: string;
+  changed_files?: number;
+  pr_url?: string;
+  cost?: Record<string, number>;
+  attempts?: number;
+  outcome?: "fixed" | "gave_up" | "needs_human" | "";
+  summary?: string;
+}
+
+export interface SessionDetail {
+  session: Session;
+  files: string[];
+  output_tail: string;
+}
+
+export type SessionFile = "diff" | "prompt" | "output";
 
 export interface Gate {
   name: GateName;
@@ -169,6 +204,34 @@ export async function fetchHistory(limit = 200): Promise<Event[]> {
 
 export async function fetchRepo(id: string): Promise<{ repo: Repo; timeline: Event[] }> {
   return getJSON<{ repo: Repo; timeline: Event[] }>(`/api/repos/${encodeURIComponent(id)}`);
+}
+
+/** Operator only: the recordings are unscrubbed, so a viewer token gets 403. */
+export async function fetchSessions(repo?: string, limit = 50): Promise<{ enabled: boolean; sessions: Session[] }> {
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (repo) q.set("repo", repo);
+  const data = await getJSON<{ enabled: boolean; sessions: Session[] }>(`/api/sessions?${q}`);
+  return { enabled: data.enabled, sessions: data.sessions ?? [] };
+}
+
+export async function fetchSession(id: string): Promise<SessionDetail> {
+  return getJSON<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`);
+}
+
+/**
+ * One text file of a recording. 404 means the run has no such file — a Fix
+ * that changed nothing has no diff — and is reported as an Error whose
+ * message ends in "404" so the panel can say so instead of "failed".
+ */
+export async function fetchSessionText(id: string, file: SessionFile, attempt = 1): Promise<string> {
+  const q = file === "diff" ? "" : `?attempt=${attempt}`;
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/${file}${q}`, {
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) {
+    throw new Error(`/api/sessions/${id}/${file} → ${res.status}`);
+  }
+  return res.text();
 }
 
 /** Absolute SSE URL for /api/events (issue #6). */

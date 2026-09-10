@@ -23,6 +23,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
+	"github.com/xdlc-labs/xdlc-agent/internal/session"
 	"github.com/xdlc-labs/xdlc-agent/internal/store"
 )
 
@@ -60,6 +61,10 @@ type Server struct {
 	// answers with an empty list and no state events are streamed, which
 	// is what a daemon built without the tracker should say.
 	Fixes *fixstate.Tracker
+	// Sessions optionally serves the Fix recordings under
+	// /api/sessions, operator role only. nil → recording is off: the
+	// list answers empty with enabled=false and every id is 404.
+	Sessions *session.Store
 }
 
 // PRLiveStatus is the live GitHub view of a Fix PR (issue #14).
@@ -88,6 +93,12 @@ func (s *Server) Mount(mux *http.ServeMux) {
 	mux.Handle("GET /api/kpis", s.requireAuth(http.HandlerFunc(s.handleKPIs)))
 	mux.Handle("GET /api/events", s.requireAuth(http.HandlerFunc(s.handleEvents)))
 	mux.Handle("GET /api/fixes/active", s.requireAuth(http.HandlerFunc(s.handleActiveFixes)))
+	// Recordings are unscrubbed (prompts embed CI logs): operator only.
+	mux.Handle("GET /api/sessions", s.requireOperator(http.HandlerFunc(s.handleSessions)))
+	mux.Handle("GET /api/sessions/{id}", s.requireOperator(http.HandlerFunc(s.handleSession)))
+	mux.Handle("GET /api/sessions/{id}/diff", s.requireOperator(http.HandlerFunc(s.handleSessionDiff)))
+	mux.Handle("GET /api/sessions/{id}/prompt", s.requireOperator(http.HandlerFunc(s.handleSessionPrompt)))
+	mux.Handle("GET /api/sessions/{id}/output", s.requireOperator(http.HandlerFunc(s.handleSessionOutput)))
 	mux.Handle("POST /api/actions/fix", s.requireOperator(http.HandlerFunc(s.handleActionFix)))
 	mux.Handle("POST /api/actions/promote", s.requireOperator(http.HandlerFunc(s.handleActionPromote)))
 	mux.Handle("POST /api/actions/revert", s.requireOperator(http.HandlerFunc(s.handleActionRevert)))
@@ -678,6 +689,9 @@ func recordToEvent(r store.Record) map[string]any {
 	}
 	// ok = gate happy OR an action was taken (fix/promote/revert recorded)
 	ok := r.Kind == "pass" || r.Action == "fix" || r.Action == "promote" || r.Action == "revert"
+	// session_id is the key into /api/sessions/{id}; it was only ever
+	// buried inside the evidence string before, which no row can link from.
+	sessionID, _ := r.Evidence["session_id"].(string)
 	return map[string]any{
 		"id":       fmt.Sprintf("%s-%s-%s", r.At.UTC().Format("20060102150405"), r.Repo, r.Source),
 		"ts":       r.At.UTC().Format("2006-01-02 15:04:05Z"),
@@ -691,6 +705,8 @@ func recordToEvent(r store.Record) map[string]any {
 		"url":      url,
 		"chain_id": r.ChainID,
 		"seq":      r.Seq,
+		// Empty for gate signals and for a daemon with recording off.
+		"session_id": sessionID,
 	}
 }
 

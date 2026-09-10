@@ -10,8 +10,8 @@
 //
 // Files are local and never uploaded. They are also unscrubbed: a Fix
 // prompt embeds CI logs, and CI logs occasionally embed secrets. The
-// directory is 0700 and entries are 0600; see docs/sessions.md and
-// docs/SECURITY.md.
+// directory is 0700 and entries are 0600. The daemon serves them over
+// /api/sessions to the operator role only; see SECURITY.md.
 package session
 
 import (

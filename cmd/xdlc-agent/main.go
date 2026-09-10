@@ -447,6 +447,7 @@ func daemonCmd() *cobra.Command {
 				RepoDir:       repoMgr.Dir,
 				FixQueueStats: disp.FixQueueStats,
 				Fixes:         fixTracker,
+				Sessions:      sessions,
 			}
 			if cfg.Server.OIDC.Enabled() {
 				oidcAuth, err := setupOIDC(cmd.Context(), cfg.Server.OIDC)
