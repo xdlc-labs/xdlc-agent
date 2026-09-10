@@ -5,82 +5,44 @@ are sized and ordered by what looks most useful per unit of work, and any of the
 re-ordered, reshaped, or dropped once measured. Nothing here has a date. What has actually
 shipped is in [CHANGELOG.md](CHANGELOG.md).
 
-Sizes are rough effort (S / M / L); value is our own guess at operator payoff.
+## Landed in 1.0
 
-## Already landed
-
-The pieces the open items below build on:
+Everything the 0.x roadmap had open shipped in 1.0.0, and the pieces it was built on:
 
 - **Fix sessions** — every Fix records its prompt, agent output, diff and `meta.json` under
   `sessions/`; `xdlc sessions ls|show|prune`, `session_id` in the audit store and
   `BACKLOG.md`, config under `agent.sessions.*`
   ([Fix sessions](https://xdlc.dev/agent/docs/sessions))
+- **Console view of a session** — operator-only `GET /api/sessions`, `/{id}`, `/{id}/diff`,
+  `/{id}/prompt`, `/{id}/output`; a `/repos/$id` timeline row expands into the recording
+- **Context on demand: `xdlc mcp`** — a stdio MCP server per Fix with `ci_logs`, `ci_run`,
+  `prod_metrics`, `prior_sessions`, `session_diff`, `lessons`, `backlog`, `repo_config`,
+  wired into all four agent CLIs behind `agent.mcp.enabled`, every call recorded in the
+  session's `tools.jsonl`
+- **Live Fix grid** — `/fixes` shows each running agent's output as it prints, streamed as
+  the `fix_output` SSE event beside the `fix_state` phases
 - **Worktree per Fix** — `agent.worktree`, on by default: each Fix runs in its own
-  `git worktree` on an `xdlc/<session id>` branch under `repos/.worktrees/`, so two Fixes on
-  one repo run concurrently, the agent commits and xdlc pushes, and failed runs keep their
-  worktree for `keep_failed` ([Fix modes](https://xdlc.dev/agent/docs/fix-modes))
+  `git worktree` on an `xdlc/<session id>` branch, so two Fixes on one repo run concurrently
+  ([Fix modes](https://xdlc.dev/agent/docs/fix-modes))
 - **Repo conventions as rules** — `AGENTS.md`, `CLAUDE.md`, `.xdlc/rules.md`,
-  `.xdlc/skills/*.md` and a daemon-wide `agent.rules_file` all feed the Fix prompt, with an
-  8 KB per-file cap, duplicates dropped, and `xdlc doctor` printing what each repo
-  contributes ([Rules and skills](https://xdlc.dev/agent/docs/rules-and-skills))
-- **Operator instructions on Manual Fix** — optional free text in the console dialog and on
-  `POST /api/actions/fix`, placed in a trusted block, length-only in the audit trail
+  `.xdlc/skills/*.md` and a daemon-wide `agent.rules_file` all feed the Fix prompt
+  ([Rules and skills](https://xdlc.dev/agent/docs/rules-and-skills))
 - **Four agent providers** — `claude`, `codex`, `cursor` and `gemini`, each with a headless
-  default invocation; Gemini is opt-in in the container image via
-  `--build-arg GEMINI_CLI_VERSION` ([Fix modes](https://xdlc.dev/agent/docs/fix-modes))
-- **One-shot Fix without the daemon** — `xdlc fix <run-url>` and the `action.yml` wrapper run
-  the daemon's Fix path once, from a laptop or a `workflow_run` job, and record the same session
-- **Seeding a config from local checkouts** — `xdlc init --scan <dir>` fills `repos:` from
-  Git checkouts that have a GitHub origin
+  default invocation ([Fix modes](https://xdlc.dev/agent/docs/fix-modes))
+- **One-shot Fix without the daemon** — `xdlc fix <run-url>` and the `action.yml` wrapper
+- **Seeding a config from local checkouts** — `xdlc init --scan <dir>`
 
 ## Open items
 
-Ordered by value ÷ effort.
+Nothing is scheduled. Candidates, unsized until someone asks for them:
 
-### 1. Console view of a session (S, medium)
-
-The recordings exist but are reachable only from the CLI. Add operator-token endpoints
-(`GET /api/sessions`, `/{id}`, `/{id}/diff`, `/{id}/prompt`) and let a `/repos/$id` timeline
-row expand into a panel with meta, the diff (reuse `doc-code.tsx`) and the tail of the agent
-output.
-
-Serving unscrubbed prompts over HTTP is a real exposure step, unlike writing them to a 0600
-file: gate it on the operator role and document that in [SECURITY.md](SECURITY.md).
-
-### 2. Context on demand: `xdlc mcp` (L, high)
-
-**Today:** the dispatcher inlines failed-job logs and metrics, trimmed to 32 KB. On a large CI
-matrix the one useful line is often the one that got cut, and the agent has no way to ask for
-more.
-
-**Change:** `xdlc mcp --session <id>` as a stdio MCP server exposing read-only tools scoped to
-that session's repo: `ci_logs(job?, grep?, tail?)`, `ci_run(run_url)`,
-`prod_metrics(query?)`, `prior_sessions(limit)`, `session_diff(id)`, `lessons()`,
-`backlog(tail)`, `repo_config()`. Passed to the agent CLI through its own MCP config flag. The
-prompt then carries only the conclusion, the `run_url` and the last 60 log lines, and the
-agent pulls detail when it needs it. Behind `agent.mcp.enabled`, default off until measured.
-
-Every tool call is appended to the session recording, so "what did it look at" stays
-answerable after the fact.
-
-### 3. Grid view of live Fixes (M, low)
-
-A read-only `/fixes` route: one card per in-flight Fix with its **output tail** streamed over
-SSE, for watching a fleet-wide burst of Fixes at once. The phase and its age already stream as
-`fix_state` and show in the console's "in flight" strip; what this adds is the agent's live
-output, which means fanning the subprocess's stream-json events out over the hub rather than
-only buffering them for the session recording.
-
-## Sequencing
-
-1. Item 2 next: prior sessions now reach the prompt as a fixed block, and `prior_sessions`
-   as an MCP tool is the version of that the agent can ask for more of.
-2. Item 3 builds on the `fix_state` stream and on `stream-json`, both of which have shipped;
-   it is last because a fleet-wide burst of Fixes is not yet many operators' problem.
-3. Each of these touches the hosted guides — [architecture](https://xdlc.dev/agent/docs/architecture),
-   [Fix modes](https://xdlc.dev/agent/docs/fix-modes),
-   [Fix sessions](https://xdlc.dev/agent/docs/sessions), configuration and the API reference —
-   plus [CHANGELOG.md](CHANGELOG.md).
+- **Measure `agent.mcp`.** It shipped default-off. The question is whether a Fix that can
+  pull the full logs fixes more, or fixes the same for more tokens; `tools.jsonl` next to
+  `meta.json` cost fields is the data. Flip the default only on that evidence.
+- **`ci_logs` for the other gates.** Today the tool serves CI runs. A Revert triggered by a
+  prod-health breach has nothing comparable to hand the agent; a `prod_metrics` range query
+  around the breach is the obvious next tool.
+- **Multi-arch image.** The release image is linux/amd64. arm64 waits on a native runner.
 
 ## Out of scope
 

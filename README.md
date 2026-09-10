@@ -289,12 +289,20 @@ The reasoning is in
 
 `fix` runs one Fix from a run URL. `daemon` runs the loop: webhooks, pollers, policy,
 console. `demo` runs the whole thing against a throwaway repo. `init` and `doctor` write and
-check a config. `sessions` lists and shows recordings. `gate`, `promote` and `history` are
-the one-shot pieces the daemon composes. `validate` checks a config in CI.
+check a config. `sessions` lists and shows recordings. `mcp` serves one recording's context
+to a coding agent as tools. `gate`, `promote` and `history` are the one-shot pieces the
+daemon composes. `validate` checks a config in CI.
 
 Four agent providers (`claude`, `codex`, `cursor`, `gemini`), each with a headless default
 invocation you can override. Cheapest-first provider routing, a retry ladder gated on a real
 re-check, per-Fix budgets and concurrency caps.
+
+Every Fix is recorded: prompt, agent output, diff, and with `agent.mcp.enabled` every tool
+call the agent made. The console shows each recording inline on the repo timeline
+(operator token only, since a prompt embeds unscrubbed CI logs), and `/fixes` streams what
+every running agent is printing, one card per Fix. With `agent.mcp.enabled` the agent gets
+`ci_logs`, `prod_metrics`, `prior_sessions` and five more read-only tools, so the prompt
+carries the last 60 log lines and the agent pulls the rest when it needs it.
 
 ## Status
 

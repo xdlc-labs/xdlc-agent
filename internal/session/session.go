@@ -490,21 +490,21 @@ const DefaultPriorDiffLines = 40
 // what a following run needs is only what was tried and whether it
 // worked, so a whole session is reduced to its head.
 type PriorFix struct {
-	ID        string
-	StartedAt time.Time
+	ID        string    `json:"id"`
+	StartedAt time.Time `json:"started_at"`
 	// Status is the daemon's own verdict — "ok" or "error".
-	Status string
+	Status string `json:"status"`
 	// Outcome and Summary are the agent's self-report ("fixed",
 	// "bumped the pinned version"), empty when it emitted no verdict.
-	Outcome string
-	Summary string
+	Outcome string `json:"outcome,omitempty"`
+	Summary string `json:"summary,omitempty"`
 	// Changed is how many files the patch touched.
-	Changed int
+	Changed int `json:"changed_files"`
 	// Diff is the first diffLines lines of diff.patch, "" when the run
 	// delivered nothing — which is itself worth telling the next run.
-	Diff string
+	Diff string `json:"diff,omitempty"`
 	// DiffTruncated reports that Diff is only the head of the patch.
-	DiffTruncated bool
+	DiffTruncated bool `json:"diff_truncated,omitempty"`
 }
 
 // Recent returns up to limit finished sessions for repo with the same
