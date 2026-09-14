@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { fetchFixPRs, fetchOverview, lastFetchStatus } from "@/lib/api";
+import { fetchFixPRs, lastFetchStatus } from "@/lib/api";
+import { useOverview } from "@/lib/overview-query";
 import { fetchAuthConfig, fetchRole } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { resolveTheme, toggleTheme, type Theme } from "@/lib/theme";
@@ -21,7 +22,7 @@ const navMeta = [
 ] as const;
 
 function useDaemon() {
-  return useQuery({ queryKey: ["overview"], queryFn: fetchOverview, refetchInterval: 10_000 });
+  return useOverview();
 }
 
 function useOpenFixPRCount() {
@@ -230,5 +231,3 @@ export function AppSidebar() {
     </aside>
   );
 }
-
-export const AppHeader = AppSidebar;

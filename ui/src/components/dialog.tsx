@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
-import { cn } from "@/lib/utils";
+import { clsx } from "clsx";
 import { t } from "@/lib/i18n";
 
 const FOCUSABLE =
@@ -82,7 +82,7 @@ export function Dialog({
 
   return (
     <div
-      className={cn(
+      className={clsx(
         "fixed inset-0 z-30 bg-background/80",
         isDrawer ? "flex justify-end" : "flex items-center justify-center px-4",
       )}
@@ -94,7 +94,7 @@ export function Dialog({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={cn(
+        className={clsx(
           "border border-border-strong bg-card outline-none",
           isDrawer
             ? "h-full w-full max-w-lg overflow-y-auto border-y-0 border-r-0"

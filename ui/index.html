@@ -10,10 +10,25 @@
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!--
+      Fonts load without blocking first paint: the sheet is requested with
+      media="print" (low priority, never render-blocking) and switched to
+      "all" once it has arrived. The system fallback stack in styles.css
+      paints in the meantime. Without JS the noscript link applies it
+      the ordinary way.
+    -->
     <link
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Exo+2:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@400;500;600&display=swap"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Exo+2:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@400;500;600&display=swap"
+      />
+    </noscript>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="alternate icon" href="/favicon.png" type="image/png" />
     <script>

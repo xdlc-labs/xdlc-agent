@@ -338,54 +338,80 @@ func (d *Dispatcher) acquireFixSlot(ctx context.Context, repo string) (release f
 	}, nil
 }
 
-// attachMCP wires `xdlc mcp` into the agent CLI for this Fix and saves
-// the material its tools read. It returns the runner to use, the
-// evidence to prompt with (inline logs trimmed to a tail, with a note
-// saying where the rest is), or an error when the runner cannot take an
-// MCP server — in which case the caller runs without tools.
-func (d *Dispatcher) attachMCP(ctx context.Context, s orchestrator.Signal, sess *session.Session,
-	runner subagent.Runner, dir string, evidence map[string]any) (subagent.Runner, map[string]any, error) {
-	sub, ok := runner.(*subagent.SubprocessRunner)
-	if !ok {
-		return nil, nil, fmt.Errorf("runner %T cannot take an MCP server", runner)
+// saveCIMaterial writes what the MCP tools read — the run's metadata as
+// ci-run.json and every failed job's complete log as ci-logs.txt — into
+// the session. Once per Fix: the material describes the failure, not
+// the runner, so a provider fail-over must not download it again.
+//
+// It reports whether evidence now carries an inline log for the prompt.
+// When the complete logs were saved, the prompt gets the last
+// promptLogLines of the first failed job's, cut from the download just
+// made, plus a note saying where the rest is — so the first job's log is
+// fetched once here rather than again through FetchLogs.
+//
+// Written straight to the directory rather than through sess.Write: the
+// recorder's per-file cap is sized for a prompt, and these are the
+// complete logs by definition.
+func (d *Dispatcher) saveCIMaterial(ctx context.Context, s orchestrator.Signal, sess *session.Session,
+	evidence map[string]any) bool {
+	runURL, _ := evidence["run_url"].(string)
+	if runURL == "" || s.Source != orchestrator.SourceCI {
+		return false
 	}
-	// What the tools read. Written straight to the directory rather than
-	// through sess.Write: the recorder's per-file cap is sized for a
-	// prompt, and these are the complete logs by definition.
-	if runURL, _ := evidence["run_url"].(string); runURL != "" && s.Source == orchestrator.SourceCI {
-		info := RunInfo{URL: runURL}
-		if d.FetchRun != nil {
-			if got, err := d.FetchRun(ctx, runURL); err != nil {
-				d.Log.Warn("mcp: run metadata fetch failed", "repo", s.Repo, "error", err)
-			} else {
-				info = got
-			}
+	info := RunInfo{URL: runURL}
+	if d.FetchRun != nil {
+		if got, err := d.FetchRun(ctx, runURL); err != nil {
+			d.Log.Warn("mcp: run metadata fetch failed", "repo", s.Repo, "error", err)
+		} else {
+			info = got
 		}
-		if d.FetchAllLogs != nil {
-			jobs, err := d.FetchAllLogs(ctx, runURL)
-			if err != nil {
-				d.Log.Warn("mcp: full log fetch failed", "repo", s.Repo, "error", err)
-			} else if len(jobs) > 0 {
-				for _, j := range jobs {
-					info.FailedJobs = append(info.FailedJobs, j.Name)
+	}
+	haveLogs := false
+	if d.FetchAllLogs != nil {
+		jobs, err := d.FetchAllLogs(ctx, runURL)
+		if err != nil {
+			d.Log.Warn("mcp: full log fetch failed", "repo", s.Repo, "error", err)
+		} else if len(jobs) > 0 {
+			for _, j := range jobs {
+				info.FailedJobs = append(info.FailedJobs, j.Name)
+			}
+			path := filepath.Join(sess.Dir(), session.FileCILogs)
+			if err := os.WriteFile(path, []byte(mcpserver.FormatCILogs(jobs)), 0o600); err != nil {
+				d.Log.Warn("mcp: ci-logs write failed", "repo", s.Repo, "error", err)
+			} else {
+				// The prompt carries a tail; the agent has the rest. The
+				// signal's own inline log (a dev-smoke gate attaches one)
+				// stands in only when the download had no text.
+				source := jobs[0].Text
+				if source == "" {
+					source, _ = evidence["logs"].(string)
 				}
-				path := filepath.Join(sess.Dir(), session.FileCILogs)
-				if err := os.WriteFile(path, []byte(mcpserver.FormatCILogs(jobs)), 0o600); err != nil {
-					d.Log.Warn("mcp: ci-logs write failed", "repo", s.Repo, "error", err)
-				} else if logs, _ := evidence["logs"].(string); logs != "" {
-					// The prompt now carries a tail; the agent has the rest.
-					evidence = copyEvidence(evidence)
-					evidence["logs"] = tailLines(logs, promptLogLines) +
+				if source != "" {
+					evidence["logs"] = tailLines(source, promptLogLines) +
 						fmt.Sprintf("\n(last %d lines of the first failed job; the complete logs of all %d failed jobs are in the ci_logs tool)\n",
 							promptLogLines, len(jobs))
+					haveLogs = true
 				}
 			}
 		}
-		if raw, err := json.MarshalIndent(info, "", "  "); err == nil {
-			if err := os.WriteFile(filepath.Join(sess.Dir(), session.FileCIRun), raw, 0o600); err != nil {
-				d.Log.Warn("mcp: ci-run write failed", "repo", s.Repo, "error", err)
-			}
+	}
+	if raw, err := json.MarshalIndent(info, "", "  "); err == nil {
+		if err := os.WriteFile(filepath.Join(sess.Dir(), session.FileCIRun), raw, 0o600); err != nil {
+			d.Log.Warn("mcp: ci-run write failed", "repo", s.Repo, "error", err)
 		}
+	}
+	return haveLogs
+}
+
+// wireMCP hands `xdlc mcp --session <id>` to the agent CLI and returns
+// the runner to use, or an error when the runner cannot take an MCP
+// server — in which case the caller runs without tools. Per runner, not
+// per Fix: a provider fail-over builds a new runner and wires it again,
+// while the material saveCIMaterial wrote stays as it is.
+func (d *Dispatcher) wireMCP(sess *session.Session, runner subagent.Runner, dir string) (subagent.Runner, error) {
+	sub, ok := runner.(*subagent.SubprocessRunner)
+	if !ok {
+		return nil, fmt.Errorf("runner %T cannot take an MCP server", runner)
 	}
 	args := []string{"mcp", "--session", sess.ID(), "--sessions-dir", d.MCP.SessionsDir}
 	if d.MCP.Root != "" {
@@ -399,13 +425,9 @@ func (d *Dispatcher) attachMCP(ctx context.Context, s orchestrator.Signal, sess 
 	// defaults to the relative "sessions".
 	configDir, err := filepath.Abs(sess.Dir())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	wired, err := sub.WithMCP(subagent.MCPServer{Name: mcpserver.ServerName, Command: d.MCP.Binary, Args: args}, dir, configDir)
-	if err != nil {
-		return nil, nil, err
-	}
-	return wired, evidence, nil
+	return sub.WithMCP(subagent.MCPServer{Name: mcpserver.ServerName, Command: d.MCP.Binary, Args: args}, dir, configDir)
 }
 
 // tailLines returns the last n lines of s.
@@ -494,17 +516,11 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 		return res, fmt.Errorf("dispatch: fix: %w", err)
 	}
 	dir := d.Repos.Dir(s.Repo)
-	evidence := s.Evidence
-	if s.Source == orchestrator.SourceCI && d.FetchLogs != nil {
-		if runURL, _ := evidence["run_url"].(string); runURL != "" {
-			if logs, err := d.FetchLogs(ctx, runURL); err != nil {
-				d.Log.Warn("ci log fetch failed", "repo", s.Repo, "error", err)
-			} else if logs != "" {
-				evidence = copyEvidence(evidence)
-				evidence["logs"] = logs
-			}
-		}
-	}
+	// The prompt's evidence is a private copy from the start. s.Evidence
+	// is also the audit row, and the bookkeeping written to it below —
+	// provider, session id, cost, verdicts — describes this run rather
+	// than the failure, so it has no place in a retry attempt's prompt.
+	evidence := copyEvidence(s.Evidence)
 	reason := fmt.Sprintf("%s reported %s", s.Source, s.Kind)
 	var prBranch string
 	if d.FixMode == "pr" {
@@ -577,6 +593,11 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 	}
 	runID := sess.ID()
 	if runID == "" {
+		// Recording is off (or failed to start): the live row's own id
+		// names the worktree, so the two still share one name.
+		runID = track.id
+	}
+	if runID == "" {
 		runID = newRunID(s.Repo)
 	}
 
@@ -602,18 +623,33 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 	baseSHA := session.HeadSHA(ctx, dir)
 	sess.SetGit(baseSHA, "", branch, 0)
 
-	// Context on demand: save what GitHub had to say into the session,
-	// hand the agent `xdlc mcp --session <id>`, and shrink the inline
-	// logs to a tail, since the rest is now one tool call away.
+	// Context on demand: hand the agent `xdlc mcp --session <id>`, save
+	// what GitHub had to say into the session, and shrink the inline logs
+	// to a tail, since the rest is now one tool call away.
 	useTools := false
+	haveLogs := false
 	if d.MCP != nil && sess != nil {
-		wired, ev, terr := d.attachMCP(ctx, s, sess, runner, dir, evidence)
+		wired, terr := d.wireMCP(sess, runner, dir)
 		if terr != nil {
 			// A Fix without tools is the Fix every release before this one
 			// ran; a Fix that does not run because tooling failed is worse.
 			d.Log.Warn("mcp attach failed; running without tools", "repo", s.Repo, "error", terr)
 		} else {
-			runner, evidence, useTools = wired, ev, true
+			runner, useTools = wired, true
+			haveLogs = d.saveCIMaterial(ctx, s, sess, evidence)
+		}
+	}
+	// The inline log for a Fix without the tools (or whose full download
+	// yielded nothing): the first failed job's, head-truncated. Skipped
+	// when saveCIMaterial already cut the tail from the complete log —
+	// that used to list the jobs and download the first one twice.
+	if !haveLogs && s.Source == orchestrator.SourceCI && d.FetchLogs != nil {
+		if runURL, _ := evidence["run_url"].(string); runURL != "" {
+			if logs, err := d.FetchLogs(ctx, runURL); err != nil {
+				d.Log.Warn("ci log fetch failed", "repo", s.Repo, "error", err)
+			} else if logs != "" {
+				evidence["logs"] = logs
+			}
 		}
 	}
 
@@ -781,8 +817,13 @@ func (d *Dispatcher) fixInner(ctx context.Context, s orchestrator.Signal, track 
 				}
 				provider = next
 				runner = d.runnerFor(next)
-				if d.MCP != nil && sess != nil {
-					if wired, _, aerr := d.attachMCP(ctx, s, sess, runner, dir, evidence); aerr == nil {
+				// The new runner needs the MCP server too; the CI material
+				// saved for this Fix is already in the session.
+				if useTools {
+					if wired, aerr := d.wireMCP(sess, runner, dir); aerr != nil {
+						d.Log.Warn("mcp attach failed on fail-over; running without tools",
+							"repo", s.Repo, "provider", next, "error", aerr)
+					} else {
 						runner = wired
 					}
 				}
@@ -1430,11 +1471,19 @@ func (d *Dispatcher) promoteInner(ctx context.Context, s orchestrator.Signal) er
 	dev := d.Repos.Branch(s.Repo)
 	prod := d.Repos.ProdBranch(s.Repo)
 
+	// One fetch of both branches for the checks that follow. Each of
+	// them used to fetch for itself, so a pinned Promote hit origin four
+	// times before pushing once; FastForward keeps its own fetch as the
+	// guard against the branch moving between here and the push.
+	if err := repos.FetchOriginHeads(ctx, dir, env, dev, prod); err != nil {
+		return fmt.Errorf("dispatch: promote: fetch: %w", err)
+	}
+
 	pin := s.SHA
 	if pin == "" {
 		d.Log.Warn("promote is not pinned to a gated commit; pushing current branch tip",
 			"repo", s.Repo, "source", s.Source, "branch", dev)
-	} else if err := promote.VerifyRemoteTip(ctx, dir, env, dev, pin); err != nil {
+	} else if err := promote.VerifyFetchedTip(ctx, dir, env, dev, pin); err != nil {
 		// Checked before the tag carry so a moved branch costs nothing.
 		return fmt.Errorf("dispatch: promote: %w", err)
 	}
@@ -1443,7 +1492,7 @@ func (d *Dispatcher) promoteInner(ctx context.Context, s orchestrator.Signal) er
 	// carry commit lands on the dev branch; a Promote that then failed
 	// its fast-forward used to leave dev carrying a prod tag for a
 	// release that never reached prod.
-	if err := promote.CheckFastForward(ctx, dir, env, dev, prod); err != nil {
+	if err := promote.CheckFetchedFastForward(ctx, dir, env, dev, prod); err != nil {
 		if s.Evidence != nil {
 			s.Evidence["escalate"] = "not_fast_forward"
 		}

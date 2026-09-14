@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchOverview } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { useOverview } from "@/lib/overview-query";
 import { clearToken, getToken, setToken } from "@/lib/auth";
 import {
   clearAgentCreds,
@@ -23,11 +23,7 @@ export const Route = createFileRoute("/settings")({
 
 function Settings() {
   const queryClient = useQueryClient();
-  const { data, isPending, isError, error, refetch } = useQuery({
-    queryKey: ["overview"],
-    queryFn: fetchOverview,
-    refetchInterval: 10_000,
-  });
+  const { data, isPending, isError, error, refetch } = useOverview();
   const daemon = data?.daemon;
   const gates = data?.gates ?? [];
 

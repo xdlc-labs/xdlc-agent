@@ -29,7 +29,7 @@ COPY . .
 COPY --from=ui /ui/dist /tmp/ui-dist
 RUN mkdir -p internal/console/dist \
  && if [ -d /tmp/ui-dist ]; then cp -a /tmp/ui-dist/. internal/console/dist/; fi
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/xdlc ./cmd/xdlc-agent
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/xdlc ./cmd/xdlc-agent
 
 # Debian/glibc, not Alpine/musl: cursor-agent's bundled node is a glibc
 # ELF (`/lib64/ld-linux-x86-64.so.2`) and its launcher is

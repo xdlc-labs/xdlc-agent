@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // MCPServer is a stdio MCP server the agent CLI should start: `xdlc mcp
@@ -123,7 +124,12 @@ func writeMCPServersFile(path string, srv MCPServer, merge bool) error {
 // shared by every worktree of the clone, which is what we want: the
 // pattern is xdlc's, not the project's.
 func gitExclude(repoDir, pattern string) error {
-	out, err := exec.CommandContext(context.Background(), "git", "-C", repoDir, "rev-parse", "--git-path", "info/exclude").Output() //nolint:gosec // G204: fixed argv, repoDir is xdlc's own worktree
+	// A local rev-parse is instant; the deadline is for the git that
+	// hangs on a wedged lock file, which would otherwise hold the Fix
+	// slot forever. WithMCP has no context to inherit from.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "--git-path", "info/exclude").Output() //nolint:gosec // G204: fixed argv, repoDir is xdlc's own worktree
 	if err != nil {
 		// Not a git checkout (tests, or a bare directory): nothing to
 		// exclude from.

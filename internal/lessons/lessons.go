@@ -62,8 +62,11 @@ func (s *Store) ForRepo(repo string, k int) string {
 		return ""
 	}
 	var matched []string
+	// Built once: the file is one line per lesson and both needles
+	// were being re-concatenated for every one of them.
+	inline, trailing := "repo="+repo+" ", "repo="+repo
 	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.Contains(line, "repo="+repo+" ") || strings.HasSuffix(line, "repo="+repo) {
+		if strings.Contains(line, inline) || strings.HasSuffix(line, trailing) {
 			matched = append(matched, strings.TrimPrefix(line, "- "))
 		}
 	}

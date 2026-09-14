@@ -6,11 +6,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
+A performance and size pass over the whole repository: nothing here changes `config.yaml`, the CLI, or the HTTP API's shape.
 
 ### Changed
 
+- **Dashboard reads no longer decode the whole history per request.** Every `/api/*` handler asked the audit store for every record and JSON-decoded it, so response time grew with daemon age. The daemon is the store's only writer, so `All()` now caches the decoded log and `Append` drops the cache; `/api/history` walks the log backwards and stops at `limit` (new `Recent`); `Since` walks the by-repo index backwards and stops at the first record outside the window, so the flap-detection query over a 2 h window costs the window, not the repo's history. `route: cheapest` provider stats use the same indexed read
+- **JSON responses and the console are gzipped and cacheable.** `/api/*` bodies over 1 KiB are gzipped for clients that ask (the SSE stream is passed through), responses are compact rather than indented, and the console's content-hashed `assets/` are served `immutable` for a year while `index.html` is `no-cache`. The console's main chunk went from being re-downloaded on every load to being fetched once per release
+- **Fewer GitHub calls and subprocesses per action.** A CI Fix with MCP enabled listed jobs and downloaded the failing log twice; it does so once, and a provider fail-over rewires the MCP server without refetching CI material. A pinned Promote ran `git fetch` four times; it fetches dev and prod once up front. `WaitRunConclusion` backs off 5 s → 30 s instead of polling every 5 s for ten minutes. `EnsureCloned`, session listing, and the LESSONS.md scan do less repeated work
+- **Bounded memory in the daemon.** Subagent stdout/stderr are kept as an 8 MiB tail rather than an unbounded buffer (the verdict and cost parsers only read the end); the orchestrator's rerun / own-SHA / fix-SHA memory prunes entries older than 24 h instead of growing for the process lifetime; the live Fix output tail is a buffer, not a per-line string copy; over-budget evidence framing marshals each value once instead of re-marshalling the map per key
+- **Timeouts on every network and subprocess call that lacked one.** GitHub App token minting (while holding the token mutex), job-log downloads, `git ls-remote` from the orchestrator, `gh auth token`, `git config` for the MCP exclude, and the demo's git helper all have deadlines now; `kubectl get job` errors carry stderr
+- **Smaller, stripped release artifacts.** `make build`, `deploy/Dockerfile` and GoReleaser all build with `-trimpath -ldflags "-s -w"` (37 MB → 25 MB locally). The console dropped six unused npm dependencies (mermaid, highlight.js, react-markdown, remark-gfm, tailwind-merge, vite-tsconfig-paths), its favicon PNG went from 147 KB to 9 KB, and the embedded build was refreshed — the committed copy predated the `/fixes` route
+- **Console polling is coordinated.** One shared overview query replaces eight hand-copied ones; the query client has a 5 s `staleTime` and no refetch-on-focus; SSE invalidations are coalesced into one flush per 250 ms; Fix cards and history rows re-render only when their own data changes; finished session recordings are never refetched; Google Fonts no longer block first paint
+
 ### Fixed
+
+- **A console disconnect racing a Fix transition could panic the daemon.** The Fix state and output trackers closed a subscriber's channel outside the lock the publisher held, so a send could hit a closed channel. Sends and closes now happen under the lock; a test churns subscribers against publishers under `-race`
+- **SSE could miss a record appended while the connection was being set up.** `/api/events` subscribed after replaying the ring and writing the Fix snapshots; it subscribes first and de-duplicates the overlap by sequence
+- **A JWKS endpoint that was down was fetched on every unknown-kid token.** The one-minute refresh gate is now keyed on the last attempt, not the last success
+- **`POST /api/actions/*` bodies are capped at 64 KiB before decoding.** The 4 KiB `instructions` limit only applied after the whole body had been read
+- **Retry-attempt prompts no longer carry the daemon's own bookkeeping.** The evidence map handed to the agent is always a copy, so `session_id`, cost and `pushed_sha` written afterwards stay out of the next attempt's prompt
+- **A Fix with session recording disabled used one run id for the worktree and another for the console row**
+
+### Removed
+
+- Dead code found in the pass: an unreachable repo fallback in `/api/repos/{id}`, `ratelimit.Limiter.Wait` (no callers), a hand-rolled `indexByte`, duplicate `hasGate`/`gitOutput` helpers in `cmd/`, a duplicated job-log download, the test-only `StatsFromActions` export, dead `.kpi-card` / highlight.js CSS and unused i18n keys in the console
 
 ## [1.0.1] - 2026-09-10
 

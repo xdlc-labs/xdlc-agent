@@ -48,26 +48,38 @@ func TestFixWithMCPSavesLogsTrimsPromptAndWiresServer(t *testing.T) {
 	d.Sessions = store
 	d.DefaultProvider = "claude"
 	d.MCP = &MCPSetup{Binary: "/opt/xdlc", SessionsDir: store.Root, Root: "/srv/xdlc", ConfigPath: "/srv/xdlc/config.yaml"}
+	var logs strings.Builder
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&logs, "log line %d\n", i)
+	}
+	fullFetches := 0
 	d.FetchAllLogs = func(_ context.Context, runURL string) ([]mcpserver.JobLog, error) {
+		fullFetches++
 		return []mcpserver.JobLog{
-			{Name: "unit", Conclusion: "failure", Text: "full unit log\n"},
+			{Name: "unit", Conclusion: "failure", Text: logs.String()},
 			{Name: "lint", Conclusion: "failure", Text: "full lint log\n"},
 		}, nil
+	}
+	// The complete download already holds the first job's log; a second
+	// download of the same log for the prompt is the duplicate this test
+	// guards against.
+	d.FetchLogs = func(_ context.Context, runURL string) (string, error) {
+		t.Errorf("FetchLogs called for %s although FetchAllLogs is set", runURL)
+		return "", nil
 	}
 	d.FetchRun = func(_ context.Context, runURL string) (RunInfo, error) {
 		return RunInfo{URL: runURL, Workflow: "ci", HeadBranch: "develop", Conclusion: "failure"}, nil
 	}
 
-	var logs strings.Builder
-	for i := 1; i <= 100; i++ {
-		fmt.Fprintf(&logs, "log line %d\n", i)
-	}
 	sig := orchestrator.Signal{
 		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
-		Evidence: map[string]any{"run_url": "https://github.com/org/svc/actions/runs/7", "logs": logs.String()},
+		Evidence: map[string]any{"run_url": "https://github.com/org/svc/actions/runs/7"},
 	}
 	if _, err := d.Fix(context.Background(), sig); err != nil {
 		t.Fatalf("Fix: %v", err)
+	}
+	if fullFetches != 1 {
+		t.Fatalf("FetchAllLogs called %d times, want once per Fix", fullFetches)
 	}
 
 	metas, err := store.List("svc", 0)
@@ -90,7 +102,8 @@ func TestFixWithMCPSavesLogsTrimsPromptAndWiresServer(t *testing.T) {
 		t.Fatalf("ci-run.json: %s (%v)", ciRun, err)
 	}
 
-	// The prompt carries a tail and says where the rest is.
+	// The prompt carries a tail of the first failed job's log, cut from
+	// the complete download, and says where the rest is.
 	prompt, _ := store.ReadFile(m.ID, session.FilePrompt)
 	if !strings.Contains(prompt, `MCP server named \"xdlc\"`) && !strings.Contains(prompt, `MCP server named "xdlc"`) {
 		t.Fatalf("prompt lacks the tools block:\n%s", prompt)
@@ -205,5 +218,77 @@ func TestTailLines(t *testing.T) {
 	}
 	if got := tailLines("a", 5); got != "a" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// A provider that dies before the agent starts hands the Fix to the next
+// one. The new runner must get the MCP server too, but the CI material
+// is the Fix's, not the runner's: it is downloaded and written once.
+func TestFailOverRewiresMCPWithoutRefetchingCIMaterial(t *testing.T) {
+	_, workDir := setupOrigin(t)
+	mgr := testManager(t, workDir)
+	store, err := session.Open(t.TempDir(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scripts := t.TempDir()
+	// claude: exits non-zero having printed nothing — an expired login.
+	dead := filepath.Join(scripts, "claude")
+	if err := os.WriteFile(dead, []byte("#!/bin/sh\ncat >/dev/null\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// codex: records its argv, commits and pushes a fix.
+	codexArgv := filepath.Join(scripts, "codex-argv")
+	codex := filepath.Join(scripts, "codex")
+	body := fmt.Sprintf(`#!/bin/sh
+cat >/dev/null
+printf '%%s\n' "$@" > %q
+echo fixed > app.txt && git add . && git commit -qm "fix from codex" && git push -q origin develop
+echo '{"xdlc_outcome":"fixed","summary":"fixed app"}'
+`, codexArgv)
+	if err := os.WriteFile(codex, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	d := New(mgr, subagent.NewSubprocessRunner(subagent.ProviderClaude, dead, nil, time.Minute, nil), silentLogger())
+	d.Sessions = store
+	d.DefaultProvider = "claude"
+	d.Providers = []string{"claude", "codex"}
+	d.NewRunner = func(provider string) subagent.Runner {
+		if provider != "codex" {
+			t.Fatalf("NewRunner(%q): fail-over should pick codex", provider)
+		}
+		return subagent.NewSubprocessRunner(subagent.ProviderCodex, codex, nil, time.Minute, nil)
+	}
+	d.MCP = &MCPSetup{Binary: "/opt/xdlc", SessionsDir: store.Root}
+	fullFetches, runFetches := 0, 0
+	d.FetchAllLogs = func(_ context.Context, _ string) ([]mcpserver.JobLog, error) {
+		fullFetches++
+		return []mcpserver.JobLog{{Name: "unit", Conclusion: "failure", Text: "boom\n"}}, nil
+	}
+	d.FetchRun = func(_ context.Context, runURL string) (RunInfo, error) {
+		runFetches++
+		return RunInfo{URL: runURL, Workflow: "ci"}, nil
+	}
+
+	sig := orchestrator.Signal{
+		Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail,
+		Evidence: map[string]any{"run_url": "https://github.com/org/svc/actions/runs/8"},
+	}
+	if _, err := d.Fix(context.Background(), sig); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if sig.Evidence["provider_failed_over_from"] != "claude" || sig.Evidence["agent_provider"] != "codex" {
+		t.Fatalf("fail-over not recorded: %v", sig.Evidence)
+	}
+	if fullFetches != 1 || runFetches != 1 {
+		t.Fatalf("CI material fetched %d/%d times across the fail-over, want once", fullFetches, runFetches)
+	}
+	argv, err := os.ReadFile(codexArgv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(argv), `mcp_servers.xdlc.command="/opt/xdlc"`) {
+		t.Fatalf("codex was not handed the MCP server:\n%s", argv)
 	}
 }

@@ -1,11 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
 import { PipelineDiagram } from "@/components/pipeline";
 import { ActivityFeed } from "@/components/activity-feed";
 import { FixesInFlight } from "@/components/fixes-in-flight";
 import { ActionTag, Dot } from "@/components/status";
 import { QueryError, Skeleton } from "@/components/query-state";
-import { fetchOverview, type Gate, type GateStatus, type Repo } from "@/lib/api";
+import type { Gate, GateStatus, Repo } from "@/lib/api";
+import { useOverview } from "@/lib/overview-query";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -212,11 +212,7 @@ function ActionsPanel({
 }
 
 function Overview() {
-  const { data, isPending, isError, error, refetch } = useQuery({
-    queryKey: ["overview"],
-    queryFn: fetchOverview,
-    refetchInterval: 10_000,
-  });
+  const { data, isPending, isError, error, refetch } = useOverview();
   const daemon = data?.daemon;
   const kpis = data?.kpis;
   const events = data?.events ?? [];

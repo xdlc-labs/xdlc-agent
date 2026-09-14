@@ -53,32 +53,44 @@ func (t *Tracker) Append(id, text string) {
 		t.mu.Unlock()
 		return
 	}
+	defer t.mu.Unlock()
 	if t.tails == nil {
-		t.tails = map[string]string{}
+		t.tails = map[string]*bytes.Buffer{}
 	}
-	tail := t.tails[id] + text
-	if len(tail) > tailBytes {
+	tail := t.tails[id]
+	if tail == nil {
+		tail = &bytes.Buffer{}
+		t.tails[id] = tail
+	}
+	// A buffer rather than string concatenation: the tail is rewritten
+	// on every line an agent prints, and copying 16 KB per line under
+	// the lock added up. Next advances the read offset without copying;
+	// the buffer compacts itself the next time it has to grow.
+	tail.WriteString(text)
+	if tail.Len() > tailBytes {
 		// Cut at a line boundary so the tail never starts mid-line.
-		cut := len(tail) - tailBytes
-		if nl := strings.IndexByte(tail[cut:], '\n'); nl >= 0 {
+		cut := tail.Len() - tailBytes
+		if nl := bytes.IndexByte(tail.Bytes()[cut:], '\n'); nl >= 0 {
 			cut += nl + 1
 		}
-		tail = tail[cut:]
+		tail.Next(cut)
 	}
-	t.tails[id] = tail
-	subs := make([]*outputSub, 0, len(t.outSubs))
-	for _, s := range t.outSubs {
-		subs = append(subs, s)
-	}
-	t.mu.Unlock()
 
+	// Sends happen under the lock, the same lock SubscribeOutput's unsub
+	// closes the channel under, so a console that disconnects while a
+	// Fix is printing can never make this a send on a closed channel.
+	// The sends are non-blocking, so holding the lock costs nothing.
 	chunk := Output{ID: id, Repo: f.Repo, Text: text}
-	snap := Output{ID: id, Repo: f.Repo, Text: tail, Snapshot: true}
-	for _, s := range subs {
-		t.mu.Lock()
+	var snap *Output
+	for _, s := range t.outSubs {
 		msg := chunk
 		if s.lost {
-			msg = snap
+			if snap == nil {
+				// Built once, and only when a subscriber needs it: the
+				// tail string is a copy of the whole buffer.
+				snap = &Output{ID: id, Repo: f.Repo, Text: tail.String(), Snapshot: true}
+			}
+			msg = *snap
 		}
 		select {
 		case s.ch <- msg:
@@ -86,7 +98,6 @@ func (t *Tracker) Append(id, text string) {
 		default:
 			s.lost = true
 		}
-		t.mu.Unlock()
 	}
 }
 
@@ -97,7 +108,10 @@ func (t *Tracker) Tail(id string) string {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.tails[id]
+	if tail := t.tails[id]; tail != nil {
+		return tail.String()
+	}
+	return ""
 }
 
 // Tails returns a snapshot chunk for every running Fix that has printed
@@ -110,8 +124,8 @@ func (t *Tracker) Tails() []Output {
 	defer t.mu.Unlock()
 	out := make([]Output, 0, len(t.tails))
 	for _, f := range t.active {
-		if tail := t.tails[f.ID]; tail != "" {
-			out = append(out, Output{ID: f.ID, Repo: f.Repo, Text: tail, Snapshot: true})
+		if tail := t.tails[f.ID]; tail != nil && tail.Len() > 0 {
+			out = append(out, Output{ID: f.ID, Repo: f.Repo, Text: tail.String(), Snapshot: true})
 		}
 	}
 	return out
@@ -138,10 +152,12 @@ func (t *Tracker) SubscribeOutput() (<-chan Output, func()) {
 	var once sync.Once
 	return s.ch, func() {
 		once.Do(func() {
+			// Close under the lock: Append sends under it, so once this
+			// returns no send can race the close.
 			t.mu.Lock()
 			delete(t.outSubs, id)
-			t.mu.Unlock()
 			close(s.ch)
+			t.mu.Unlock()
 		})
 	}
 }

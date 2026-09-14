@@ -1,10 +1,3 @@
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
 /** Relative age from audit `at` ("2006-01-02 15:04:05Z") or ISO. */
 export function formatAge(at: string, now = Date.now()): string {
   const ms = Date.parse(at.includes("T") ? at : at.replace(" ", "T"));

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -184,11 +185,11 @@ func Config(cfg *config.Config) []Issue {
 			}
 		}
 
-		if hasGate(r, "ci") && !strings.Contains(r.GitHub, "/") {
+		if HasGate(r, "ci") && !strings.Contains(r.GitHub, "/") {
 			issues = append(issues, Issue{Repo: r.Name, Message: fmt.Sprintf("github: %q must be \"owner/name\" (ci gate needs it)", r.GitHub)})
 		}
 
-		if hasGate(r, "dev-smoke") {
+		if HasGate(r, "dev-smoke") {
 			if ResolveArgoCDApp(cfg, r) == "" {
 				issues = append(issues, Issue{Repo: r.Name, Message: "dev-smoke gate configured but no argocd_app (repo or gates.dev-smoke default)"})
 			}
@@ -350,7 +351,7 @@ func GitOps(cfg *config.Config, gitopsDir string) ([]Issue, error) {
 
 	var issues []Issue
 	for _, r := range cfg.Repos {
-		if !hasGate(r, "dev-smoke") {
+		if !HasGate(r, "dev-smoke") {
 			continue
 		}
 		app := ResolveArgoCDApp(cfg, r)
@@ -392,19 +393,17 @@ func ResolveProbeJob(cfg *config.Config, r config.Repo) string {
 	return cfg.Gates.DevSmoke.ProbeJob
 }
 
-func hasGate(r config.Repo, name string) bool {
-	for _, g := range r.Gates {
-		if g == name {
-			return true
-		}
-	}
-	return false
+// HasGate reports whether repo r lists gate name in repos[].gates.
+// Exported so the CLI uses the same answer validation does instead of
+// its own copy.
+func HasGate(r config.Repo, name string) bool {
+	return slices.Contains(r.Gates, name)
 }
 
 func reposForGate(cfg *config.Config, name string) []string {
 	var out []string
 	for _, r := range cfg.Repos {
-		if hasGate(r, name) {
+		if HasGate(r, name) {
 			out = append(out, r.Name)
 		}
 	}

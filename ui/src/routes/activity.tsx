@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { fetchOverview, fetchHistory, fetchBacklog, fetchCostKPIs } from "@/lib/api";
+import { fetchHistory, fetchBacklog, fetchCostKPIs, type Event } from "@/lib/api";
+import { useOverview } from "@/lib/overview-query";
 import { PageHeader, ActionTag } from "@/components/status";
 import { QueryError, Skeleton } from "@/components/query-state";
 
@@ -13,7 +14,7 @@ export const Route = createFileRoute("/activity")({
 });
 
 function Activity() {
-  const overviewQ = useQuery({ queryKey: ["overview"], queryFn: fetchOverview, refetchInterval: 10_000 });
+  const overviewQ = useOverview();
   const historyQ = useQuery({
     queryKey: ["history"],
     queryFn: () => fetchHistory(200),
@@ -31,6 +32,11 @@ function Activity() {
   const [repo, setRepo] = useState("all");
   const [action, setAction] = useState("all");
   const [expanded, setExpanded] = useState<string | null>(null);
+  // Stable across renders so HistoryRow's memo holds: only the row whose
+  // `expanded` flag flipped re-renders, not all 200.
+  const toggleExpanded = useCallback((id: string) => {
+    setExpanded((cur) => (cur === id ? null : id));
+  }, []);
 
   const repos = overview?.repos ?? [];
   const filtered = useMemo(
@@ -142,43 +148,7 @@ function Activity() {
           ) : (
             <ol className="border border-border bg-card">
               {filtered.map((e) => (
-                <li key={e.id} className="border-b border-border last:border-0">
-                  <button
-                    onClick={() => setExpanded(expanded === e.id ? null : e.id)}
-                    className="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left hover:bg-surface"
-                  >
-                    <span className="w-40 font-mono text-[11px] text-muted-foreground">{e.ts}</span>
-                    <span className="w-36 font-mono text-[12px] text-foreground">{e.repo}</span>
-                    <span className="w-28 font-mono text-[11px] text-muted-foreground">{e.gate}</span>
-                    <span className="w-24 font-mono text-[11px] text-muted-foreground">{e.source}</span>
-                    <span className="w-28 font-mono text-[11px] text-muted-foreground">{e.signal}</span>
-                    <ActionTag action={e.action} />
-                    <span className={`font-mono text-[11px] ${e.ok ? "text-pass" : "text-breach"}`}>
-                      {e.ok ? "ok" : "fail"}
-                    </span>
-                    <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-                      {expanded === e.id ? "−" : "+"}
-                    </span>
-                  </button>
-                  {expanded === e.id && (
-                    <div className="border-t border-border bg-surface px-4 py-3">
-                      <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                        evidence
-                      </div>
-                      <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground">
-                        {e.evidence}
-                      </pre>
-                      {e.error && (
-                        <p className="mt-2 whitespace-pre-wrap font-mono text-[11px] text-breach">{e.error}</p>
-                      )}
-                      {e.url && (
-                        <a href={e.url} className="mt-2 inline-block font-mono text-[11px] text-primary hover:underline">
-                          {e.url}
-                        </a>
-                      )}
-                    </div>
-                  )}
-                </li>
+                <HistoryRow key={e.id} e={e} expanded={expanded === e.id} onToggle={toggleExpanded} />
               ))}
             </ol>
           )}
@@ -193,3 +163,56 @@ function Activity() {
     </div>
   );
 }
+
+/**
+ * One audit record with its evidence folded underneath. Memoised so that
+ * expanding a row re-renders that row and the one that closed, while the
+ * rest of the list keeps its previous output.
+ */
+const HistoryRow = memo(function HistoryRow({
+  e,
+  expanded,
+  onToggle,
+}: {
+  e: Event;
+  expanded: boolean;
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <li className="border-b border-border last:border-0">
+      <button
+        onClick={() => onToggle(e.id)}
+        className="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left hover:bg-surface"
+      >
+        <span className="w-40 font-mono text-[11px] text-muted-foreground">{e.ts}</span>
+        <span className="w-36 font-mono text-[12px] text-foreground">{e.repo}</span>
+        <span className="w-28 font-mono text-[11px] text-muted-foreground">{e.gate}</span>
+        <span className="w-24 font-mono text-[11px] text-muted-foreground">{e.source}</span>
+        <span className="w-28 font-mono text-[11px] text-muted-foreground">{e.signal}</span>
+        <ActionTag action={e.action} />
+        <span className={`font-mono text-[11px] ${e.ok ? "text-pass" : "text-breach"}`}>
+          {e.ok ? "ok" : "fail"}
+        </span>
+        <span className="ml-auto font-mono text-[11px] text-muted-foreground">{expanded ? "−" : "+"}</span>
+      </button>
+      {expanded && (
+        <div className="border-t border-border bg-surface px-4 py-3">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+            evidence
+          </div>
+          <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground">
+            {e.evidence}
+          </pre>
+          {e.error && (
+            <p className="mt-2 whitespace-pre-wrap font-mono text-[11px] text-breach">{e.error}</p>
+          )}
+          {e.url && (
+            <a href={e.url} className="mt-2 inline-block font-mono text-[11px] text-primary hover:underline">
+              {e.url}
+            </a>
+          )}
+        </div>
+      )}
+    </li>
+  );
+});

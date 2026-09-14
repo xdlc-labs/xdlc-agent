@@ -54,10 +54,6 @@ export function ActionTag({ action }: { action: ActionKind | "GitOps side-effect
   );
 }
 
-export function Mono({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <span className={`font-mono text-[12px] text-muted-foreground ${className}`}>{children}</span>;
-}
-
 export function PageHeader({ title, sub }: { title: string; sub: string }) {
   return (
     <div className="border-b border-border/80 bg-surface/30 px-6 py-5">
