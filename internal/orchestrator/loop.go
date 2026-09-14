@@ -75,14 +75,20 @@ type Orchestrator struct {
 	// run_attempt the rerun's own completion will carry (the attempt we
 	// saw, plus one). GitHub delivers that completion like any other;
 	// it is the answer the ladder already read, not a new failure.
+	//
+	// This map and the two below remember for memoryWindow, not for the
+	// process lifetime: every entry is stamped on insert and entries
+	// older than the window are dropped on the next insert, so a daemon
+	// that runs for months does not hold every run and commit it saw.
 	reranMu sync.Mutex
-	reran   map[string]int
+	reran   map[string]reranEntry
 
 	// ownSHA is every commit the daemon pushed to a tracked branch
-	// (repo+SHA). A fail for one of those is the reverify's subject —
-	// or a Fix that reverify already judged — never a fresh red to Fix.
+	// (repo+SHA), with when. A fail for one of those is the reverify's
+	// subject — or a Fix that reverify already judged — never a fresh red
+	// to Fix.
 	ownMu  sync.Mutex
-	ownSHA map[string]struct{}
+	ownSHA map[string]time.Time
 
 	// TipSHA optionally reports the tracked branch's current remote tip
 	// for a repo, so a fail signal for a commit that is no longer the tip
@@ -128,15 +134,46 @@ func New(dispatcher Dispatcher, bl *backlog.Store, log *slog.Logger) *Orchestrat
 		Log:        log,
 		breach:     map[string]bool{},
 		RepoDeps:   map[string][]string{},
-		reran:      map[string]int{},
-		ownSHA:     map[string]struct{}{},
+		reran:      map[string]reranEntry{},
+		ownSHA:     map[string]time.Time{},
 		fixSHA:     map[string]fixSHAState{},
 	}
+}
+
+// memoryWindow is how long reran, ownSHA and fixSHA remember an entry.
+// A rerun's echo arrives within minutes and a commit stops being the
+// branch tip within hours; a day covers both with room, and bounds the
+// maps to a day's worth of activity instead of the process lifetime.
+const memoryWindow = 24 * time.Hour
+
+// reranEntry is one requested rerun: the attempt its completion will
+// carry, and when it was requested.
+type reranEntry struct {
+	attempt int
+	at      time.Time
 }
 
 type fixSHAState struct {
 	inflight bool
 	ok       bool
+	// at is when the entry was last written; pruneStale reads it.
+	at time.Time
+}
+
+// pruneStale drops from m every entry whose stamp is older than
+// memoryWindow before now. Called with the map's lock held, on each
+// insert, so a map never holds more than the window's worth of keys
+// and there is no sweeper goroutine to stop. keep vetoes the removal
+// of an entry the stamp alone would drop — an in-flight Fix, say.
+func pruneStale[V any](m map[string]V, now time.Time, stamp func(V) time.Time, keep func(V) bool) {
+	for k, v := range m {
+		if keep != nil && keep(v) {
+			continue
+		}
+		if now.Sub(stamp(v)) > memoryWindow {
+			delete(m, k)
+		}
+	}
 }
 
 // Run blocks, processing signals until ctx is cancelled. Fan-out is by
@@ -235,14 +272,12 @@ func (o *Orchestrator) handle(ctx context.Context, s Signal) {
 			s.Evidence["skip_fix_sha"] = skip
 			o.Log.Info("skipping Fix: signal is not a new failure",
 				"repo", s.Repo, "sha", s.SHA, "reason", skip)
-		} else if green, skipFix := o.tryCIRerun(ctx, &s); skipFix {
+		} else if o.tryCIRerun(ctx, &s) {
 			action = ActionRerun
 			if s.Evidence == nil {
 				s.Evidence = map[string]any{}
 			}
 			s.Evidence["rerun"] = "success"
-			err = nil
-			_ = green
 		} else if skip := o.claimFixSHA(s); skip != "" {
 			action = ActionNoop
 			if s.Evidence == nil {
@@ -343,26 +378,30 @@ func (o *Orchestrator) clearPatientZero(repo string) {
 	delete(o.patientZeroFired, repo)
 }
 
-// tryCIRerun runs the flake ladder once per run_url. Returns skipFix=true
-// when the rerun went green (caller must not invoke Runner).
-func (o *Orchestrator) tryCIRerun(ctx context.Context, s *Signal) (green bool, skipFix bool) {
+// tryCIRerun runs the flake ladder once per run_url. It reports true
+// when the rerun went green, in which case the caller must not run a
+// Fix; every other outcome — ladder disabled, already reran, rerun
+// failed, still red — falls through to Fix.
+func (o *Orchestrator) tryCIRerun(ctx context.Context, s *Signal) bool {
 	if o.RerunCI == nil || s.Source != SourceCI {
-		return false, false
+		return false
 	}
 	runURL, _ := s.Evidence["run_url"].(string)
 	if runURL == "" {
-		return false, false
+		return false
 	}
 	o.reranMu.Lock()
 	if o.reran == nil {
-		o.reran = map[string]int{}
+		o.reran = map[string]reranEntry{}
 	}
 	if _, seen := o.reran[runURL]; seen {
 		o.reranMu.Unlock()
-		return false, false
+		return false
 	}
+	now := time.Now()
+	pruneStale(o.reran, now, func(e reranEntry) time.Time { return e.at }, nil)
 	// The rerun we are about to request will complete as attempt+1.
-	o.reran[runURL] = runAttempt(*s) + 1
+	o.reran[runURL] = reranEntry{attempt: runAttempt(*s) + 1, at: now}
 	o.reranMu.Unlock()
 
 	if s.Evidence != nil {
@@ -374,14 +413,14 @@ func (o *Orchestrator) tryCIRerun(ctx context.Context, s *Signal) (green bool, s
 		if s.Evidence != nil {
 			s.Evidence["rerun_error"] = err.Error()
 		}
-		return false, false
+		return false
 	}
 	if ok {
 		o.Log.Info("ci rerun went green; skipping Fix", "repo", s.Repo, "run_url", runURL)
-		return true, true
+		return true
 	}
 	o.Log.Info("ci rerun still red; invoking Fix", "repo", s.Repo, "run_url", runURL)
-	return false, false
+	return false
 }
 
 func fixSHAKey(repo, sha string) string {
@@ -408,10 +447,19 @@ func (o *Orchestrator) claimFixSHA(s Signal) string {
 	if st.ok {
 		return "already_fixed"
 	}
+	now := time.Now()
+	pruneStale(o.fixSHA, now, fixSHAStamp, fixSHAInflight)
 	st.inflight = true
+	st.at = now
 	o.fixSHA[key] = st
 	return ""
 }
+
+// fixSHAStamp and fixSHAInflight are pruneStale's view of a fixSHAState:
+// when it was written, and whether a Fix is still running on it (never
+// pruned, however long it has run — finishFixSHA needs to find it).
+func fixSHAStamp(st fixSHAState) time.Time { return st.at }
+func fixSHAInflight(st fixSHAState) bool   { return st.inflight }
 
 // finishFixSHA releases the claim and records whether this SHA is now
 // fixed. st.ok means "a fix was delivered for this SHA", not "Fix
@@ -430,19 +478,24 @@ func (o *Orchestrator) finishFixSHA(s Signal, res FixResult, err error) {
 	if o.fixSHA == nil {
 		return
 	}
+	now := time.Now()
 	st := o.fixSHA[key]
 	st.inflight = false
+	st.at = now
 	if err == nil && res.Delivered {
 		st.ok = true
 	}
 	o.fixSHA[key] = st
 	o.ownMu.Lock()
 	if o.ownSHA == nil {
-		o.ownSHA = map[string]struct{}{}
+		o.ownSHA = map[string]time.Time{}
+	}
+	if len(res.PushedSHAs) > 0 {
+		pruneStale(o.ownSHA, now, func(at time.Time) time.Time { return at }, nil)
 	}
 	for _, pushed := range res.PushedSHAs {
 		if pushed = strings.TrimSpace(pushed); pushed != "" {
-			o.ownSHA[fixSHAKey(s.Repo, pushed)] = struct{}{}
+			o.ownSHA[fixSHAKey(s.Repo, pushed)] = now
 		}
 	}
 	o.ownMu.Unlock()
@@ -486,9 +539,9 @@ func (o *Orchestrator) selfCausedOrStale(ctx context.Context, s Signal) string {
 	}
 	if runURL, _ := s.Evidence["run_url"].(string); runURL != "" {
 		o.reranMu.Lock()
-		expected, reran := o.reran[runURL]
+		entry, reran := o.reran[runURL]
 		o.reranMu.Unlock()
-		if reran && runAttempt(s) >= expected {
+		if reran && runAttempt(s) >= entry.attempt {
 			return "rerun_echo"
 		}
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/backlog"
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
 	"github.com/xdlc-labs/xdlc-agent/internal/fixstate"
+	"github.com/xdlc-labs/xdlc-agent/internal/httpgzip"
 	"github.com/xdlc-labs/xdlc-agent/internal/orchestrator"
 	"github.com/xdlc-labs/xdlc-agent/internal/promote"
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
@@ -83,23 +84,27 @@ type PRLiveStatus struct {
 
 // Mount registers dashboard routes on mux.
 func (s *Server) Mount(mux *http.ServeMux) {
+	// Every JSON endpoint is gzipped for clients that ask; /api/events is
+	// a stream and is served as-is (the middleware passes it through, but
+	// there is no point paying for the check on every frame).
+	gz := func(h http.Handler) http.Handler { return httpgzip.Handler(h) }
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.Handle("GET /api/whoami", s.requireAuth(http.HandlerFunc(s.handleWhoami)))
-	mux.Handle("GET /api/overview", s.requireAuth(http.HandlerFunc(s.handleOverview)))
-	mux.Handle("GET /api/history", s.requireAuth(http.HandlerFunc(s.handleHistory)))
-	mux.Handle("GET /api/backlog", s.requireAuth(http.HandlerFunc(s.handleBacklog)))
-	mux.Handle("GET /api/repos", s.requireAuth(http.HandlerFunc(s.handleRepos)))
-	mux.Handle("GET /api/repos/{id}", s.requireAuth(http.HandlerFunc(s.handleRepo)))
-	mux.Handle("GET /api/prs", s.requireAuth(http.HandlerFunc(s.handlePRs)))
-	mux.Handle("GET /api/kpis", s.requireAuth(http.HandlerFunc(s.handleKPIs)))
+	mux.Handle("GET /api/overview", gz(s.requireAuth(http.HandlerFunc(s.handleOverview))))
+	mux.Handle("GET /api/history", gz(s.requireAuth(http.HandlerFunc(s.handleHistory))))
+	mux.Handle("GET /api/backlog", gz(s.requireAuth(http.HandlerFunc(s.handleBacklog))))
+	mux.Handle("GET /api/repos", gz(s.requireAuth(http.HandlerFunc(s.handleRepos))))
+	mux.Handle("GET /api/repos/{id}", gz(s.requireAuth(http.HandlerFunc(s.handleRepo))))
+	mux.Handle("GET /api/prs", gz(s.requireAuth(http.HandlerFunc(s.handlePRs))))
+	mux.Handle("GET /api/kpis", gz(s.requireAuth(http.HandlerFunc(s.handleKPIs))))
 	mux.Handle("GET /api/events", s.requireAuth(http.HandlerFunc(s.handleEvents)))
 	mux.Handle("GET /api/fixes/active", s.requireAuth(http.HandlerFunc(s.handleActiveFixes)))
 	// Recordings are unscrubbed (prompts embed CI logs): operator only.
-	mux.Handle("GET /api/sessions", s.requireOperator(http.HandlerFunc(s.handleSessions)))
-	mux.Handle("GET /api/sessions/{id}", s.requireOperator(http.HandlerFunc(s.handleSession)))
-	mux.Handle("GET /api/sessions/{id}/diff", s.requireOperator(http.HandlerFunc(s.handleSessionDiff)))
-	mux.Handle("GET /api/sessions/{id}/prompt", s.requireOperator(http.HandlerFunc(s.handleSessionPrompt)))
-	mux.Handle("GET /api/sessions/{id}/output", s.requireOperator(http.HandlerFunc(s.handleSessionOutput)))
+	mux.Handle("GET /api/sessions", gz(s.requireOperator(http.HandlerFunc(s.handleSessions))))
+	mux.Handle("GET /api/sessions/{id}", gz(s.requireOperator(http.HandlerFunc(s.handleSession))))
+	mux.Handle("GET /api/sessions/{id}/diff", gz(s.requireOperator(http.HandlerFunc(s.handleSessionDiff))))
+	mux.Handle("GET /api/sessions/{id}/prompt", gz(s.requireOperator(http.HandlerFunc(s.handleSessionPrompt))))
+	mux.Handle("GET /api/sessions/{id}/output", gz(s.requireOperator(http.HandlerFunc(s.handleSessionOutput))))
 	mux.Handle("POST /api/actions/fix", s.requireOperator(http.HandlerFunc(s.handleActionFix)))
 	mux.Handle("POST /api/actions/promote", s.requireOperator(http.HandlerFunc(s.handleActionPromote)))
 	mux.Handle("POST /api/actions/revert", s.requireOperator(http.HandlerFunc(s.handleActionRevert)))
@@ -213,6 +218,9 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action str
 		return
 	}
 	var body actionBody
+	// The 4 KiB instructions cap below only applies after decoding; bound
+	// the read itself so an oversized body cannot be buffered first.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
@@ -328,27 +336,22 @@ func (s *Server) handleBacklog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	var records []store.Record
-	var err error
-	if repo := r.URL.Query().Get("repo"); repo != "" {
-		records, err = s.Audit.Since(repo, time.Time{})
-	} else {
-		records, err = s.Audit.All()
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	sort.Slice(records, func(i, j int) bool { return records[i].At.After(records[j].At) })
 	limit := 100
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
 		}
 	}
-	if len(records) > limit {
-		records = records[:limit]
+	// Recent walks the log backwards and stops at limit, so this stays
+	// O(limit) however long the daemon has been running.
+	records, err := s.Audit.Recent(r.URL.Query().Get("repo"), limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	// Sequence order is insertion order; At is caller-supplied and can
+	// differ by a clock tick, so keep the by-time sort the console expects.
+	sort.Slice(records, func(i, j int) bool { return records[i].At.After(records[j].At) })
 	events := make([]map[string]any, 0, len(records))
 	for _, rec := range records {
 		events = append(events, recordToEvent(rec))
@@ -396,16 +399,6 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		if row["id"] == id {
 			repo = row
 			break
-		}
-	}
-	if repo == nil {
-		// No audit yet — still return config-backed row from full build.
-		all, _ := s.Audit.All()
-		for _, row := range s.buildRepos(all) {
-			if row["id"] == id {
-				repo = row
-				break
-			}
 		}
 	}
 	limit := 50
@@ -486,10 +479,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			after = n
 		}
 	}
+	// Subscribe before replaying so a record appended while the replay
+	// and the Fix snapshots below are being written is not lost in the
+	// gap; the Seq <= after guard in the loop drops any overlap.
+	ch, unsub := s.Audit.Subscribe()
+	defer unsub()
 	for _, rec := range s.Audit.ReplaySinceSeq(after) {
 		if !write(auditFrame(rec)) {
 			return
 		}
+		after = rec.Seq
 	}
 	// A console that connects mid-Fix has to see the Fixes already
 	// running, not just the next transition — otherwise a long agent run
@@ -511,8 +510,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ch, unsub := s.Audit.Subscribe()
-	defer unsub()
 	ctx := r.Context()
 	for {
 		select {
@@ -731,6 +728,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		events = append(events, recordToEvent(rec))
 	}
 
+	gates := s.buildGates(records)
 	writeJSON(w, map[string]any{
 		"daemon": map[string]any{
 			"status":        "running",
@@ -742,9 +740,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			"gitopsDir":     "gitops",
 			"agentProvider": orDefault(s.Cfg.Agent.Provider, "claude"),
 		},
-		"pipeline":  s.buildPipeline(records),
+		"pipeline":  s.buildPipeline(records, gates),
 		"kpis":      s.buildKPIs(records),
-		"gates":     s.buildGates(records),
+		"gates":     gates,
 		"repos":     s.buildRepos(records),
 		"events":    events,
 		"backlogMd": backlog,
@@ -916,8 +914,10 @@ func (s *Server) buildGates(records []store.Record) []map[string]any {
 	return out
 }
 
-func (s *Server) buildPipeline(records []store.Record) []map[string]any {
-	gates := s.buildGates(records)
+// buildPipeline derives the stage view from records plus gates, the
+// latter as returned by buildGates for the same records (computed once
+// by the caller rather than again here).
+func (s *Server) buildPipeline(records []store.Record, gates []map[string]any) []map[string]any {
 	byName := map[string]map[string]any{}
 	for _, g := range gates {
 		byName[g["name"].(string)] = g
@@ -1142,7 +1142,7 @@ func filterBacklogMarkdown(md, repo string) string {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	// Compact: the only consumer is the console; indentation was ~15% of
+	// every response for nothing.
+	_ = json.NewEncoder(w).Encode(v)
 }

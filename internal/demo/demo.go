@@ -473,7 +473,11 @@ func TestAdd(t *testing.T) {
 }
 
 func git(dir string, args ...string) error {
-	cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // G204: fixed git verb + local demo paths
+	// Local repos only, so a minute is generous; it is there so a stuck
+	// git cannot leave the demo hanging with no error to show.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // G204: fixed git verb + local demo paths
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %v: %w: %s", args, err, strings.TrimSpace(string(out)))

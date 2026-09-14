@@ -120,7 +120,7 @@ func TestSessionsListAndDetail(t *testing.T) {
 	if list.Sessions[0].Outcome != "fixed" || list.Sessions[0].Status != "ok" {
 		t.Fatalf("meta not the finished one: %+v", list.Sessions[0])
 	}
-	if res := get(mux, "/api/sessions?repo=other", "op-token"); !strings.Contains(res.Body.String(), `"sessions": []`) {
+	if res := get(mux, "/api/sessions?repo=other", "op-token"); !strings.Contains(res.Body.String(), `"sessions":[]`) {
 		t.Fatalf("filter by unknown repo should be an empty list, got %s", res.Body.String())
 	}
 
@@ -185,7 +185,7 @@ func TestSessionIDCannotTraverse(t *testing.T) {
 func TestSessionsDisabled(t *testing.T) {
 	mux, _ := newSessionServer(t, nil)
 	res := get(mux, "/api/sessions", "op-token")
-	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"enabled": false`) {
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"enabled":false`) {
 		t.Fatalf("list with recording off: %d %s", res.Code, res.Body.String())
 	}
 	if res := get(mux, "/api/sessions/20260101T000000Z-svc", "op-token"); res.Code != http.StatusNotFound {

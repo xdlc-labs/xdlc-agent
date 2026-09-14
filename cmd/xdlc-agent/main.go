@@ -11,10 +11,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -191,18 +189,22 @@ func daemonCmd() *cobra.Command {
 					WithStreaming()
 			}
 			disp.ProviderStats = func() map[string]dispatch.ProviderStats {
-				all, err := audit.All()
-				if err != nil {
-					return nil
-				}
+				// Per repo through the by_repo index rather than a scan
+				// of the whole store: this runs at the start of every
+				// Fix, and the store holds the daemon's entire history.
 				cutoff := time.Now().Add(-24 * time.Hour)
 				var recent []store.Record
-				for _, r := range all {
-					if r.At.Before(cutoff) {
-						continue
+				for _, r := range cfg.Repos {
+					rows, err := audit.Since(r.Name, cutoff)
+					if err != nil {
+						return nil
 					}
-					recent = append(recent, r)
+					recent = append(recent, rows...)
 				}
+				// StatsFromRecords reads the sequence — a revert counts
+				// against the fix before it — so restore the store's
+				// global order that a single scan used to deliver.
+				sort.Slice(recent, func(i, j int) bool { return recent[i].Seq < recent[j].Seq })
 				return dispatch.StatsFromRecords(recent, cfg.Agent.Providers, cfg.Agent.Provider)
 			}
 			fixN := cfg.Agent.MaxConcurrentFixes
@@ -635,7 +637,7 @@ func gateCmd() *cobra.Command {
 				}
 				ciGate := gatebuild.CI(cfg, tokens)
 				for _, r := range cfg.Repos {
-					if !hasGate(r, "ci") {
+					if !validate.HasGate(r, "ci") {
 						continue
 					}
 					// CIGate.Check needs "owner/repo", not the short config name.
@@ -934,10 +936,6 @@ func failedRuns(runs []ghclient.RunState) []ghclient.RunState {
 	return out
 }
 
-func hasGate(r config.Repo, name string) bool {
-	return slices.Contains(r.Gates, name)
-}
-
 func promoteCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "promote <repo-dir>",
@@ -1100,7 +1098,7 @@ func scanRepos(ctx context.Context, root string) ([]scannedRepo, error) {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 			continue
 		}
-		remote, err := gitOutput(ctx, dir, "remote", "get-url", "origin")
+		remote, err := repos.GitOutput(ctx, dir, "remote", "get-url", "origin")
 		if err != nil || remote == "" {
 			continue
 		}
@@ -1133,7 +1131,7 @@ func scanRepos(ctx context.Context, root string) ([]scannedRepo, error) {
 // the "develop" default drops every delivery with nothing to show for
 // it but a 204 on GitHub's side.
 func defaultBranchOf(ctx context.Context, dir string) string {
-	if ref, err := gitOutput(ctx, dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
+	if ref, err := repos.GitOutput(ctx, dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
 		if b := strings.TrimPrefix(ref, "origin/"); b != "" && b != "HEAD" {
 			return b
 		}
@@ -1141,20 +1139,10 @@ func defaultBranchOf(ctx context.Context, dir string) string {
 	// symbolic-ref rather than `rev-parse --abbrev-ref`: it answers on a
 	// branch with no commits yet, and fails outright on a detached HEAD
 	// instead of reporting the literal "HEAD" as if it were a branch.
-	if b, err := gitOutput(ctx, dir, "symbolic-ref", "--short", "HEAD"); err == nil && b != "" && b != "HEAD" {
+	if b, err := repos.GitOutput(ctx, dir, "symbolic-ref", "--short", "HEAD"); err == nil && b != "" && b != "HEAD" {
 		return b
 	}
 	return repos.DefaultBranch
-}
-
-func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
-	// gosec G204: args are literals below; dir comes from the operator's
-	// own --scan path.
-	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).Output() //nolint:gosec
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 // parseGitHubRemote turns an SSH or HTTPS GitHub remote into

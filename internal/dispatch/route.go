@@ -131,12 +131,3 @@ func StatsFromRecords(records []store.Record, providers []string, fallbackProvid
 	}
 	return out
 }
-
-// StatsFromActions is a thin test helper: all fixes credited to fallbackProvider.
-func StatsFromActions(actions []string, providers []string, fallbackProvider string) map[string]ProviderStats {
-	recs := make([]store.Record, len(actions))
-	for i, a := range actions {
-		recs[i] = store.Record{Action: a, Status: store.StatusOK, AgentProvider: fallbackProvider}
-	}
-	return StatsFromRecords(recs, providers, fallbackProvider)
-}

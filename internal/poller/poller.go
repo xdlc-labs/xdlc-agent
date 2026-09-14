@@ -249,7 +249,7 @@ func (p *Poller) checkOne(ctx context.Context, repo string) {
 		// KindFail here would route dev-smoke to ActionFix and pay a
 		// coding agent to fix a repo that is not broken. KindBlocked is
 		// ActionNoop plus an operator-visible record (issue #45).
-		p.Signals <- orchestrator.Blocked(p.Source, repo, p.Gate.Name(), sha, err)
+		p.send(ctx, orchestrator.Blocked(p.Source, repo, p.Gate.Name(), sha, err))
 		return
 	}
 	p.clearBlocked(repo)
@@ -273,13 +273,26 @@ func (p *Poller) checkOne(ctx context.Context, repo string) {
 		return
 	}
 
-	p.Signals <- orchestrator.Signal{
+	p.send(ctx, orchestrator.Signal{
 		Source:   p.Source,
 		Repo:     repo,
 		Kind:     kind,
 		SHA:      sha,
 		Evidence: result.Evidence,
 		At:       time.Now(),
+	})
+}
+
+// send hands a Signal to the orchestrator, or gives up when ctx ends
+// first. The channel is buffered, but a daemon shutting down (or a tick
+// past its deadline) stops draining it, and a bare send would then park
+// this goroutine forever with the tick's WaitGroup waiting on it.
+func (p *Poller) send(ctx context.Context, sig orchestrator.Signal) {
+	select {
+	case p.Signals <- sig:
+	case <-ctx.Done():
+		p.Log.Warn("poller: signal dropped; context ended before the orchestrator took it",
+			"gate", p.Gate.Name(), "repo", sig.Repo, "kind", sig.Kind)
 	}
 }
 

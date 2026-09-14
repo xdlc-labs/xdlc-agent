@@ -14,6 +14,28 @@ export function useLiveEvents(queryClient: QueryClient) {
   useEffect(() => {
     let es: EventSource | null = null;
     let stopped = false;
+    let reconnectTimer: number | null = null;
+
+    // A burst of SSE events (one Fix emits several state changes and
+    // dozens of output chunks in a second) used to fire a refetch of
+    // every console query per event. Collect the keys instead and
+    // invalidate once, 250ms after the first event of the burst. Later
+    // events within that window join the batch rather than resetting the
+    // timer, so a continuous stream still refreshes every 250ms.
+    const pending = new Set<string>();
+    let flushTimer: number | null = null;
+    const flush = () => {
+      flushTimer = null;
+      const keys = [...pending];
+      pending.clear();
+      for (const key of keys) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    };
+    const invalidateSoon = (...keys: string[]) => {
+      for (const key of keys) pending.add(key);
+      if (flushTimer === null) flushTimer = window.setTimeout(flush, 250);
+    };
 
     const connect = () => {
       if (stopped) return;
@@ -29,25 +51,19 @@ export function useLiveEvents(queryClient: QueryClient) {
       // output, which no endpoint can hand back, so it reads the payload.
       es.addEventListener("fix_state", (ev) => {
         liveFixes.onState(parse<ActiveFix>((ev as MessageEvent).data));
-        void queryClient.invalidateQueries({ queryKey: ["fixes-active"] });
+        invalidateSoon("fixes-active");
       });
       es.addEventListener("fix_output", (ev) => {
         liveFixes.onOutput(parse<FixOutput>((ev as MessageEvent).data));
       });
       es.onmessage = () => {
-        void queryClient.invalidateQueries({ queryKey: ["overview"] });
-        void queryClient.invalidateQueries({ queryKey: ["history"] });
-        void queryClient.invalidateQueries({ queryKey: ["fix-prs"] });
-        void queryClient.invalidateQueries({ queryKey: ["backlog"] });
-        void queryClient.invalidateQueries({ queryKey: ["kpis"] });
-        void queryClient.invalidateQueries({ queryKey: ["repo"] });
-        void queryClient.invalidateQueries({ queryKey: ["fixes-active"] });
+        invalidateSoon("overview", "history", "fix-prs", "backlog", "kpis", "repo", "fixes-active");
       };
       es.onerror = () => {
         es?.close();
         es = null;
         if (!stopped) {
-          window.setTimeout(connect, 3000);
+          reconnectTimer = window.setTimeout(connect, 3000);
         }
       };
     };
@@ -56,6 +72,9 @@ export function useLiveEvents(queryClient: QueryClient) {
     return () => {
       stopped = true;
       es?.close();
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (flushTimer !== null) window.clearTimeout(flushTimer);
+      pending.clear();
     };
   }, [queryClient]);
 }
@@ -89,6 +108,10 @@ const maxTailChars = 16 * 1024;
  * so a route mounted after the stream connected still sees what has
  * already arrived, and read through useLiveFixes() so React re-renders
  * on change.
+ *
+ * Entries are never mutated in place: every change replaces the LiveFix
+ * object, so a card whose Fix did not change keeps the same reference
+ * and React.memo can skip re-rendering it.
  */
 class LiveFixStore {
   private fixes = new Map<string, LiveFix>();
@@ -113,7 +136,7 @@ class LiveFixStore {
         this.fixes.set(f.id, { fix: f, output: "" });
         changed = true;
       } else if (!cur.endedAt && (cur.fix.state !== f.state || cur.fix.since !== f.since)) {
-        cur.fix = f;
+        this.fixes.set(f.id, { ...cur, fix: f });
         changed = true;
       }
     }
@@ -124,35 +147,28 @@ class LiveFixStore {
     if (!f) return;
     const cur = this.fixes.get(f.id);
     const terminal = f.state === "ok" || f.state === "error";
-    if (cur) {
-      cur.fix = f;
-      if (terminal) cur.endedAt = Date.now();
-    } else {
-      const entry: LiveFix = { fix: f, output: "" };
-      if (terminal) entry.endedAt = Date.now();
-      this.fixes.set(f.id, entry);
-    }
+    const next: LiveFix = { fix: f, output: cur?.output ?? "" };
+    if (cur?.endedAt) next.endedAt = cur.endedAt;
+    if (terminal) next.endedAt = Date.now();
+    this.fixes.set(f.id, next);
     this.publish();
   }
 
   onOutput(o: FixOutput | null) {
     if (!o) return;
-    let cur = this.fixes.get(o.id);
-    if (!cur) {
-      // Output for a Fix whose state event was missed: still worth a
-      // card, with the state unknown until the next transition.
-      cur = {
-        fix: { id: o.id, repo: o.repo ?? "", source: "", state: "fixing", since: new Date().toISOString() },
-        output: "",
-      };
-      this.fixes.set(o.id, cur);
+    // Output for a Fix whose state event was missed is still worth a
+    // card, with the state unknown until the next transition.
+    const cur: LiveFix = this.fixes.get(o.id) ?? {
+      fix: { id: o.id, repo: o.repo ?? "", source: "", state: "fixing", since: new Date().toISOString() },
+      output: "",
+    };
+    let output = o.snapshot ? o.text : cur.output + o.text;
+    if (output.length > maxTailChars) {
+      const cut = output.length - maxTailChars;
+      const nl = output.indexOf("\n", cut);
+      output = output.slice(nl >= 0 ? nl + 1 : cut);
     }
-    cur.output = o.snapshot ? o.text : cur.output + o.text;
-    if (cur.output.length > maxTailChars) {
-      const cut = cur.output.length - maxTailChars;
-      const nl = cur.output.indexOf("\n", cut);
-      cur.output = cur.output.slice(nl >= 0 ? nl + 1 : cut);
-    }
+    this.fixes.set(o.id, { ...cur, output });
     this.publish();
   }
 

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/config"
 	"github.com/xdlc-labs/xdlc-agent/internal/ghclient"
@@ -201,6 +202,11 @@ func (m *Manager) RemoteSHA(ctx context.Context, repo string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("repos: unknown repo %q", repo)
 	}
+	// ls-remote goes to the network on every call, and the callers'
+	// contexts are the poller's and the webhook's — long-lived, or the
+	// request's. A GitHub that stops answering must not hold either.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	branch := m.Branch(repo)
 	url := fmt.Sprintf("https://github.com/%s.git", r.GitHub)
 	dir := m.Dir(repo)
@@ -344,13 +350,13 @@ func (m *Manager) prepareCloneForPromote(ctx context.Context, dir string, env []
 	if err := runGit(ctx, dir, env, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"); err != nil {
 		return err
 	}
-	shallow, err := gitOutput(ctx, dir, "rev-parse", "--is-shallow-repository")
+	shallow, err := GitOutput(ctx, dir, "rev-parse", "--is-shallow-repository")
 	if err == nil && shallow == "true" {
 		if err := runGit(ctx, dir, env, "fetch", "--unshallow", "origin"); err != nil {
 			return err
 		}
 	}
-	if _, err := gitOutput(ctx, dir, "rev-parse", "--verify", "refs/remotes/origin/"+prod); err == nil {
+	if _, err := GitOutput(ctx, dir, "rev-parse", "--verify", "refs/remotes/origin/"+prod); err == nil {
 		return nil
 	}
 	if !remoteHasBranch(ctx, dir, env, prod) {
@@ -410,15 +416,15 @@ func remoteHasBranch(ctx context.Context, dir string, env []string, branch strin
 // origin/<branch> tracking ref is not enough: that ref is only as fresh
 // as the last fetch.
 func (m *Manager) localMatchesRemote(ctx context.Context, repo, dir, branch string) bool {
-	cur, err := gitOutput(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
+	cur, err := GitOutput(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil || cur != branch {
 		return false
 	}
-	status, err := gitOutput(ctx, dir, "status", "--porcelain")
+	status, err := GitOutput(ctx, dir, "status", "--porcelain")
 	if err != nil || status != "" {
 		return false
 	}
-	head, err := gitOutput(ctx, dir, "rev-parse", "HEAD")
+	head, err := GitOutput(ctx, dir, "rev-parse", "HEAD")
 	if err != nil {
 		return false
 	}
@@ -429,9 +435,12 @@ func (m *Manager) localMatchesRemote(ctx context.Context, repo, dir, branch stri
 	return true
 }
 
-func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+// GitOutput runs git in dir with args and returns its trimmed stdout.
+// Exported for the CLI's repo scan (`xdlc-agent init --scan`), which
+// otherwise carried its own copy.
+func GitOutput(ctx context.Context, dir string, args ...string) (string, error) {
 	cmdArgs := append([]string{"-C", dir}, args...)
-	cmd := exec.CommandContext(ctx, "git", cmdArgs...) //nolint:gosec // fixed git verbs
+	cmd := exec.CommandContext(ctx, "git", cmdArgs...) //nolint:gosec // fixed git verbs; callers pass literal args
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err

@@ -1,0 +1,1 @@
+function e(e,t=Date.now()){let n=Date.parse(e.includes(`T`)?e:e.replace(` `,`T`));if(Number.isNaN(n))return e;let r=Math.max(0,Math.floor((t-n)/1e3));if(r<60)return`${r}s`;let i=Math.floor(r/60);if(i<60)return`${i}m`;let a=Math.floor(i/60);return a<48?`${a}h`:`${Math.floor(a/24)}d`}export{e as t};

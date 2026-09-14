@@ -129,11 +129,13 @@ func (o *Orchestrator) suppressReason(s *Signal, action Action) string {
 			window = 2 * time.Hour
 		}
 		actions, err := o.RecentActions(s.Repo, time.Now().Add(-window))
-		if err == nil && flapTransitions(actions) >= o.Fleet.FlapMaxCycles {
-			ensureEvidence(s)
-			s.Evidence["escalate"] = "flap"
-			s.Evidence["flap_transitions"] = flapTransitions(actions)
-			return "flap"
+		if err == nil {
+			if flips := flapTransitions(actions); flips >= o.Fleet.FlapMaxCycles {
+				ensureEvidence(s)
+				s.Evidence["escalate"] = "flap"
+				s.Evidence["flap_transitions"] = flips
+				return "flap"
+			}
 		}
 	}
 

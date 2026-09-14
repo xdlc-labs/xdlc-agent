@@ -121,6 +121,29 @@ func TestListFiltersAndOrders(t *testing.T) {
 	}
 }
 
+// List skips directories whose NewID-shaped name says they belong to
+// another repo, without reading them; names it cannot judge stay in.
+func TestMayBelongToPrefiltersByIDShape(t *testing.T) {
+	cases := []struct {
+		name, repo string
+		want       bool
+	}{
+		{"20260905T010514Z-svc", "svc", true},
+		{"20260905T010514Z-svc-2", "svc", true},       // Start's collision suffix
+		{"20260905T010514Z-svc-api", "svc", false},    // another repo sharing the prefix
+		{"20260905T010514Z-svc", "svc-api", false},    // and the other way round
+		{"20260905T010514Z-org-svc", "org/svc", true}, // slugged repo name
+		{"20260905T010514Z-other", "svc", false},
+		{"hand-made-id", "svc", true}, // not id-shaped: cannot rule it out
+		{"20260905T010514Z", "svc", true},
+	}
+	for _, c := range cases {
+		if got := mayBelongTo(c.name, c.repo); got != c.want {
+			t.Errorf("mayBelongTo(%q, %q) = %v, want %v", c.name, c.repo, got, c.want)
+		}
+	}
+}
+
 func TestStartCollidesWithinOneSecond(t *testing.T) {
 	st, err := Open(t.TempDir(), 0, 0)
 	if err != nil {

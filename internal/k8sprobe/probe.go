@@ -34,12 +34,18 @@ func (c *Client) JobSucceeded(ctx context.Context, ns, job string) (passed bool,
 	// gosec G204: bin is operator config (Client.Binary), ns/job come
 	// from this daemon's own gates.dev-smoke config — not external
 	// input.
+	//
+	// stderr is captured and carried into the error: kubectl says on
+	// stderr whether the job does not exist, the namespace is wrong or
+	// the kubeconfig is dead, and without it every one of those reads
+	// as "exit status 1" — the same problem argocd had (issue #45).
 	statusCmd := exec.CommandContext(ctx, bin, "-n", ns, "get", "job", job, //nolint:gosec
 		"-o", "jsonpath={.status.succeeded}")
-	var statusOut bytes.Buffer
+	var statusOut, statusErr bytes.Buffer
 	statusCmd.Stdout = &statusOut
+	statusCmd.Stderr = &statusErr
 	if err := statusCmd.Run(); err != nil {
-		return false, "", fmt.Errorf("k8sprobe: get job %s/%s: %w", ns, job, err)
+		return false, "", fmt.Errorf("k8sprobe: get job %s/%s: %w%s", ns, job, err, stderrDetail(statusErr.Bytes()))
 	}
 	succeeded := strings.TrimSpace(statusOut.String()) != "" && strings.TrimSpace(statusOut.String()) != "0"
 
@@ -49,4 +55,24 @@ func (c *Client) JobSucceeded(ctx context.Context, ns, job string) (passed bool,
 	_ = logsCmd.Run() // logs are best-effort evidence; don't fail the probe check on a logs error
 
 	return succeeded, logsOut.String(), nil
+}
+
+// maxStderrBytes caps how much of kubectl's stderr is carried into an
+// error. Enough for the one-line reason kubectl prints; not enough for a
+// usage dump to swamp the log line.
+const maxStderrBytes = 512
+
+// stderrDetail renders captured stderr as a ": ..." suffix for an error
+// message — collapsed to one line and truncated — or "" when the command
+// printed nothing. Same shape as internal/gitops' helper; copied rather
+// than imported so this package stays free of the gitops dependency.
+func stderrDetail(b []byte) string {
+	text := strings.Join(strings.Fields(string(b)), " ")
+	if text == "" {
+		return ""
+	}
+	if len(text) > maxStderrBytes {
+		text = text[:maxStderrBytes] + "…"
+	}
+	return ": " + text
 }

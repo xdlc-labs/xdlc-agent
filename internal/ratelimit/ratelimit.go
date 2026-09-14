@@ -2,7 +2,6 @@
 package ratelimit
 
 import (
-	"context"
 	"sync"
 	"time"
 )
@@ -40,36 +39,6 @@ func (l *Limiter) Allow() bool {
 	}
 	l.tokens--
 	return true
-}
-
-// Wait blocks until a token is available or ctx is done.
-func (l *Limiter) Wait(ctx context.Context) error {
-	if l == nil {
-		return ctx.Err()
-	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		l.mu.Lock()
-		now := time.Now()
-		l.refill(now)
-		if l.tokens >= 1 {
-			l.tokens--
-			l.mu.Unlock()
-			return nil
-		}
-		// Time until one token refills.
-		need := (1 - l.tokens) / l.rate
-		l.mu.Unlock()
-		timer := time.NewTimer(time.Duration(need * float64(time.Second)))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
 }
 
 func (l *Limiter) refill(now time.Time) {

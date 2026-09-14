@@ -295,7 +295,7 @@ func emptyCommit(t *testing.T, dir string) string {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git commit: %v: %s", err, out)
 	}
-	sha, err := gitOutput(context.Background(), dir, "rev-parse", "HEAD")
+	sha, err := repos.GitOutput(context.Background(), dir, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}

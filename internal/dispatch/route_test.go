@@ -24,8 +24,19 @@ func TestPickProviderCheapest(t *testing.T) {
 	}
 }
 
+// statsFromActions builds ProviderStats from bare action names, every
+// fix credited to fallbackProvider. Test-only; the daemon reads real
+// audit records through StatsFromRecords.
+func statsFromActions(actions []string, providers []string, fallbackProvider string) map[string]ProviderStats {
+	recs := make([]store.Record, len(actions))
+	for i, a := range actions {
+		recs[i] = store.Record{Action: a, Status: store.StatusOK, AgentProvider: fallbackProvider}
+	}
+	return StatsFromRecords(recs, providers, fallbackProvider)
+}
+
 func TestStatsFromActions(t *testing.T) {
-	st := StatsFromActions([]string{"fix", "revert", "fix"}, []string{"claude"}, "claude")
+	st := statsFromActions([]string{"fix", "revert", "fix"}, []string{"claude"}, "claude")
 	if st["claude"].Fixes != 2 || st["claude"].Success != 1 {
 		t.Fatalf("%+v", st["claude"])
 	}

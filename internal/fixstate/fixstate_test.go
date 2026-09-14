@@ -174,3 +174,89 @@ func TestConcurrentSetAndActive(t *testing.T) {
 		t.Fatalf("want 8 live Fixes, got %d", len(got))
 	}
 }
+
+// A console that disconnects while Fixes are transitioning and printing
+// must not take the daemon down. Before Set and Append sent under the
+// tracker lock, unsub could close a channel that a publish had already
+// snapshotted, and the send panicked. Run with -race: the failure mode
+// is a panic, and the interleaving needs real contention to show up.
+func TestConcurrentPublishAndUnsubscribeDoesNotPanic(t *testing.T) {
+	tr := New()
+	tr.Set(Fix{ID: "f1", Repo: "svc", State: Fixing})
+
+	// Publishers run until stop closes: one transitions state, one
+	// prints output. They are what would panic, so they must be busy
+	// for as long as subscribers are churning.
+	stop := make(chan struct{})
+	var publishers sync.WaitGroup
+	publishers.Add(2)
+	go func() {
+		defer publishers.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			state := Fixing
+			if i%2 == 1 {
+				state = Verifying
+			}
+			tr.Set(Fix{ID: "f1", State: state})
+		}
+	}()
+	go func() {
+		defer publishers.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			tr.Append("f1", "line\n")
+		}
+	}()
+
+	// Subscribers connect, read a little or nothing at all, and
+	// disconnect. Several at once, so the publishers' maps have entries
+	// appearing and vanishing while they iterate.
+	var subscribers sync.WaitGroup
+	for range 8 {
+		subscribers.Add(2)
+		go func() {
+			defer subscribers.Done()
+			for range 200 {
+				ch, unsub := tr.Subscribe()
+				select {
+				case <-ch:
+				default:
+				}
+				unsub()
+			}
+		}()
+		go func() {
+			defer subscribers.Done()
+			for range 200 {
+				ch, unsub := tr.SubscribeOutput()
+				select {
+				case <-ch:
+				default:
+				}
+				unsub()
+			}
+		}()
+	}
+
+	subscribers.Wait()
+	close(stop)
+	done := make(chan struct{})
+	go func() {
+		publishers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("publishers did not stop")
+	}
+}
