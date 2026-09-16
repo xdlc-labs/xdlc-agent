@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/xdlc-labs/xdlc-agent/internal/promclient"
@@ -59,9 +60,15 @@ func (g *ProdHealthGate) Check(ctx context.Context, repo string) (Result, error)
 	if err != nil {
 		return Result{}, queryErr("p95_query", err)
 	}
+	if err := requireFinite("p95_query", p95); err != nil {
+		return Result{}, err
+	}
 	errRate, err := g.Query(ctx, errQ)
 	if err != nil {
 		return Result{}, queryErr("error_rate_query", err)
+	}
+	if err := requireFinite("error_rate_query", errRate); err != nil {
+		return Result{}, err
 	}
 
 	status := StatusPass
@@ -102,7 +109,18 @@ func queryErr(key string, err error) error {
 		return fmt.Errorf("prod-health gate: %s matched no series, so prod health is unknown, not healthy: "+
 			"check the metric name, its exporter, and any relabelling before trusting this gate again: %w", key, err)
 	}
+	if errors.Is(err, promclient.ErrNonFinite) {
+		return fmt.Errorf("prod-health gate: %s returned NaN or Inf, so prod health is unknown, not healthy: "+
+			"a 0/0 ratio or an empty histogram is not a measurement: %w", key, err)
+	}
 	return fmt.Errorf("prod-health gate: %s: %w", key, err)
+}
+
+func requireFinite(key string, v float64) error {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return queryErr(key, fmt.Errorf("%w: %v", promclient.ErrNonFinite, v))
+	}
+	return nil
 }
 
 func (g *ProdHealthGate) thresholdsFor(repo string) (p95MS, errRate float64) {

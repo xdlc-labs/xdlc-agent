@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -212,5 +213,53 @@ func TestProdHealthQueryErrorNamesQueryKey(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "matched no series") {
 		t.Fatalf("transport failure reported as no data: %v", err)
+	}
+}
+
+// TestProdHealthNaNBlocksInsteadOfReverting: a 0/0 ratio or an empty
+// histogram_quantile comes back as NaN / Inf, not as an empty result
+// set. IEEE-754 "NaN > threshold" is false, but Inf is true, and a NaN
+// in the evidence map makes json.Marshal fail. Either way this is not
+// a measurement, so Check must error the same way as no-data.
+func TestProdHealthNaNBlocksInsteadOfReverting(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		p95   float64
+		errR  float64
+		query string
+	}{
+		{name: "error rate NaN", p95: 120, errR: math.NaN(), query: "error_rate_query"},
+		{name: "p95 Inf", p95: math.Inf(1), errR: 0.001, query: "p95_query"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := &ProdHealthGate{
+				P95ThresholdMS:  500,
+				ErrorRateThresh: 0.01,
+				P95Query:        "p95",
+				ErrorRateQuery:  "err",
+				Query: func(_ context.Context, q string) (float64, error) {
+					if q == "p95" {
+						return tc.p95, nil
+					}
+					return tc.errR, nil
+				},
+			}
+			res, err := g.Check(context.Background(), "api")
+			if err == nil {
+				t.Fatalf("non-finite reported a verdict: status=%v evidence=%v", res.Status, res.Evidence)
+			}
+			if res.Status == StatusFail {
+				t.Fatalf("non-finite returned StatusFail, which would Revert")
+			}
+			if !errors.Is(err, promclient.ErrNonFinite) {
+				t.Fatalf("error does not wrap ErrNonFinite: %v", err)
+			}
+			msg := err.Error()
+			for _, want := range []string{tc.query, "NaN or Inf", "unknown, not healthy"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("error text missing %q: %v", want, msg)
+				}
+			}
+		})
 	}
 }

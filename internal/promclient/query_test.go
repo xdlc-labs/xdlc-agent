@@ -71,8 +71,33 @@ func TestQueryGenuineZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("genuine zero returned an error: %v", err)
 	}
-	if v != 0 {
+	if err != nil {
 		t.Fatalf("v = %v, want 0", v)
+	}
+}
+
+func TestQueryNonFinite(t *testing.T) {
+	for _, val := range []string{"NaN", "+Inf", "-Inf"} {
+		t.Run(val, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1,"` + val + `"]}]}}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			v, err := New(srv.URL).Query(context.Background(), "err_rate")
+			if !errors.Is(err, ErrNonFinite) {
+				t.Fatalf("err = %v, want ErrNonFinite", err)
+			}
+			if v != 0 {
+				t.Fatalf("v = %v, want the zero value alongside the error", v)
+			}
+			if !strings.Contains(err.Error(), "err_rate") {
+				t.Fatalf("error does not name the query: %v", err)
+			}
+			if !strings.Contains(err.Error(), val) {
+				t.Fatalf("error does not name the value %s: %v", val, err)
+			}
+		})
 	}
 }
 

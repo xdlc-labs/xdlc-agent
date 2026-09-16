@@ -36,6 +36,7 @@ var (
 	promPairBreach  = [2]string{promSeries("1800"), promSeries("0.001")}
 	promPairZero    = [2]string{promSeries("0"), promSeries("0")} // series present, value 0
 	promPairEmpty   = [2]string{promNoSeries, promNoSeries}
+	promPairNaN     = [2]string{promSeries("120"), promSeries("NaN")}
 )
 
 // fakeProm answers the p95 query and the error-rate query separately —
@@ -203,6 +204,30 @@ func TestProdHealthNoDataNamesTheBrokenQuery(t *testing.T) {
 	}
 	if strings.Contains(reason, "p95_query") {
 		t.Errorf("reason blames the working query too:\n%s", reason)
+	}
+}
+
+// TestProdHealthNaNDoesNotRevert: a 0/0 ratio is a successful PromQL
+// vector whose value is NaN. That is not an empty result set (#48) and
+// not a measurement. It must block, never Revert.
+func TestProdHealthNaNDoesNotRevert(t *testing.T) {
+	prom := newFakeProm(t, promPairNaN)
+	var logs bytes.Buffer
+	p, ch := prodHealthPoller(prom, &logs)
+
+	p.tick(context.Background(), 30*time.Second)
+	got := drain(ch)
+	if len(got) != 1 || got[0].Kind != orchestrator.KindBlocked {
+		t.Fatalf("signals = %+v, want one blocked", got)
+	}
+	if act := orchestrator.Decide(got[0]); act != orchestrator.ActionNoop {
+		t.Fatalf("Decide = %s, want noop", act)
+	}
+	reason, _ := orchestrator.BlockedReason(got[0])
+	for _, want := range []string{"error_rate_query", "NaN or Inf", "unknown, not healthy"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("reason missing %q:\n%s", want, reason)
+		}
 	}
 }
 

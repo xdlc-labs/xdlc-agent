@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -69,8 +70,16 @@ func TestRunPromptNotOnArgv(t *testing.T) {
 	dir := t.TempDir()
 	outFile := dir + "/cmdline"
 	secret := "UNIQUE_PROMPT_SECRET_xyzzy_not_on_argv"
-	// Dump /proc/self/cmdline then exit. Prompt must not appear there.
-	script := "tr '\\0' ' ' </proc/self/cmdline >" + outFile
+	// Dump this process's argv, then exit. Prompt must not appear there.
+	var script string
+	switch runtime.GOOS {
+	case "linux":
+		script = "tr '\\0' ' ' </proc/self/cmdline >" + outFile
+	case "darwin":
+		script = "ps -o command= -p $$ >" + outFile
+	default:
+		t.Skip("/proc/self/cmdline is Linux; ps -p is Darwin")
+	}
 	r := NewSubprocessRunner(ProviderClaude, "sh", []string{"-c", script, promptPlaceholder}, time.Minute, nil)
 	if _, err := r.Run(context.Background(), dir, secret, nil); err != nil {
 		t.Fatalf("Run: %v", err)
