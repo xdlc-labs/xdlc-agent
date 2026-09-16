@@ -321,7 +321,7 @@ func TestFastForwardFromShallowSingleBranch(t *testing.T) {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
-	run(filepath.Dir(bare), "clone", "--depth", "1", "--single-branch", "--branch", "develop", bare, work)
+	run(filepath.Dir(bare), "clone", "--depth", "1", "--single-branch", "--branch", "develop", "file://"+bare, work)
 
 	mgr := repos.NewManager("unused-root", []config.Repo{
 		{Name: "svc", GitHub: "org/svc", Dir: work, Branch: "develop", ProdBranch: "main"},

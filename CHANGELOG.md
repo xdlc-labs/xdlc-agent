@@ -6,8 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **New clones are shallow (`--depth 2 --no-single-branch`), never unshallowed.** Full clone plus `--unshallow` was huge on shop hosts. Depth 2 keeps a parent for `git revert HEAD`. `--no-single-branch` still advertises `origin/<prod>` so Promote can fast-forward. Existing `--depth 1 --single-branch` clones get those heads at depth 2 instead of a full history fetch
+- **Runtime image drops npm package docs after install.** The Cursor overlay comment says copy one `cursor-agent` version dir onto PATH, not the whole CLI tree
+- **App-repo Airlock pin is `@v1`.** `.github/workflows/airlock.yml` follows the Marketplace listing (`uses: xdlc-labs/airlock@v1`)
+
 ### Fixed
 
+- **Fix prompt must not weaken gates.** The action and the prior-session framing say not to weaken probes, skip tests, or swallow dependency failures (shop F8)
 - **Prod-health NaN/Inf is unknown, not a Revert.** A 0/0 error-rate ratio and `histogram_quantile` with empty `le` buckets come back as NaN or Inf. `strconv.ParseFloat` accepts those, IEEE-754 `NaN > threshold` is false, and `+Inf > threshold` is true, so the poller could Revert (or drop the audit row with `json: unsupported value: NaN`). `promclient.Query` now returns `ErrNonFinite`. The gate blocks (`escalate=gate_unavailable`). Audit writes NaN/Inf evidence as JSON null. Starter `error_rate_query` uses `clamp_min(..., 1e-9)` on the denominator so a present series whose rate is 0 is 0, not NaN. An empty total series is still no-data
 - **Helm can set `ARGOCD_OPTS` / `ARGOCD_SERVER` without forking the chart.** Shop F2: GitOps in-cluster needs those env vars, and the Deployment only mounted `existingSecret`. `values.yaml` now has `extraEnv` and `extraEnvFrom`. Chart notes name `ARGOCD_SERVER` and `--core`
 - **NetworkPolicy can allow in-cluster Prometheus `:9090`.** Shop F3: default egress is still DNS + TCP 443. `networkPolicy.extraEgress` appends extra rules so the prod-health poller can reach Prometheus without turning the policy off

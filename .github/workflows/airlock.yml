@@ -14,4 +14,4 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: xdlc-labs/airlock@v0
+      - uses: xdlc-labs/airlock@v1

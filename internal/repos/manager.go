@@ -208,7 +208,7 @@ func (m *Manager) RemoteSHA(ctx context.Context, repo string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	branch := m.Branch(repo)
-	url := fmt.Sprintf("https://github.com/%s.git", r.GitHub)
+	url := cloneURL(r.GitHub)
 	dir := m.Dir(repo)
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 		// Use the existing clone's remote when there is one, so a
@@ -299,10 +299,11 @@ func AuthEnv(token string) []string {
 // still runs when dirty or diverged: a plain `git fetch` alone would
 // leave the working tree on a stale commit.
 //
-// The clone is a full fetch of advertised heads, not `--depth 1
-// --single-branch`. Promote and revert need origin/<prod> and enough
-// history to fast-forward onto it. Existing shallow single-branch
-// clones are unshallowed and have their fetch refspec widened.
+// New clones are `--depth 2 --no-single-branch`. Depth 2 keeps a parent
+// for `git revert HEAD`. `--no-single-branch` advertises origin/<prod>
+// so Promote can fast-forward (shop dogfood F6). Existing shallow
+// clones are never unshallowed: missing heads are fetched at depth 2
+// and the fetch refspec is widened to all heads.
 func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 	r, ok := m.repos[repo]
 	if !ok {
@@ -332,29 +333,46 @@ func (m *Manager) EnsureCloned(ctx context.Context, repo string) error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
 		return fmt.Errorf("repos: mkdir %s: %w", dir, err)
 	}
-	url := fmt.Sprintf("https://github.com/%s.git", r.GitHub)
-	// Full clone of the requested branch, all heads advertised. A
-	// `--depth 1 --single-branch` clone cannot resolve origin/<prod>
-	// and cannot prove a fast-forward onto main (shop dogfood F6).
-	if err := runGit(ctx, "", env, "clone", "--branch", branch, url, dir); err != nil {
+	url := cloneURL(r.GitHub)
+	// Depth 2, every advertised head. `--depth 1 --single-branch`
+	// cannot resolve origin/<prod> and cannot revert HEAD (no parent).
+	if err := runGit(ctx, "", env, "clone", "--depth", "2", "--no-single-branch", "--branch", branch, url, dir); err != nil {
 		return err
 	}
 	return m.prepareCloneForPromote(ctx, dir, env, branch, m.ProdBranch(repo))
 }
 
+// cloneURL is https://github.com/<owner/name>.git unless GitHub is
+// already a URL or an absolute path (tests use a local bare repo).
+func cloneURL(github string) string {
+	if github == "" {
+		return ""
+	}
+	if strings.Contains(github, "://") {
+		return github
+	}
+	if filepath.IsAbs(github) {
+		return "file://" + github
+	}
+	return fmt.Sprintf("https://github.com/%s.git", github)
+}
+
+func isShallow(ctx context.Context, dir string) bool {
+	shallow, err := GitOutput(ctx, dir, "rev-parse", "--is-shallow-repository")
+	return err == nil && shallow == "true"
+}
+
 // prepareCloneForPromote makes origin/<dev> and origin/<prod> resolvable
 // on an existing clone, including ones created with the old
-// `--depth 1 --single-branch` args. Config-only when the clone is
+// `--depth 1 --single-branch` args. Shallow clones stay shallow: fetch
+// at depth 2, never `--unshallow`. Config-only when the clone is
 // already complete so a synced EnsureCloned stays a skip-fetch.
 func (m *Manager) prepareCloneForPromote(ctx context.Context, dir string, env []string, dev, prod string) error {
 	if err := runGit(ctx, dir, env, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"); err != nil {
 		return err
 	}
-	shallow, err := GitOutput(ctx, dir, "rev-parse", "--is-shallow-repository")
-	if err == nil && shallow == "true" {
-		if err := runGit(ctx, dir, env, "fetch", "--unshallow", "origin"); err != nil {
-			return err
-		}
+	if isShallow(ctx, dir) {
+		return FetchOriginHeads(ctx, dir, env, dev, prod)
 	}
 	if _, err := GitOutput(ctx, dir, "rev-parse", "--verify", "refs/remotes/origin/"+prod); err == nil {
 		return nil
@@ -368,7 +386,8 @@ func (m *Manager) prepareCloneForPromote(ctx context.Context, dir string, env []
 // FetchOriginHeads fetches each branch into refs/remotes/origin/<branch>
 // with an explicit refspec. `git fetch origin main` on a single-branch
 // clone updates FETCH_HEAD and does not create origin/main, which is
-// what revert's rev-parse and promote's fast-forward need.
+// what revert's rev-parse and promote's fast-forward need. Shallow
+// clones fetch at `--depth 2` and are never unshallowed.
 //
 // Branches are fetched one refspec at a time. A single `git fetch`
 // with two refspecs fails the whole command when the remote has no
@@ -376,6 +395,10 @@ func (m *Manager) prepareCloneForPromote(ctx context.Context, dir string, env []
 // not created main yet.
 func FetchOriginHeads(ctx context.Context, dir string, env []string, branches ...string) error {
 	seen := map[string]struct{}{}
+	depth := []string{}
+	if isShallow(ctx, dir) {
+		depth = []string{"--depth", "2"}
+	}
 	for _, b := range branches {
 		b = strings.TrimSpace(b)
 		if b == "" {
@@ -386,7 +409,9 @@ func FetchOriginHeads(ctx context.Context, dir string, env []string, branches ..
 		}
 		seen[b] = struct{}{}
 		spec := "+refs/heads/" + b + ":refs/remotes/origin/" + b
-		if err := runGit(ctx, dir, env, "fetch", "origin", spec); err != nil {
+		args := append([]string{"fetch"}, depth...)
+		args = append(args, "origin", spec)
+		if err := runGit(ctx, dir, env, args...); err != nil {
 			if missingRemoteRef(err) {
 				continue
 			}

@@ -317,6 +317,16 @@ func TestBuildFixPromptIncludesPriorSessions(t *testing.T) {
 	if !strings.Contains(p, "records") {
 		t.Fatalf("prior block must be framed as records, not instructions:\n%s", p)
 	}
+	if !strings.Contains(p, "Do not weaken probes, skip tests, or swallow dependency failures") {
+		t.Fatalf("prior block must tell the agent not to weaken gates:\n%s", p)
+	}
+}
+
+func TestBuildFixPromptDoesNotWeakenGates(t *testing.T) {
+	p := BuildFixPrompt(FixRequest{Repo: "svc", Reason: "fail", Evidence: map[string]any{"x": 1}})
+	if !strings.Contains(p, "Do not weaken probes, skip tests, or swallow dependency failures") {
+		t.Fatalf("fix action must tell the agent not to weaken gates:\n%s", p)
+	}
 }
 
 func TestBuildFixPromptNoPriorBlockWhenEmpty(t *testing.T) {
