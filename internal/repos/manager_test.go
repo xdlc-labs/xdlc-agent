@@ -2,6 +2,7 @@ package repos
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -340,11 +341,13 @@ func TestEnsureClonedFetchesProdFromShallowSingleBranch(t *testing.T) {
 	gitCmdTest(t, seedDir, "config", "user.email", "test@example.com")
 	gitCmdTest(t, seedDir, "config", "user.name", "test")
 	gitCmdTest(t, seedDir, "checkout", "-b", "main")
-	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("prod\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for i := 1; i <= 6; i++ {
+		if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte(fmt.Sprintf("prod-%d\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitCmdTest(t, seedDir, "add", ".")
+		gitCmdTest(t, seedDir, "commit", "-m", fmt.Sprintf("main-%d", i))
 	}
-	gitCmdTest(t, seedDir, "add", ".")
-	gitCmdTest(t, seedDir, "commit", "-m", "main")
 	gitCmdTest(t, seedDir, "push", "origin", "main")
 	gitCmdTest(t, seedDir, "checkout", "-b", "develop")
 	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("dev\n"), 0o644); err != nil {
@@ -354,7 +357,7 @@ func TestEnsureClonedFetchesProdFromShallowSingleBranch(t *testing.T) {
 	gitCmdTest(t, seedDir, "commit", "-m", "develop")
 	gitCmdTest(t, seedDir, "push", "origin", "develop")
 	gitCmdTest(t, bareDir, "symbolic-ref", "HEAD", "refs/heads/develop")
-	gitCmdTest(t, root, "clone", "--depth", "1", "--single-branch", "--branch", "develop", bareDir, workDir)
+	gitCmdTest(t, root, "clone", "--depth", "1", "--single-branch", "--branch", "develop", "file://"+bareDir, workDir)
 
 	if err := exec.CommandContext(context.Background(), "git", "-C", workDir, "rev-parse", "--verify", "refs/remotes/origin/main").Run(); err == nil {
 		t.Fatal("fixture still has origin/main; the old clone args should not")
@@ -372,8 +375,64 @@ func TestEnsureClonedFetchesProdFromShallowSingleBranch(t *testing.T) {
 		t.Errorf("origin/main = %s, want %s", mainSHA, wantMain)
 	}
 	shallow := strings.TrimSpace(gitCmdTest(t, workDir, "rev-parse", "--is-shallow-repository"))
-	if shallow == "true" {
-		t.Error("clone still shallow after EnsureCloned")
+	if shallow != "true" {
+		t.Error("EnsureCloned unshallowed the clone; it must stay shallow")
+	}
+	if err := exec.CommandContext(context.Background(), "git", "-C", workDir, "rev-parse", "--verify", "HEAD^").Run(); err != nil {
+		t.Error("HEAD has no parent after EnsureCloned; revert needs depth 2")
+	}
+}
+
+// TestEnsureClonedSlimClone is shop leftover slim-clones: a missing
+// workdir is cloned at depth 2 with every advertised head, so origin/main
+// resolves and git revert HEAD has a parent, without a full history.
+func TestEnsureClonedSlimClone(t *testing.T) {
+	root := t.TempDir()
+	bareDir := filepath.Join(root, "origin.git")
+	seedDir := filepath.Join(root, "seed")
+	workDir := filepath.Join(root, "work")
+
+	gitCmdTest(t, root, "init", "--bare", bareDir)
+	gitCmdTest(t, root, "clone", bareDir, seedDir)
+	gitCmdTest(t, seedDir, "config", "user.email", "test@example.com")
+	gitCmdTest(t, seedDir, "config", "user.name", "test")
+	gitCmdTest(t, seedDir, "checkout", "-b", "main")
+	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("prod1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmdTest(t, seedDir, "add", ".")
+	gitCmdTest(t, seedDir, "commit", "-m", "main-1")
+	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("prod2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmdTest(t, seedDir, "add", ".")
+	gitCmdTest(t, seedDir, "commit", "-m", "main-2")
+	gitCmdTest(t, seedDir, "push", "origin", "main")
+	gitCmdTest(t, seedDir, "checkout", "-b", "develop")
+	if err := os.WriteFile(filepath.Join(seedDir, "app.txt"), []byte("dev\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmdTest(t, seedDir, "add", ".")
+	gitCmdTest(t, seedDir, "commit", "-m", "develop")
+	gitCmdTest(t, seedDir, "push", "origin", "develop")
+	gitCmdTest(t, bareDir, "symbolic-ref", "HEAD", "refs/heads/develop")
+
+	mgr := NewManager("unused-root", []config.Repo{
+		{Name: "svc", GitHub: bareDir, Dir: workDir, Branch: "develop", ProdBranch: "main"},
+	}, nil)
+	if err := mgr.EnsureCloned(context.Background(), "svc"); err != nil {
+		t.Fatalf("EnsureCloned: %v", err)
+	}
+	if strings.TrimSpace(gitCmdTest(t, workDir, "rev-parse", "--is-shallow-repository")) != "true" {
+		t.Error("new clone is not shallow")
+	}
+	mainSHA := strings.TrimSpace(gitCmdTest(t, workDir, "rev-parse", "refs/remotes/origin/main"))
+	wantMain := strings.TrimSpace(gitCmdTest(t, bareDir, "rev-parse", "main"))
+	if mainSHA != wantMain {
+		t.Errorf("origin/main = %s, want %s", mainSHA, wantMain)
+	}
+	if err := exec.CommandContext(context.Background(), "git", "-C", workDir, "rev-parse", "--verify", "HEAD^").Run(); err != nil {
+		t.Error("HEAD has no parent; revert needs depth 2")
 	}
 }
 

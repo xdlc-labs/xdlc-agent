@@ -59,13 +59,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && if [ -n "${GEMINI_CLI_VERSION}" ]; then \
          npm install -g "@google/gemini-cli@${GEMINI_CLI_VERSION}"; \
        fi \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && find /usr/local/lib/node_modules -type f \( -iname '*.md' -o -iname 'changelog*' -o -iname 'license*' \) -delete \
+    && rm -rf /usr/share/doc /usr/share/man
 
 # Cursor CLI (cursor-agent) isn't npm-installable — it ships via the
-# installer at https://cursor.com/install. This image is glibc + bash so
-# that overlay (COPY the host CLI onto PATH, or run the installer as
-# root before USER) actually executes. Still left out of the default
-# image rather than pinning Cursor's installer in this Dockerfile.
+# installer at https://cursor.com/install. Overlay one version dir
+# (for example ~/.local/share/cursor-agent/versions/<ver>/cursor-agent)
+# onto PATH, or run the installer as root before USER. Do not COPY the
+# whole CLI tree: that pulled ~2.3G of versions into a shop overlay.
+# Still left out of the default image rather than pinning Cursor's
+# installer in this Dockerfile.
 
 COPY --from=build /out/xdlc /usr/local/bin/xdlc
 

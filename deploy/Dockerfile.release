@@ -35,9 +35,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && if [ -n "${GEMINI_CLI_VERSION}" ]; then \
          npm install -g "@google/gemini-cli@${GEMINI_CLI_VERSION}"; \
        fi \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && find /usr/local/lib/node_modules -type f \( -iname '*.md' -o -iname 'changelog*' -o -iname 'license*' \) -delete \
+    && rm -rf /usr/share/doc /usr/share/man
 
 # Cursor CLI (cursor-agent) isn't npm-installable, see deploy/Dockerfile.
+# Overlay one version dir onto PATH, not the whole CLI tree.
 
 COPY xdlc /usr/local/bin/xdlc
 

@@ -820,16 +820,24 @@ func TestFixBudgetTimeout(t *testing.T) {
 	go func() {
 		errCh <- errOnly(d.Fix(context.Background(), orchestrator.Signal{Repo: "svc", Source: orchestrator.SourceCI, Kind: orchestrator.KindFail}))
 	}()
-	<-br.started
+	defer close(br.release)
 	select {
+	case <-br.started:
+		select {
+		case err := <-errCh:
+			if err == nil {
+				t.Fatal("expected budget timeout")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Fix did not return after budget")
+		}
 	case err := <-errCh:
 		if err == nil {
 			t.Fatal("expected budget timeout")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("Fix did not return after budget")
 	}
-	close(br.release)
 }
 
 // planThenFixRunner: first call returns plan text (no git); second commits like fakeRunner.
