@@ -277,6 +277,59 @@ func TestPromoteRepinsAcrossTagCarry(t *testing.T) {
 	if !strings.HasSuffix(prodValues, "\n") {
 		t.Errorf("the carry stripped the trailing newline: %q", prodValues)
 	}
+	if got := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "develop")); got != mainRev {
+		t.Errorf("develop = %s, want the carry sha on main %s", got, mainRev)
+	}
+}
+
+// TestPromoteFailedProdPushLeavesDevelop: a rejected main push must not
+// leave the tag-carry on origin/develop. Shop F9.
+func TestPromoteFailedProdPushLeavesDevelop(t *testing.T) {
+	bareDir, workDir := setupOrigin(t)
+	for _, env := range []string{"dev", "prod"} {
+		dir := filepath.Join(workDir, "gitops", "values", env)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		tag := "sha-newtag"
+		if env == "prod" {
+			tag = "sha-oldtag"
+		}
+		body := "image:\n  repository: ghcr.io/org/svc\n  tag: \"" + tag + "\"\n"
+		if err := os.WriteFile(filepath.Join(dir, "svc.yaml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, workDir, "add", ".")
+	runGit(t, workDir, "commit", "-m", "add gitops values")
+	runGit(t, workDir, "push", "origin", "develop")
+
+	hook := filepath.Join(bareDir, "hooks", "pre-receive")
+	script := "#!/bin/sh\nwhile read oldrev newrev refname; do\n" +
+		"  if [ \"$refname\" = \"refs/heads/main\" ]; then\n" +
+		"    echo rejected main >&2\n    exit 1\n  fi\ndone\n"
+	if err := os.WriteFile(hook, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	gated := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "develop"))
+	mainBefore := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "main"))
+	d := New(testManager(t, workDir), nil, silentLogger())
+	sig := orchestrator.Signal{
+		Repo: "svc", Source: orchestrator.SourceDevGate, Kind: orchestrator.KindPass, SHA: gated,
+		Evidence: map[string]any{},
+	}
+	err := d.Promote(context.Background(), sig)
+	if err == nil {
+		t.Fatal("Promote succeeded against a rejected main push")
+	}
+
+	if got := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "develop")); got != gated {
+		t.Errorf("develop moved to %s after a failed prod push, want still %s", got, gated)
+	}
+	if got := strings.TrimSpace(runGit(t, bareDir, "rev-parse", "main")); got != mainBefore {
+		t.Errorf("main moved to %s despite the rejected push, want %s", got, mainBefore)
+	}
 }
 
 // TestPromoteReportsMissingValuesFile is the silent-no-op regression.

@@ -1,0 +1,32 @@
+xdlc-agent {{ .Chart.AppVersion }}
+
+The daemon listens on port 8080 (Service {{ include "xdlc-agent.fullname" . }}).
+Console and webhooks share that port. Persist /var/lib/xdlc-agent.
+
+GitOps / Argo CD: the pod shells out to `argocd`. In-cluster, set extraEnv so
+the CLI does not need a login to argocd-server:
+
+  extraEnv:
+    - name: ARGOCD_OPTS
+      value: "--core"
+
+To talk to argocd-server instead, set ARGOCD_SERVER (and a token via
+extraEnvFrom, not values.yaml):
+
+  extraEnv:
+    - name: ARGOCD_SERVER
+      value: argocd-server.argocd.svc
+  extraEnvFrom:
+    - secretRef:
+        name: argocd-auth
+
+Also set role.create=true and role.namespace to gates.dev-smoke.namespace.
+
+Prod health: NetworkPolicy egress is DNS + TCP 443. In-cluster Prometheus on
+:9090 needs networkPolicy.extraEgress, for example:
+
+  networkPolicy:
+    extraEgress:
+      - ports:
+          - protocol: TCP
+            port: 9090

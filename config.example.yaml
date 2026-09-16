@@ -124,5 +124,8 @@ agent:
 #     # interval; a metrics endpoint that stops answering then logs
 #     # "poller tick timed out" instead of silently disabling the gate.
 #     timeout: 10s
-#     p95_query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{{repo}}"}[5m])) by (le)) * 1000
-#     error_rate_query: sum(rate(http_requests_total{service="{{repo}}",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="{{repo}}"}[5m]))
+#     # Pin namespace=prod so DEV 5xx cannot drive Revert. `or vector(0)`
+#     # on the 5xx numerator: no 5xx series is healthy 0. Empty total
+#     # series stays no-data / blocked.
+#     p95_query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace="prod",service="{{repo}}"}[5m])) by (le)) * 1000
+#     error_rate_query: (sum(rate(http_requests_total{namespace="prod",service="{{repo}}",status=~"5.."}[5m])) or vector(0)) / sum(rate(http_requests_total{namespace="prod",service="{{repo}}"}[5m]))

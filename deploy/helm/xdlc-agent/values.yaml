@@ -62,6 +62,20 @@ config: |
 # values.yaml.
 existingSecret: xdlc-agent-secrets
 
+# Extra container env after HOME. GitOps in-cluster usually needs one of:
+#   extraEnv:
+#     - name: ARGOCD_OPTS
+#       value: "--core"
+#     - name: ARGOCD_SERVER
+#       value: argocd-server.argocd.svc
+# Put tokens in a Secret and mount them with extraEnvFrom, not here.
+extraEnv: []
+
+# Additional envFrom entries (Secrets or ConfigMaps). existingSecret is
+# already mounted. Use this for an Argo token Secret, not a second copy
+# of xdlc-agent-secrets.
+extraEnvFrom: []
+
 serviceAccount:
   create: true
   name: ""
@@ -119,6 +133,13 @@ networkPolicy:
   # ingressFrom:
   #   - namespaceSelector: {}
   #     podSelector: {}
+  # Extra egress rules appended after DNS + TCP 443. In-cluster
+  # Prometheus on :9090 needs this (prod-health poller). Example:
+  # extraEgress:
+  #   - ports:
+  #       - protocol: TCP
+  #         port: 9090
+  extraEgress: []
 
 persistence:
   # BACKLOG.md, the bbolt audit store, and repo clones live here.

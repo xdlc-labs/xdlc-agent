@@ -220,8 +220,8 @@ gates:
       p95_ms: 500
       error_rate: 0.01
     interval: 30s
-    p95_query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{{repo}}"}[5m])) by (le)) * 1000
-    error_rate_query: sum(rate(http_requests_total{service="{{repo}}",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="{{repo}}"}[5m]))
+    p95_query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace="prod",service="{{repo}}"}[5m])) by (le)) * 1000
+    error_rate_query: (sum(rate(http_requests_total{namespace="prod",service="{{repo}}",status=~"5.."}[5m])) or vector(0)) / sum(rate(http_requests_total{namespace="prod",service="{{repo}}"}[5m]))
 
 agent:
   mode: subprocess
@@ -350,8 +350,8 @@ gates:
       p95_ms: 500
       error_rate: 0.01
     interval: 30s
-    p95_query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{{repo}}"}[5m])) by (le)) * 1000
-    error_rate_query: sum(rate(http_requests_total{service="{{repo}}",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="{{repo}}"}[5m]))
+    p95_query: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace="prod",service="{{repo}}"}[5m])) by (le)) * 1000
+    error_rate_query: (sum(rate(http_requests_total{namespace="prod",service="{{repo}}",status=~"5.."}[5m])) or vector(0)) / sum(rate(http_requests_total{namespace="prod",service="{{repo}}"}[5m]))
 
 agent:
   mode: subprocess
