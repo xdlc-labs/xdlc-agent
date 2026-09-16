@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -258,4 +259,44 @@ func actions(recs []Record) string {
 		parts = append(parts, r.Action)
 	}
 	return strings.Join(parts, ",")
+}
+
+func TestAppendNaNEvidence(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "history.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	err = s.Append(Record{
+		At:     time.Now().UTC(),
+		Repo:   "svc",
+		Source: "prod-health",
+		Kind:   "pass",
+		Action: "noop",
+		Evidence: map[string]any{
+			"p95_ms":     120.0,
+			"error_rate": math.NaN(),
+			"p95_inf":    math.Inf(1),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Append NaN evidence: %v", err)
+	}
+	all, err := s.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("len = %d", len(all))
+	}
+	if all[0].Evidence["p95_ms"] != 120.0 {
+		t.Fatalf("p95_ms = %v", all[0].Evidence["p95_ms"])
+	}
+	if all[0].Evidence["error_rate"] != nil {
+		t.Fatalf("error_rate = %v, want null", all[0].Evidence["error_rate"])
+	}
+	if all[0].Evidence["p95_inf"] != nil {
+		t.Fatalf("p95_inf = %v, want null", all[0].Evidence["p95_inf"])
+	}
 }

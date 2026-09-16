@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"sync"
 	"time"
@@ -172,6 +173,7 @@ func (s *AuditStore) Append(r Record) error {
 		}
 		seq = id
 		r.Seq = id
+		r.Evidence = jsonSafeEvidence(r.Evidence)
 		key := make([]byte, 8)
 		binary.BigEndian.PutUint64(key, id)
 		val, err := json.Marshal(r)
@@ -442,4 +444,35 @@ func (s *AuditStore) publish(r Record) {
 			// slow subscriber — drop
 		}
 	}
+}
+
+// jsonSafeEvidence copies evidence so json.Marshal cannot fail on NaN
+// or Inf (those are not JSON numbers). A prod-health tick that still
+// carries a NaN error_rate next to a real p95 used to drop the whole
+// audit row with `unsupported value: NaN`.
+func jsonSafeEvidence(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = jsonSafeValue(v)
+	}
+	return out
+}
+
+func jsonSafeValue(v any) any {
+	switch x := v.(type) {
+	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return nil
+		}
+	case float32:
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return nil
+		}
+	case map[string]any:
+		return jsonSafeEvidence(x)
+	}
+	return v
 }

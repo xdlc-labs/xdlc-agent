@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -60,6 +61,21 @@ var defaultHTTP = &http.Client{Timeout: DefaultTimeout}
 //		v, err = 0, nil
 //	}
 var ErrNoData = errors.New("query matched no series")
+
+// ErrNonFinite reports that a query matched a series whose value is
+// NaN or Inf. strconv.ParseFloat("NaN") succeeds, so this is a
+// different fact from a parse error: Prometheus returns it for 0/0
+// ratios and for histogram_quantile with empty `le` buckets.
+//
+// The prod-health gate compares value > threshold. In IEEE-754 that
+// comparison is false for NaN, but a NaN sitting next to a real p95
+// still lands in the audit evidence map, where json.Marshal fails
+// (`unsupported value: NaN`) and the poller can treat a sibling
+// over-threshold reading as a breach. Inf compares true against any
+// finite threshold and would Revert. Neither is a measurement of the
+// service, so Query refuses both the same way it refuses an empty
+// result set.
+var ErrNonFinite = errors.New("query returned a non-finite value")
 
 // Client queries one PromQL instant-query HTTP API.
 type Client struct {
@@ -136,6 +152,9 @@ func (c *Client) Query(ctx context.Context, promQL string) (float64, error) {
 	v, err := strconv.ParseFloat(valStr, 64)
 	if err != nil {
 		return 0, fmt.Errorf("promclient: parse value %q: %w", valStr, err)
+	}
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, fmt.Errorf("promclient: %w: %q (%s)", ErrNonFinite, promQL, valStr)
 	}
 	return v, nil
 }
