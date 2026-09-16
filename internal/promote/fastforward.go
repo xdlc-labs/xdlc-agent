@@ -15,16 +15,12 @@ import (
 	"github.com/xdlc-labs/xdlc-agent/internal/repos"
 )
 
-// CommitProdTag stages and commits the prod values file if dirty, then
-// pushes to origin branch (the configured dev branch). It returns the
-// SHA of the commit it pushed, or "" when there was nothing to commit —
-// the caller needs it to keep a SHA-pinned promote pinned across the tag
-// carry (see dispatch.Dispatcher.Promote).
-//
-// The push is deliberately not forced: if the dev branch moved between
-// the caller's pin check and here, git rejects it and the promote fails
-// instead of racing.
-func CommitProdTag(ctx context.Context, repoDir, service string, env []string, branch string) (string, error) {
+// CommitProdTag stages and commits the prod values file if dirty. It
+// does not push: dispatch pushes the carry SHA to prod first, then to
+// the dev branch, so a failed prod push cannot leave develop carrying a
+// tag for a release that never landed. Returns the local HEAD SHA, or
+// "" when there was nothing to commit (see dispatch.Dispatcher.Promote).
+func CommitProdTag(ctx context.Context, repoDir, service string, env []string) (string, error) {
 	rel := valuesRel("prod", service)
 	add := exec.CommandContext(ctx, "git", "-C", repoDir, "add", rel) //nolint:gosec
 	applyEnv(add, env)
@@ -42,17 +38,39 @@ func CommitProdTag(ctx context.Context, repoDir, service string, env []string, b
 	if out, err := commit.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("promote: git commit: %w: %s", err, out)
 	}
-	refspec := "HEAD:" + branch
-	push := exec.CommandContext(ctx, "git", "-C", repoDir, "push", "origin", refspec) //nolint:gosec
-	applyEnv(push, env)
-	if out, err := push.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("promote: push %s: %w: %s", branch, err, out)
-	}
 	sha, err := revParse(ctx, repoDir, env, "HEAD")
 	if err != nil {
 		return "", err
 	}
 	return sha, nil
+}
+
+// PushSHA fast-forwards origin/branch to sha. No-op when origin/branch
+// already points at sha. Used after a successful prod push so develop
+// catches up with a local tag-carry commit that was not pushed first.
+func PushSHA(ctx context.Context, repoDir string, env []string, sha, branch string) error {
+	if sha == "" {
+		return nil
+	}
+	if !isHexSHA(sha) {
+		return fmt.Errorf("promote: %q is not a git object name", sha)
+	}
+	if err := repos.FetchOriginHeads(ctx, repoDir, env, branch); err != nil {
+		return fmt.Errorf("promote: fetch %s: %w", branch, err)
+	}
+	got, err := revParse(ctx, repoDir, env, "origin/"+branch)
+	if err == nil && strings.HasPrefix(got, sha) {
+		return nil
+	}
+	refspec := sha + ":refs/heads/" + branch
+	push := exec.CommandContext(ctx, "git", "-C", repoDir, "push", "origin", refspec) //nolint:gosec
+	applyEnv(push, env)
+	var stderr bytes.Buffer
+	push.Stderr = &stderr
+	if err := push.Run(); err != nil {
+		return fmt.Errorf("promote: push %s to %s: %w: %s", short(sha), branch, err, stderr.String())
+	}
+	return nil
 }
 
 // ErrMoved is returned when the branch a gate passed on no longer points
@@ -114,8 +132,8 @@ var ErrNotFastForward = errors.New("promote: prod branch is not an ancestor of t
 
 // CheckFastForward fetches both branches and reports whether
 // origin/<toBranch> can be fast-forwarded to origin/<fromBranch>. Run it
-// before anything is written: the tag carry commits to the dev branch,
-// and a Promote that fails afterwards would leave that commit behind.
+// before anything is written: a Promote that is not a fast-forward must
+// refuse without creating a local tag-carry commit.
 func CheckFastForward(ctx context.Context, repoDir string, env []string, fromBranch, toBranch string) error {
 	if err := repos.FetchOriginHeads(ctx, repoDir, env, fromBranch, toBranch); err != nil {
 		return fmt.Errorf("promote: fetch: %w", err)
@@ -159,17 +177,43 @@ func revParse(ctx context.Context, repoDir string, env []string, rev string) (st
 	return strings.TrimSpace(string(out)), nil
 }
 
+// originAllowsPin reports whether origin/fromBranch may be promoted as
+// gatedSHA: either it still is that commit, or it is an ancestor of it
+// (a local tag-carry child that has not been pushed yet). An origin tip
+// that moved to an unrelated commit is ErrMoved.
+func originAllowsPin(ctx context.Context, repoDir string, env []string, fromBranch, gatedSHA string) error {
+	got, err := revParse(ctx, repoDir, env, "origin/"+fromBranch)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(got, gatedSHA) {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "merge-base", "--is-ancestor", "origin/"+fromBranch, gatedSHA) //nolint:gosec
+	applyEnv(cmd, env)
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return fmt.Errorf("%w: origin/%s is at %s, gated %s", ErrMoved, fromBranch, got, gatedSHA)
+		}
+		return fmt.Errorf("promote: merge-base: %w", err)
+	}
+	return nil
+}
+
 // FastForward pushes the gated commit onto toBranch. Git itself refuses
 // the push if it is not a fast-forward, so this never silently rewrites
 // prod history — a rejected push comes back as an error for the caller
 // to turn into a Signal.
 //
-// gatedSHA is the commit a gate actually passed on. When set, that exact
-// object is pushed (`git push origin <sha>:refs/heads/<toBranch>`) after
-// checking that origin/<fromBranch> still points at it, so a commit that
-// landed after the gate passed cannot ride along untested — the promote
-// fails with ErrMoved instead. Empty gatedSHA pushes the branch tip, as
-// before: that is the unpinned path used by operator-initiated promotes
+// gatedSHA is the commit a gate actually passed on, or the local
+// tag-carry child of that commit. When set, that exact object is pushed
+// (`git push origin <sha>:refs/heads/<toBranch>`) after checking that
+// origin/<fromBranch> still points at it, or is an ancestor of it (the
+// carry is local and not pushed yet). A commit that landed after the
+// gate passed cannot ride along untested: the promote fails with
+// ErrMoved instead. Empty gatedSHA pushes the branch tip, as before:
+// that is the unpinned path used by operator-initiated promotes
 // (`xdlc promote`, POST /api/actions/promote), where a human is
 // the authorization.
 //
@@ -191,12 +235,8 @@ func FastForward(ctx context.Context, repoDir string, env []string, fromBranch, 
 		if !isHexSHA(gatedSHA) {
 			return fmt.Errorf("promote: %q is not a git object name", gatedSHA)
 		}
-		got, err := revParse(ctx, repoDir, env, "origin/"+fromBranch)
-		if err != nil {
+		if err := originAllowsPin(ctx, repoDir, env, fromBranch, gatedSHA); err != nil {
 			return err
-		}
-		if !strings.HasPrefix(got, gatedSHA) {
-			return fmt.Errorf("%w: origin/%s is at %s, gated %s", ErrMoved, fromBranch, got, gatedSHA)
 		}
 		src = gatedSHA
 		// A bare object name needs a fully-qualified destination ref;

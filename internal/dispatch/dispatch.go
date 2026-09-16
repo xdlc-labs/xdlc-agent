@@ -1489,9 +1489,9 @@ func (d *Dispatcher) promoteInner(ctx context.Context, s orchestrator.Signal) er
 	}
 
 	// Nothing is written until the push is known to be possible. The
-	// carry commit lands on the dev branch; a Promote that then failed
-	// its fast-forward used to leave dev carrying a prod tag for a
-	// release that never reached prod.
+	// carry commit stays local until prod accepts it. Pushing it to
+	// develop first left develop carrying a prod tag for a release that
+	// never reached prod when the main push then failed.
 	if err := promote.CheckFetchedFastForward(ctx, dir, env, dev, prod); err != nil {
 		if s.Evidence != nil {
 			s.Evidence["escalate"] = "not_fast_forward"
@@ -1505,11 +1505,11 @@ func (d *Dispatcher) promoteInner(ctx context.Context, s orchestrator.Signal) er
 	}
 	d.recordCarry(s, carry)
 	if carry.Changed() {
-		carried, err := promote.CommitProdTag(ctx, dir, s.Repo, env, dev)
+		carried, err := promote.CommitProdTag(ctx, dir, s.Repo, env)
 		if err != nil {
 			return fmt.Errorf("dispatch: promote: %w", err)
 		}
-		// The carry commit is now the dev tip. It is ours and it is a
+		// The carry commit is now the local tip. It is ours and it is a
 		// direct child of the verified commit, so re-pin to it rather
 		// than falling back to an unpinned branch push.
 		if pin != "" && carried != "" {
@@ -1524,6 +1524,9 @@ func (d *Dispatcher) promoteInner(ctx context.Context, s orchestrator.Signal) er
 		if tip, err := promote.RemoteTip(ctx, dir, env, prod); err == nil {
 			promoted = tip
 		}
+	}
+	if err := promote.PushSHA(ctx, dir, env, promoted, dev); err != nil {
+		return fmt.Errorf("dispatch: promote: push %s: %w", dev, err)
 	}
 	if s.Evidence != nil && promoted != "" {
 		// What Revert checks the prod tip against.

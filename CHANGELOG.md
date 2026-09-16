@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Helm can set `ARGOCD_OPTS` / `ARGOCD_SERVER` without forking the chart.** Shop F2: GitOps in-cluster needs those env vars, and the Deployment only mounted `existingSecret`. `values.yaml` now has `extraEnv` and `extraEnvFrom`. Chart notes name `ARGOCD_SERVER` and `--core`
+- **NetworkPolicy can allow in-cluster Prometheus `:9090`.** Shop F3: default egress is still DNS + TCP 443. `networkPolicy.extraEgress` appends extra rules so the prod-health poller can reach Prometheus without turning the policy off
+- **Starter prod-health queries no longer treat "no 5xx series" as missing data, and they pin `namespace="prod"`.** Shop F4: a ratio whose 5xx numerator matches nothing used to come back empty and `blocked`. The example query uses `or vector(0)` on the numerator. An empty total series is still no-data. Both queries pin prod so DEV 5xx cannot drive Revert
+- **Promote pushes the tag-carry to prod before develop.** Shop F9: the carry commit used to land on `develop` first, so a failed `main` push left develop carrying a prod tag for a release that never shipped. The carry stays local until prod accepts it, then the same SHA is pushed to develop. A test rejects `main` with a pre-receive hook and asserts develop did not move
+
 ## [1.0.2] - 2026-09-14
 
 A performance and size pass over the whole repository: nothing here changes `config.yaml`, the CLI, or the HTTP API's shape.

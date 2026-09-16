@@ -42,10 +42,16 @@ spec:
             # Writable home under the data volume when root FS is read-only.
             - name: HOME
               value: /var/lib/xdlc-agent
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ .Values.existingSecret }}
                 optional: true
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080

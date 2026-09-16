@@ -84,3 +84,13 @@ jobs:
       - uses: azure/setup-helm@v4
       - run: helm lint deploy/helm/xdlc-agent
       - run: helm template test deploy/helm/xdlc-agent > /dev/null
+      - name: extraEnv and extraEgress render
+        run: |
+          set -euo pipefail
+          out="$(mktemp)"
+          helm template test deploy/helm/xdlc-agent \
+            -f deploy/helm/xdlc-agent/ci/gitops-env.yaml > "$out"
+          grep -q 'name: ARGOCD_OPTS' "$out"
+          grep -q 'name: ARGOCD_SERVER' "$out"
+          grep -q 'name: argocd-auth' "$out"
+          grep -q 'port: 9090' "$out"

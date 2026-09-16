@@ -174,6 +174,42 @@ func TestFastForwardPushesGatedSHA(t *testing.T) {
 	}
 }
 
+// TestFastForwardAllowsLocalDescendant is the tag-carry pin: origin/develop
+// is still the gated parent, and the pin is a local child that has not
+// been pushed yet. Prod must accept that SHA.
+func TestFastForwardAllowsLocalDescendant(t *testing.T) {
+	bare, _, work := setupDevProd(t)
+	gated := revParseT(t, bare, "develop")
+	run := func(args ...string) {
+		t.Helper()
+		out, err := exec.CommandContext(context.Background(), "git", append([]string{"-C", work}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("config", "user.email", "t@e.com")
+	run("config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(work, "f"), []byte("carry\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "local tag carry")
+	carry := revParseT(t, work, "HEAD")
+	if carry == gated {
+		t.Fatal("fixture did not create a local child")
+	}
+
+	if err := FastForward(context.Background(), work, nil, "develop", "main", carry); err != nil {
+		t.Fatalf("FastForward local descendant: %v", err)
+	}
+	if got := revParseT(t, bare, "main"); got != carry {
+		t.Errorf("origin main = %s, want the local carry %s", got, carry)
+	}
+	if got := revParseT(t, bare, "develop"); got != gated {
+		t.Errorf("origin develop moved to %s, want still gated %s", got, gated)
+	}
+}
+
 // TestFastForwardRefusesMovedDevBranch is the actual bug: a commit
 // landing between the smoke pass and the promote used to reach prod
 // untested, because the push was of the *branch*.

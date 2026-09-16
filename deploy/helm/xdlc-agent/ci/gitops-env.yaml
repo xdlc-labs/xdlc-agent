@@ -1,0 +1,15 @@
+# Values snippet for helm CI. Proves extraEnv / extraEnvFrom / extraEgress
+# render. Not a production overlay.
+extraEnv:
+  - name: ARGOCD_OPTS
+    value: "--core"
+  - name: ARGOCD_SERVER
+    value: argocd-server.argocd.svc
+extraEnvFrom:
+  - secretRef:
+      name: argocd-auth
+networkPolicy:
+  extraEgress:
+    - ports:
+        - protocol: TCP
+          port: 9090
